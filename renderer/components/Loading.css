@@ -1,0 +1,33 @@
+.loading {
+	position: fixed;
+	left: 0;
+	right:0;
+	bottom: 0;
+	top: 0;
+	z-index: 99;
+	display: flex;
+	flex-direction: column;
+  justify-content: center;
+  align-items: center;
+	background: rgba(0, 0, 0, .2);
+}
+
+.loading img {
+	width: 5rem;
+	-webkit-user-drag: none;
+	-khtml-user-drag: none;
+	-moz-user-drag: none;
+	-o-user-drag: none;
+	user-drag: none;
+}
+.loadingText {
+	color: #107C10;
+	font-weight: bold;
+}
+
+.user-select-none {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}

@@ -1,0 +1,54 @@
+appId: com.Geocld.PeaSyo4Desk
+productName: PeaSyo4Desk
+copyright: Copyright © 2026 Geocld
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - from: .
+    filter:
+      - package.json
+      - app
+publish:
+- github
+
+
+# Mac OS configuration
+mac:
+  category: public.app-category.games
+  # icon: "src/app/assets/images/icon.icns"
+  target: 
+  - target: dmg
+    arch: 
+    - universal
+
+# Config for OSX dmg
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: "link"
+      path: "/Applications"
+
+# Windows configuration
+win:
+  # icon: "src/app/assets/images/icon.ico"
+  target:
+    - "zip"
+    - "nsis"
+
+# Config for the windows installer
+nsis:
+  oneClick: true
+  perMachine: true
+
+# Linux configuration
+linux:
+  category: Game
+  target:
+    - "AppImage"
+    - "deb"

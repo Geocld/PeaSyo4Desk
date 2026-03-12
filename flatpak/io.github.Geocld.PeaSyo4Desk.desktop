@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PeaSyo4Desk
+Comment=PlayStation remote play client.
+Icon=io.github.Geocld.PeaSyo4Desk
+Exec=run.sh
+Terminal=false
+StartupWMClass=PeaSyo4Desk
+Categories=Network;Game;
+Keywords=Game;Streaming;PS4;PS5;Console;
