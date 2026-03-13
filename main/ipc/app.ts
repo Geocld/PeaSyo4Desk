@@ -71,6 +71,22 @@ export default class IpcApp extends IpcBase {
     return this._application._authentication.startAuthflow();
   }
 
+  getPsnLoginUrl() {
+    return Promise.resolve(this._application._authentication.getPsnLoginUrl());
+  }
+
+  manualLoginByRedirect(data: { redirectUrl: string }) {
+    return this._application._authentication.manualLoginByRedirect(data.redirectUrl);
+  }
+
+  loginWithUsername(data: { username: string }) {
+    return this._application._authentication.loginWithUsername(data.username);
+  }
+
+  loginWithAccountId(data: { accountId: string }) {
+    return this._application._authentication.loginWithAccountId(data.accountId);
+  }
+
   msalLogin() {
     return new Promise(resolve => {
       this._application._msalAuthentication.getMsalDeviceCode().then(data => {

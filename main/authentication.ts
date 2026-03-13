@@ -11,6 +11,7 @@ const REDIRECT_URI =
   "https://remoteplay.dl.playstation.net/remoteplay/redirect";
 const AUTH_SCOPE =
   "psn:clientapp referenceDataService:countryConfig.read pushNotification:webSocket.desktop.connect sessionManager:remotePlaySession.system.update";
+const USERNAME_LOOKUP_URL = "https://psn.flipscreen.games/search.php";
 
 const LOGIN_URL = `https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/authorize?service_entity=urn:service-entity:psn&response_type=code&client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=psn:clientapp referenceDataService:countryConfig.read pushNotification:webSocket.desktop.connect sessionManager:remotePlaySession.system.update&request_locale=en_US&ui=pr&service_logo=ps&layout_type=popup&smcid=remoteplay&prompt=always&PlatformPrivacyWs1=minimal&`;
 
@@ -101,6 +102,32 @@ export default class Authentication {
     return `${DUID_PREFIX}${randomHex}`;
   }
 
+  getPsnLoginUrl() {
+    return this.buildLoginUrl();
+  }
+
+  buildDirectLoginResult(accountId: string, onlineId: string, userId: string): PsnLoginResult {
+    return {
+      redirectUrl: "",
+      accessToken: "",
+      refreshToken: "",
+      tokenExpiry: 0,
+      userInfo: {
+        account_id: accountId,
+        online_id: onlineId,
+        user_id: userId,
+      },
+      loginAt: Date.now(),
+    };
+  }
+
+  finalizeDirectLogin() {
+    this.resetAuthState();
+    this._isAuthenticated = true;
+    this._appLevel = 1;
+    this.closeAuthWindow();
+  }
+
   openAuthWindow(url: string) {
     console.log("Opening auth window with URL:", url);
     if (this._authWindow && !this._authWindow.isDestroyed()) {
@@ -162,6 +189,68 @@ export default class Authentication {
       userInfo,
       loginAt: Date.now(),
     };
+  }
+
+  async manualLoginByRedirect(redirectUrl: string): Promise<PsnLoginResult> {
+    if (!redirectUrl?.trim()) {
+      throw new Error("Redirect URL is required.");
+    }
+
+    const result = await this.buildLoginResult(redirectUrl.trim());
+    this.finalizeDirectLogin();
+    return result;
+  }
+
+  async loginWithUsername(username: string): Promise<PsnLoginResult> {
+    const normalizedUsername = (username || "").trim();
+    if (!normalizedUsername) {
+      throw new Error("PSN username is required.");
+    }
+
+    try {
+      const response = await axios.get(USERNAME_LOOKUP_URL, {
+        params: {
+          username: normalizedUsername,
+        },
+        timeout: 15000,
+      });
+
+      const userInfo = (response.data || {}) as Record<string, any>;
+      const accountId = String(userInfo.encoded_id || "").trim();
+      if (!accountId) {
+        throw new Error("User not found.");
+      }
+
+      const result = this.buildDirectLoginResult(
+        accountId,
+        String(userInfo.online_id || normalizedUsername),
+        String(userInfo.user_id || accountId)
+      );
+
+      this.finalizeDirectLogin();
+      return result;
+    } catch (error: any) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        throw new Error("User not found, please confirm your PSN username.");
+      }
+      throw error;
+    }
+  }
+
+  async loginWithAccountId(accountId: string): Promise<PsnLoginResult> {
+    const normalizedAccountId = (accountId || "").trim();
+    if (!normalizedAccountId) {
+      throw new Error("Account ID is required.");
+    }
+
+    const result = this.buildDirectLoginResult(
+      normalizedAccountId,
+      normalizedAccountId,
+      normalizedAccountId
+    );
+
+    this.finalizeDirectLogin();
+    return result;
   }
 
   async getTokenFromRedirectUri(redirectUrl: string) {
