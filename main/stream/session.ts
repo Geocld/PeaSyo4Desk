@@ -244,6 +244,16 @@ const normalizeButtonName = (buttonName: unknown) => {
   return BUTTON_NAME_TO_MASK[key] ? key : null;
 };
 
+const clampInt = (value: unknown, min: number, max: number) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  if (numeric < min) return min;
+  if (numeric > max) return max;
+  return Math.trunc(numeric);
+};
+
 const setControllerButtonState = (key: string, pressed: boolean) => {
   const mask = BUTTON_NAME_TO_MASK[key];
   if (!mask) {
@@ -450,6 +460,23 @@ const handleWsControlText = (socket: any, message: any) => {
   }
 };
 
+const handleWsControlState = (message: any) => {
+  const state = message?.state;
+  if (!state || typeof state !== "object") {
+    return;
+  }
+
+  controllerState.buttons = (clampInt(state.buttons, 0, 0xffffffff) >>> 0);
+  controllerState.l2State = clampInt(state.l2State, 0, 255);
+  controllerState.r2State = clampInt(state.r2State, 0, 255);
+  controllerState.leftX = clampInt(state.leftX, -32768, 32767);
+  controllerState.leftY = clampInt(state.leftY, -32768, 32767);
+  controllerState.rightX = clampInt(state.rightX, -32768, 32767);
+  controllerState.rightY = clampInt(state.rightY, -32768, 32767);
+
+  pushControllerState("ws:state");
+};
+
 const onWsMessage = (socket: any, raw: Buffer) => {
   let message: any = null;
   try {
@@ -466,6 +493,11 @@ const onWsMessage = (socket: any, raw: Buffer) => {
 
   if (message?.type === "control_button") {
     handleWsControlText(socket, message);
+    return;
+  }
+
+  if (message?.type === "control_state") {
+    handleWsControlState(message);
     return;
   }
 

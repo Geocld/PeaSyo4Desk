@@ -29,6 +29,42 @@ const clamp = (value: number) => {
   return value;
 };
 
+const GAMEPAD_DEADZONE = 0.12;
+
+const CONTROLLER_BUTTONS = {
+  CROSS: 1 << 0,
+  MOON: 1 << 1,
+  BOX: 1 << 2,
+  PYRAMID: 1 << 3,
+  DPAD_LEFT: 1 << 4,
+  DPAD_RIGHT: 1 << 5,
+  DPAD_UP: 1 << 6,
+  DPAD_DOWN: 1 << 7,
+  L1: 1 << 8,
+  R1: 1 << 9,
+  L3: 1 << 10,
+  R3: 1 << 11,
+  OPTIONS: 1 << 12,
+  SHARE: 1 << 13,
+  TOUCHPAD: 1 << 14,
+  PS: 1 << 15,
+};
+
+const CONTROLLER_ANALOG_BUTTONS = {
+  L2: 1 << 16,
+  R2: 1 << 17,
+};
+
+type ControllerStatePayload = {
+  buttons: number;
+  l2State: number;
+  r2State: number;
+  leftX: number;
+  leftY: number;
+  rightX: number;
+  rightY: number;
+};
+
 function StreamPage() {
   const [status, setStatus] = useState("initializing...");
   const [wsUrl, setWsUrl] = useState("");
@@ -68,6 +104,10 @@ function StreamPage() {
   const audioReceivedChunksRef = useRef(0);
   const audioPlayedChunksRef = useRef(0);
   const audioDroppedChunksRef = useRef(0);
+  const validGamepadCountRef = useRef(0);
+  const controlSendCountRef = useRef(0);
+  const controlSendErrorCountRef = useRef(0);
+  const lastControlStateKeyRef = useRef("");
 
   const applyVideoConfig = (config: any) => {
     const width = Number(config?.width || widthRef.current);
@@ -331,6 +371,140 @@ function StreamPage() {
     }
   };
 
+  const normalizeAxis = (value: number) => {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    const clamped = Math.max(-1, Math.min(1, value));
+    if (Math.abs(clamped) < GAMEPAD_DEADZONE) {
+      return 0;
+    }
+    return clamped;
+  };
+
+  const toSignedAxis = (value: number) => {
+    const clamped = Math.max(-1, Math.min(1, value));
+    if (clamped === -1) {
+      return -32768;
+    }
+    return Math.trunc(clamped * 32767);
+  };
+
+  const getButtonValue = (gamepad: Gamepad, index: number) => {
+    const btn = gamepad.buttons[index];
+    if (!btn) {
+      return 0;
+    }
+    const raw = typeof btn.value === "number" ? btn.value : btn.pressed ? 1 : 0;
+    return Math.max(0, Math.min(1, raw));
+  };
+
+  const isButtonPressed = (gamepad: Gamepad, index: number, threshold = 0.5) => {
+    const btn = gamepad.buttons[index];
+    if (!btn) {
+      return false;
+    }
+    return !!btn.pressed || getButtonValue(gamepad, index) >= threshold;
+  };
+
+  const sendControllerState = (state: ControllerStatePayload) => {
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const stateKey = `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}`;
+    if (stateKey === lastControlStateKeyRef.current) {
+      return;
+    }
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "control_state",
+          state,
+        })
+      );
+      lastControlStateKeyRef.current = stateKey;
+      controlSendCountRef.current += 1;
+    } catch {
+      controlSendErrorCountRef.current += 1;
+    }
+  };
+
+  const pollAndSendGamepadState = () => {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let validCount = 0;
+
+    const mergedState: ControllerStatePayload = {
+      buttons: 0,
+      l2State: 0,
+      r2State: 0,
+      leftX: 0,
+      leftY: 0,
+      rightX: 0,
+      rightY: 0,
+    };
+
+    let leftXNorm = 0;
+    let leftYNorm = 0;
+    let rightXNorm = 0;
+    let rightYNorm = 0;
+
+    for (const gamepad of gamepads) {
+      if (!gamepad || !gamepad.connected) {
+        continue;
+      }
+      if (!gamepad.axes || gamepad.axes.length !== 4) {
+        continue;
+      }
+
+      validCount += 1;
+
+      if (isButtonPressed(gamepad, 0)) mergedState.buttons |= CONTROLLER_BUTTONS.CROSS;
+      if (isButtonPressed(gamepad, 1)) mergedState.buttons |= CONTROLLER_BUTTONS.MOON;
+      if (isButtonPressed(gamepad, 2)) mergedState.buttons |= CONTROLLER_BUTTONS.BOX;
+      if (isButtonPressed(gamepad, 3)) mergedState.buttons |= CONTROLLER_BUTTONS.PYRAMID;
+      if (isButtonPressed(gamepad, 4)) mergedState.buttons |= CONTROLLER_BUTTONS.L1;
+      if (isButtonPressed(gamepad, 5)) mergedState.buttons |= CONTROLLER_BUTTONS.R1;
+      if (isButtonPressed(gamepad, 8)) mergedState.buttons |= CONTROLLER_BUTTONS.SHARE;
+      if (isButtonPressed(gamepad, 9)) mergedState.buttons |= CONTROLLER_BUTTONS.OPTIONS;
+      if (isButtonPressed(gamepad, 10)) mergedState.buttons |= CONTROLLER_BUTTONS.L3;
+      if (isButtonPressed(gamepad, 11)) mergedState.buttons |= CONTROLLER_BUTTONS.R3;
+      if (isButtonPressed(gamepad, 12)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_UP;
+      if (isButtonPressed(gamepad, 13)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_DOWN;
+      if (isButtonPressed(gamepad, 14)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_LEFT;
+      if (isButtonPressed(gamepad, 15)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_RIGHT;
+      if (isButtonPressed(gamepad, 16)) mergedState.buttons |= CONTROLLER_BUTTONS.PS;
+      if (isButtonPressed(gamepad, 17)) mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
+
+      const l2Value = getButtonValue(gamepad, 6);
+      const r2Value = getButtonValue(gamepad, 7);
+      mergedState.l2State = Math.max(mergedState.l2State, Math.round(l2Value * 255));
+      mergedState.r2State = Math.max(mergedState.r2State, Math.round(r2Value * 255));
+      if (l2Value >= 0.2) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
+      if (r2Value >= 0.2) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
+
+      const leftX = normalizeAxis(gamepad.axes[0] || 0);
+      const leftY = normalizeAxis(gamepad.axes[1] || 0);
+      const rightX = normalizeAxis(gamepad.axes[2] || 0);
+      const rightY = normalizeAxis(gamepad.axes[3] || 0);
+
+      if (Math.abs(leftX) > Math.abs(leftXNorm)) leftXNorm = leftX;
+      if (Math.abs(leftY) > Math.abs(leftYNorm)) leftYNorm = leftY;
+      if (Math.abs(rightX) > Math.abs(rightXNorm)) rightXNorm = rightX;
+      if (Math.abs(rightY) > Math.abs(rightYNorm)) rightYNorm = rightY;
+    }
+
+    mergedState.leftX = toSignedAxis(leftXNorm);
+    mergedState.leftY = toSignedAxis(leftYNorm);
+    mergedState.rightX = toSignedAxis(rightXNorm);
+    mergedState.rightY = toSignedAxis(rightYNorm);
+
+    validGamepadCountRef.current = validCount;
+    sendControllerState(mergedState);
+  };
+
   const updateStats = () => {
     const now = Date.now();
     const deltaSec = Math.max((now - lastStatsAtRef.current) / 1000, 0.001);
@@ -347,11 +521,13 @@ function StreamPage() {
       : "0";
 
     setStatsText(
-      `连接=${wsText} | 视频=${widthRef.current}x${heightRef.current}@${fpsRef.current} | 收=${receivedFramesRef.current} 渲=${renderedFramesRef.current} 丢=${droppedFramesRef.current} FPS=${renderFps} | 音频块 收=${audioReceivedChunksRef.current} 播=${audioPlayedChunksRef.current} 丢=${audioDroppedChunksRef.current} 缓冲=${audioBufferedMs}ms`
+      `连接=${wsText} | 视频=${widthRef.current}x${heightRef.current}@${fpsRef.current} | 收=${receivedFramesRef.current} 渲=${renderedFramesRef.current} 丢=${droppedFramesRef.current} FPS=${renderFps} | 音频块 收=${audioReceivedChunksRef.current} 播=${audioPlayedChunksRef.current} 丢=${audioDroppedChunksRef.current} 缓冲=${audioBufferedMs}ms | 手柄=${validGamepadCountRef.current} 发送=${controlSendCountRef.current} 失败=${controlSendErrorCountRef.current}`
     );
   };
 
   const renderLoop = () => {
+    pollAndSendGamepadState();
+
     const frame = latestFrameRef.current;
     if (frame) {
       latestFrameRef.current = null;
@@ -411,6 +587,7 @@ function StreamPage() {
 
         socket.onopen = () => {
           if (!active) return;
+          lastControlStateKeyRef.current = "";
           setStatus("WebSocket connected, waiting stream data...");
         };
 
@@ -488,6 +665,7 @@ function StreamPage() {
         socketRef.current.close();
       }
       socketRef.current = null;
+      lastControlStateKeyRef.current = "";
 
       Ipc.send("app", "stopStreamSession").catch(() => undefined);
     };
