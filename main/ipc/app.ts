@@ -2,25 +2,17 @@ import IpcBase from "./base";
 import { session } from "electron";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
-import http from "node:http";
 import net from "node:net";
-import WS from "ws";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
+import { StreamSessionService } from "../stream/session";
 
 const WAKEUP_PORT = 9302;
-const STREAM_WS_HOST = "127.0.0.1";
-const STREAM_WS_PATH = "/stream";
 const DDP_CLIENT_TYPE = "vr";
 const DDP_AUTH_TYPE = "R";
 const DDP_MODEL = "w";
 const DDP_APP_TYPE = "r";
 const DDP_VERSION = "00030010";
 const DEFAULT_WAKEUP_CREDENTIAL = "4077903901";
-
-let streamWebSocketServer: any = null;
-let streamHttpServer: http.Server | null = null;
-let streamWebSocketPort = 0;
-const WebSocketServerCtor = (WS as any).WebSocketServer || (WS as any).Server;
 
 const buildWakeupMessage = (userCredential: string | number) => {
   return (
@@ -132,119 +124,6 @@ const sendWakeupDatagram = async (
       }
     });
   });
-};
-
-const startStreamWebSocketServer = async () => {
-  if (streamHttpServer && streamWebSocketServer && streamWebSocketPort > 0) {
-    return {
-      host: STREAM_WS_HOST,
-      port: streamWebSocketPort,
-      path: STREAM_WS_PATH,
-      reused: true,
-    };
-  }
-
-  const httpServer = http.createServer();
-  const websocketServer = new WebSocketServerCtor({
-    server: httpServer,
-    path: STREAM_WS_PATH,
-  });
-
-  websocketServer.on("connection", (socket) => {
-    socket.send(JSON.stringify({ type: "connected", ts: Date.now() }));
-
-    socket.on("message", (raw) => {
-      try {
-        const message = JSON.parse(raw.toString());
-        console.log("Received message from stream client:", message);
-        if (message?.type === "ping") {
-          socket.send(JSON.stringify({ type: "pong", ts: Date.now() }));
-        } else {
-          socket.send(
-            JSON.stringify({
-              type: "ack",
-              ts: Date.now(),
-              data: message,
-            })
-          );
-        }
-      } catch {
-        socket.send(JSON.stringify({ type: "message", data: raw.toString() }));
-      }
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error) => {
-      reject(error);
-    };
-
-    httpServer.once("error", onError);
-    httpServer.listen(0, STREAM_WS_HOST, () => {
-      httpServer.removeListener("error", onError);
-      resolve();
-    });
-  });
-
-  const address = httpServer.address();
-  if (!address || typeof address === "string") {
-    websocketServer.close();
-    httpServer.close();
-    throw new Error("Failed to start stream websocket server.");
-  }
-
-  streamHttpServer = httpServer;
-  streamWebSocketServer = websocketServer;
-  streamWebSocketPort = address.port;
-
-  const resetStreamServerState = () => {
-    streamWebSocketServer = null;
-    streamHttpServer = null;
-    streamWebSocketPort = 0;
-  };
-
-  websocketServer.on("close", resetStreamServerState);
-  httpServer.on("close", resetStreamServerState);
-
-  return {
-    host: STREAM_WS_HOST,
-    port: streamWebSocketPort,
-    path: STREAM_WS_PATH,
-    reused: false,
-  };
-};
-
-const stopStreamWebSocketServer = async () => {
-  if (!streamHttpServer && !streamWebSocketServer) {
-    return { stopped: true, alreadyStopped: true };
-  }
-
-  const websocketServer = streamWebSocketServer;
-  const httpServer = streamHttpServer;
-
-  streamWebSocketServer = null;
-  streamHttpServer = null;
-  streamWebSocketPort = 0;
-
-  if (websocketServer) {
-    await new Promise<void>((resolve) => {
-      websocketServer.close(() => resolve());
-    });
-  }
-
-  if (httpServer && httpServer.listening) {
-    await new Promise<void>((resolve, reject) => {
-      httpServer.close((error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  return { stopped: true };
 };
 
 export default class IpcApp extends IpcBase {
@@ -442,11 +321,23 @@ export default class IpcApp extends IpcBase {
   }
 
   startStreamWebSocketServer() {
-    return startStreamWebSocketServer();
+    return StreamSessionService.startSocketServer();
   }
 
   stopStreamWebSocketServer() {
-    return stopStreamWebSocketServer();
+    return StreamSessionService.stopSocketServer();
+  }
+
+  startStreamSession(data: any) {
+    const settings = this.getSettings();
+    return StreamSessionService.startSession({
+      ...data,
+      settings,
+    });
+  }
+
+  stopStreamSession() {
+    return StreamSessionService.stopSession(true);
   }
 
   resetAutoConnect() {
