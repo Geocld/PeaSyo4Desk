@@ -6,6 +6,7 @@ import {
   Chip,
   Divider,
 } from "@heroui/react";
+import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
@@ -13,12 +14,12 @@ import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
 import StartStreamModals from "../../components/StartStreamModals";
-import mockConsoles from "../../mock/consoles.json";
 
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
 const PSN_LOGIN_STORAGE_KEY = "psn-login-info";
 const LOCAL_CONSOLES_KEY = "local-consoles";
+const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 
 type ConsoleCacheItem = {
   rpKey?: string;
@@ -68,7 +69,8 @@ const formatConsoleType = (item: ConsoleCacheItem) => {
 };
 
 function Home() {
-  const { t } = useTranslation("home");
+  const { t, i18n: { language: locale } } = useTranslation("home");
+  const router = useRouter();
   const { setTheme } = useTheme();
   const [isLogined, setIsLogined] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -124,11 +126,9 @@ function Home() {
       return;
     }
 
-    const cachedConsoles = parseCachedConsoles(
-      localStorage.getItem(LOCAL_CONSOLES_KEY)
+    setConsoles(
+      parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY))
     );
-    setConsoles(mockConsoles);
-    // setConsoles(cachedConsoles);
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {
@@ -177,6 +177,24 @@ function Home() {
       localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(nextConsoles));
       return nextConsoles;
     });
+  };
+
+  const handleStartPrepared = (payload: {
+    consoleInfo: ConsoleCacheItem;
+    streamHost: string;
+    isRemote: boolean;
+    wakeBeforeConnect: boolean;
+  }) => {
+    const pendingConfig = {
+      ...payload,
+      startedAt: Date.now(),
+    };
+
+    window.sessionStorage.setItem(
+      PENDING_STREAM_STORAGE_KEY,
+      JSON.stringify(pendingConfig)
+    );
+    router.push(`/${locale}/stream`);
   };
 
   return (
@@ -251,6 +269,7 @@ function Home() {
         consoleItem={selectedConsole}
         onClose={handleCloseStartStreamModal}
         onConsoleUpdated={handleConsoleUpdated}
+        onStartPrepared={handleStartPrepared}
       />
     </>
   );

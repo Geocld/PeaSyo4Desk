@@ -46,5 +46,12 @@
   "Remote wakeup sent, waiting 35 seconds...": "Remote wakeup sent, waiting 35 seconds...",
   "Failed to resolve host.": "Failed to resolve host.",
   "Failed to send wakeup packet.": "Failed to send wakeup packet.",
-  "Local host is empty": "Local host is empty"
+  "Local host is empty": "Local host is empty",
+  "Stream config is missing.": "Stream config is missing.",
+  "Failed to start stream server.": "Failed to start stream server.",
+  "Stream config is invalid.": "Stream config is invalid.",
+  "Stream preview": "Stream preview",
+  "Restart stream server": "Restart stream server",
+  "Preparing stream server...": "Preparing stream server...",
+  "Retry": "Retry"
 }

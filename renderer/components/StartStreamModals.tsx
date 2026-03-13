@@ -26,6 +26,12 @@ type StartStreamModalsProps = {
   consoleItem: ConsoleItem | null;
   onClose: () => void;
   onConsoleUpdated: (updatedConsole: ConsoleItem) => void;
+  onStartPrepared: (payload: {
+    consoleInfo: ConsoleItem;
+    streamHost: string;
+    isRemote: boolean;
+    wakeBeforeConnect: boolean;
+  }) => void;
 };
 
 type Step = "mode" | "remote";
@@ -104,6 +110,16 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       });
 
       setInfoText(t("Local wakeup packet sent."));
+      if (props.consoleItem) {
+        props.onStartPrepared({
+          consoleInfo: {
+            ...props.consoleItem,
+          },
+          streamHost: resolved.preferredAddress,
+          isRemote: false,
+          wakeBeforeConnect: true,
+        });
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error, t("Failed to send wakeup packet.")));
       return;
@@ -145,6 +161,18 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         consoleId: props.consoleItem?.consoleId,
       });
       setInfoText(t("Remote direct connect is ready."));
+      if (props.consoleItem) {
+        props.onStartPrepared({
+          consoleInfo: {
+            ...props.consoleItem,
+            remoteHost: remoteHost,
+            parsedRemoteHost: resolved.preferredAddress,
+          },
+          streamHost: resolved.preferredAddress,
+          isRemote: true,
+          wakeBeforeConnect: false,
+        });
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error, t("Failed to resolve host.")));
       return;
@@ -179,9 +207,18 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
 
       setInfoText(t("Remote wakeup sent, waiting 35 seconds..."));
       await wait(35000);
-
-      // TODO: route to stream page after stream page implementation is finished.
-      console.log("[home] Waited 35s after remote wakeup. TODO: navigate to stream page.");
+      if (props.consoleItem) {
+        props.onStartPrepared({
+          consoleInfo: {
+            ...props.consoleItem,
+            remoteHost: remoteHost,
+            parsedRemoteHost: resolved.preferredAddress,
+          },
+          streamHost: resolved.preferredAddress,
+          isRemote: true,
+          wakeBeforeConnect: true,
+        });
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error, t("Failed to send wakeup packet.")));
       return;

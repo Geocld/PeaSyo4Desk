@@ -46,5 +46,12 @@
   "Remote wakeup sent, waiting 35 seconds...": "远程唤醒包已发送，等待 35 秒中...",
   "Failed to resolve host.": "地址解析失败。",
   "Failed to send wakeup packet.": "发送唤醒包失败。",
-  "Local host is empty": "本地地址为空"
+  "Local host is empty": "本地地址为空",
+  "Stream config is missing.": "缺少串流启动参数。",
+  "Failed to start stream server.": "启动串流服务失败。",
+  "Stream config is invalid.": "串流参数无效。",
+  "Stream preview": "串流预览",
+  "Restart stream server": "重启串流服务",
+  "Preparing stream server...": "正在准备串流服务...",
+  "Retry": "重试"
 }
