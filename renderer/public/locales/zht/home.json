@@ -28,5 +28,9 @@
   "Account id login failed": "帳號 ID 登錄失敗",
   "Please input redirect URL": "請輸入重定向 URL",
   "Invalid redirect URL": "重定向 URL 無效",
-  "Manual login failed": "手動登錄失敗"
+  "Manual login failed": "手動登錄失敗",
+  "Cached host": "快取主機",
+  "No cached hosts": "暫無主機快取",
+  "You have no local console cache yet.": "目前尚無本地主機快取。",
+  "Add host": "新增主機"
 }

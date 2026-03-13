@@ -28,5 +28,9 @@
   "Account id login failed": "账号 ID 登录失败",
   "Please input redirect URL": "请输入重定向 URL",
   "Invalid redirect URL": "重定向 URL 无效",
-  "Manual login failed": "手动登录失败"
+  "Manual login failed": "手动登录失败",
+  "Cached host": "缓存主机",
+  "No cached hosts": "暂无主机缓存",
+  "You have no local console cache yet.": "当前还没有本地主机缓存。",
+  "Add host": "添加主机"
 }

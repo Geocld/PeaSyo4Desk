@@ -28,5 +28,9 @@
   "Account id login failed": "Account id login failed",
   "Please input redirect URL": "Please input redirect URL",
   "Invalid redirect URL": "Invalid redirect URL",
-  "Manual login failed": "Manual login failed"
+  "Manual login failed": "Manual login failed",
+  "Cached host": "Cached host",
+  "No cached hosts": "No cached hosts",
+  "You have no local console cache yet.": "You have no local console cache yet.",
+  "Add host": "Add host"
 }

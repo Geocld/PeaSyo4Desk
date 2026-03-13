@@ -1,21 +1,76 @@
+import {
+  Button,
+  Card,
+  CardBody,
+  CardFooter,
+  Chip,
+  Divider,
+} from "@heroui/react";
+import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
 
+import mockConsoles from "../../mock/consoles.json";
+
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
 const PSN_LOGIN_STORAGE_KEY = "psn-login-info";
+const LOCAL_CONSOLES_KEY = "local-consoles";
+
+type ConsoleCacheItem = {
+  rpKey?: string;
+  rpRegistKey?: string;
+  apName?: string;
+  apBssid?: string;
+  serverMac?: string;
+  apKey?: string;
+  serverNickname?: string;
+  apSsid?: string;
+  consoleId?: string;
+  host?: string;
+  remoteHost?: string;
+  registedTime?: number;
+};
 
 const hasLoginCredential = (loginInfo: any) => {
   return Boolean(loginInfo?.accessToken || loginInfo?.userInfo?.account_id);
 };
 
+const parseCachedConsoles = (raw: string | null): ConsoleCacheItem[] => {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item) => item && typeof item === "object");
+    }
+
+    if (parsed && typeof parsed === "object") {
+      return [parsed];
+    }
+
+    return [];
+  } catch (error) {
+    console.error("Invalid local consoles cache:", error);
+    return [];
+  }
+};
+
+const formatConsoleType = (item: ConsoleCacheItem) => {
+  if (item.apName) return item.apName;
+  return "PS";
+};
+
 function Home() {
+  const { t } = useTranslation("home");
   const { setTheme } = useTheme();
   const [isLogined, setIsLogined] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [consoles, setConsoles] = useState<ConsoleCacheItem[]>([]);
 
   useEffect(() => {
     const localTheme = localStorage.getItem('theme');
@@ -57,6 +112,20 @@ function Home() {
     }
   }, [setTheme]);
 
+  useEffect(() => {
+    if (!isLogined) {
+      setConsoles([]);
+      return;
+    }
+
+    const cachedConsoles = parseCachedConsoles(
+      localStorage.getItem(LOCAL_CONSOLES_KEY)
+    );
+    // setConsoles(cachedConsoles);
+    console.log('mockConsoles:', mockConsoles);
+    setConsoles(mockConsoles);
+  }, [isLogined]);
+
   const handleLoginSuccess = (loginInfo: any) => {
     if (!hasLoginCredential(loginInfo)) {
       throw new Error("Failed to get valid PSN login info.");
@@ -68,14 +137,68 @@ function Home() {
     setShowLoginModal(false);
   };
 
+  const handleAddHostClick = () => {
+    console.log("[home] Add host clicked. TODO: implement register flow.");
+  };
+
   return (
     <>
       <Nav isLogined={isLogined} />
 
       <Layout>
-        <div className="gap-4 grid grid-cols-3">
-          home
-        </div>
+        {isLogined && consoles.length > 0 ? (
+          <div className="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+            {consoles.map((item, index) => {
+              const nickname =
+                item.serverNickname || `${t("Consoles")} ${index + 1}`;
+              const type = formatConsoleType(item);
+              const hostText = item.remoteHost || item.host || "-";
+              const consoleId = item.consoleId || "-";
+
+              return (
+                <Card key={`${item.consoleId || "console"}-${index}`}>
+                  <CardBody>
+                    <p className="text-center">{nickname}</p>
+                    <p className="text-center text-sm text-gray-400">{type}</p>
+                    <p className="text-center text-xs text-gray-500">
+                      ({consoleId})
+                    </p>
+                  </CardBody>
+                  <Divider />
+                  <CardFooter>
+                    <Button
+                      color="primary"
+                      size="sm"
+                      className="w-full"
+                      onPress={() => {
+                        console.log("[home] Console selected:", item);
+                      }}
+                    >
+                      {t("Start stream")}
+                    </Button>
+                  </CardFooter>
+                </Card>
+              );
+            })}
+          </div>
+        ) : isLogined ? (
+          <Card className="max-w-2xl mx-auto">
+            <CardBody className="py-10">
+              <div className="text-center">
+                <p className="text-xl font-semibold">{t("No cached hosts")}</p>
+                <p className="text-sm text-gray-500 mt-2">
+                  {t("You have no local console cache yet.")}
+                </p>
+              </div>
+            </CardBody>
+            <Divider />
+            <CardFooter className="justify-center py-6">
+              <Button color="primary" onPress={handleAddHostClick}>
+                {t("Add host")}
+              </Button>
+            </CardFooter>
+          </Card>
+        ) : null}
       </Layout>
 
       <PsnLoginModals show={showLoginModal} onLoginSuccess={handleLoginSuccess} />
