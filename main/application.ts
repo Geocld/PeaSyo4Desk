@@ -1,9 +1,10 @@
-import { app as ElectronApp, BrowserWindow, dialog, powerSaveBlocker } from "electron";
+import { app as ElectronApp, BrowserWindow, powerSaveBlocker } from "electron";
 import serve from "electron-serve";
 import Store from "electron-store";
 import Debug from "debug";
 import { createWindow } from "./helpers";
 import Ipc from "./ipc";
+import Authentication from "./authentication";
 import { defaultSettings } from '../renderer/context/userContext.defaults'
 
 
@@ -30,6 +31,8 @@ export default class Application {
 
   public _mainWindow;
   public _ipc: Ipc;
+  public _authentication: Authentication;
+  public _msalAuthentication: any;
 
 
   public streamingTokens: any
@@ -62,8 +65,10 @@ export default class Application {
       ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
     }
 
-    this.readStartupFlags(settings);
+    this.readStartupFlags();
     this.loadApplicationDefaults();
+    this._authentication = new Authentication(this);
+    this._msalAuthentication = this._authentication;
 
     this._ipc = new Ipc(this);
 
@@ -86,7 +91,7 @@ export default class Application {
     this._startupFlags.autoConnect = "";
   }
 
-  readStartupFlags(settings: any) {
+  readStartupFlags() {
     this.log(
       "application",
       __filename + "[readStartupFlags()] Program args detected:",

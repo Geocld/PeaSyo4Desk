@@ -68,10 +68,7 @@ export default class IpcApp extends IpcBase {
   }
 
   login() {
-    return new Promise<boolean>(resolve => {
-      this._application._authentication.startAuthflow();
-      resolve(true);
-    });
+    return this._application._authentication.startAuthflow();
   }
 
   msalLogin() {
@@ -102,9 +99,7 @@ export default class IpcApp extends IpcBase {
   }
 
   clearData() {
-    return new Promise<boolean>((resolve, reject) => {
-      
-    });
+    return Promise.resolve(true);
   }
 
   clearUserData() {
