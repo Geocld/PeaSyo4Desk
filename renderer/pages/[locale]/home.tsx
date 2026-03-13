@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
-
+import StartStreamModals from "../../components/StartStreamModals";
 import mockConsoles from "../../mock/consoles.json";
 
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
@@ -32,6 +32,8 @@ type ConsoleCacheItem = {
   consoleId?: string;
   host?: string;
   remoteHost?: string;
+  parsedRemoteHost?: string;
+  userCredential?: string | number;
   registedTime?: number;
 };
 
@@ -71,6 +73,10 @@ function Home() {
   const [isLogined, setIsLogined] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [consoles, setConsoles] = useState<ConsoleCacheItem[]>([]);
+  const [showStartStreamModal, setShowStartStreamModal] = useState(false);
+  const [selectedConsole, setSelectedConsole] = useState<ConsoleCacheItem | null>(
+    null
+  );
 
   useEffect(() => {
     const localTheme = localStorage.getItem('theme');
@@ -121,9 +127,8 @@ function Home() {
     const cachedConsoles = parseCachedConsoles(
       localStorage.getItem(LOCAL_CONSOLES_KEY)
     );
-    // setConsoles(cachedConsoles);
-    console.log('mockConsoles:', mockConsoles);
     setConsoles(mockConsoles);
+    // setConsoles(cachedConsoles);
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {
@@ -139,6 +144,39 @@ function Home() {
 
   const handleAddHostClick = () => {
     console.log("[home] Add host clicked. TODO: implement register flow.");
+  };
+
+  const handleStartStreamClick = (item: ConsoleCacheItem) => {
+    setSelectedConsole(item);
+    setShowStartStreamModal(true);
+  };
+
+  const handleCloseStartStreamModal = () => {
+    setShowStartStreamModal(false);
+    setSelectedConsole(null);
+  };
+
+  const handleConsoleUpdated = (updatedConsole: ConsoleCacheItem) => {
+    setConsoles((prevConsoles) => {
+      const nextConsoles = prevConsoles.map((item) => {
+        if (item.consoleId && updatedConsole.consoleId) {
+          if (item.consoleId !== updatedConsole.consoleId) return item;
+          return { ...item, ...updatedConsole };
+        }
+
+        if (
+          item.serverNickname === updatedConsole.serverNickname &&
+          item.host === updatedConsole.host
+        ) {
+          return { ...item, ...updatedConsole };
+        }
+
+        return item;
+      });
+
+      localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(nextConsoles));
+      return nextConsoles;
+    });
   };
 
   return (
@@ -163,6 +201,14 @@ function Home() {
                     <p className="text-center text-xs text-gray-500">
                       ({consoleId})
                     </p>
+                    <div className="flex justify-center py-2">
+                      <Chip size="sm" radius="none" color="success">
+                        {t("Cached host")}
+                      </Chip>
+                    </div>
+                    <div className="text-xs text-gray-500 break-all text-center">
+                      {hostText}
+                    </div>
                   </CardBody>
                   <Divider />
                   <CardFooter>
@@ -170,9 +216,7 @@ function Home() {
                       color="primary"
                       size="sm"
                       className="w-full"
-                      onPress={() => {
-                        console.log("[home] Console selected:", item);
-                      }}
+                      onPress={() => handleStartStreamClick(item)}
                     >
                       {t("Start stream")}
                     </Button>
@@ -202,6 +246,12 @@ function Home() {
       </Layout>
 
       <PsnLoginModals show={showLoginModal} onLoginSuccess={handleLoginSuccess} />
+      <StartStreamModals
+        show={showStartStreamModal}
+        consoleItem={selectedConsole}
+        onClose={handleCloseStartStreamModal}
+        onConsoleUpdated={handleConsoleUpdated}
+      />
     </>
   );
 }

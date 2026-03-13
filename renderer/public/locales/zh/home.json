@@ -32,5 +32,19 @@
   "Cached host": "缓存主机",
   "No cached hosts": "暂无主机缓存",
   "You have no local console cache yet.": "当前还没有本地主机缓存。",
-  "Add host": "添加主机"
+  "Add host": "添加主机",
+  "Choose local network or remote network streaming.": "请选择本地网络串流或远程串流。",
+  "Local stream": "本地串流",
+  "Remote stream": "远程串流",
+  "Remote host": "远程地址",
+  "Please input remote host": "请输入远程地址",
+  "Back to mode": "返回模式选择",
+  "Direct connect": "直接连接",
+  "Wakeup and connect": "唤醒并连接",
+  "Local wakeup packet sent.": "本地唤醒包已发送。",
+  "Remote direct connect is ready.": "远程直接连接已准备完成。",
+  "Remote wakeup sent, waiting 35 seconds...": "远程唤醒包已发送，等待 35 秒中...",
+  "Failed to resolve host.": "地址解析失败。",
+  "Failed to send wakeup packet.": "发送唤醒包失败。",
+  "Local host is empty": "本地地址为空"
 }

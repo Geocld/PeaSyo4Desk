@@ -32,5 +32,19 @@
   "Cached host": "Cached host",
   "No cached hosts": "No cached hosts",
   "You have no local console cache yet.": "You have no local console cache yet.",
-  "Add host": "Add host"
+  "Add host": "Add host",
+  "Choose local network or remote network streaming.": "Choose local network or remote network streaming.",
+  "Local stream": "Local stream",
+  "Remote stream": "Remote stream",
+  "Remote host": "Remote host",
+  "Please input remote host": "Please input remote host",
+  "Back to mode": "Back to mode",
+  "Direct connect": "Direct connect",
+  "Wakeup and connect": "Wakeup and connect",
+  "Local wakeup packet sent.": "Local wakeup packet sent.",
+  "Remote direct connect is ready.": "Remote direct connect is ready.",
+  "Remote wakeup sent, waiting 35 seconds...": "Remote wakeup sent, waiting 35 seconds...",
+  "Failed to resolve host.": "Failed to resolve host.",
+  "Failed to send wakeup packet.": "Failed to send wakeup packet.",
+  "Local host is empty": "Local host is empty"
 }

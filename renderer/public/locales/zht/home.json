@@ -32,5 +32,19 @@
   "Cached host": "快取主機",
   "No cached hosts": "暫無主機快取",
   "You have no local console cache yet.": "目前尚無本地主機快取。",
-  "Add host": "新增主機"
+  "Add host": "新增主機",
+  "Choose local network or remote network streaming.": "請選擇本地網路串流或遠端串流。",
+  "Local stream": "本地串流",
+  "Remote stream": "遠端串流",
+  "Remote host": "遠端位址",
+  "Please input remote host": "請輸入遠端位址",
+  "Back to mode": "返回模式選擇",
+  "Direct connect": "直接連接",
+  "Wakeup and connect": "喚醒並連接",
+  "Local wakeup packet sent.": "本地喚醒封包已送出。",
+  "Remote direct connect is ready.": "遠端直接連接已準備完成。",
+  "Remote wakeup sent, waiting 35 seconds...": "遠端喚醒封包已送出，等待 35 秒中...",
+  "Failed to resolve host.": "位址解析失敗。",
+  "Failed to send wakeup packet.": "發送喚醒封包失敗。",
+  "Local host is empty": "本地位址為空"
 }
