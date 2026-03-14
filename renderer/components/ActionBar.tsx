@@ -7,14 +7,11 @@ import {
   DropdownItem,
 } from "@heroui/react";
 import Ipc from "../lib/ipc";
-import { useSettings } from "../context/userContext";
 
 const CONNECTED = 'connected';
 
 function ActionBar(props) {
   const { t } = useTranslation('cloud');
-
-  const { settings } = useSettings();
 
   const handleDisconnect = () => {
     props.onDisconnect && props.onDisconnect();
@@ -28,20 +25,8 @@ function ActionBar(props) {
     props.onTogglePerformance && props.onTogglePerformance();
   };
 
-  const handleDisplay = () => {
-    props.onDisplay && props.onDisplay();
-  };
-
   const handleAudio = () => {
     props.onAudio && props.onAudio();
-  };
-
-  const handleMic = () => {
-    props.onMic && props.onMic();
-  };
-
-  const handleText = () => {
-    props.onText && props.onText();
   };
 
   const handlePressNexus = () => {
@@ -66,7 +51,7 @@ function ActionBar(props) {
         </DropdownTrigger>
         <DropdownMenu aria-label="Static Actions">
           {
-            props.connectState === CONNECTED && (
+            props.connectState === CONNECTED && props.onTogglePerformance && (
               <DropdownItem key="performance" onClick={handleTogglePerformance}>
                 {t("Toggle Performance")}
               </DropdownItem>
@@ -74,7 +59,7 @@ function ActionBar(props) {
           }
 
           {
-            props.connectState === CONNECTED && (
+            props.connectState === CONNECTED && props.onPressNexus && (
               <DropdownItem key="pressNexus" onClick={handlePressNexus}>
                 {t("Press Nexus")}
               </DropdownItem>
@@ -82,9 +67,17 @@ function ActionBar(props) {
           }
 
           {
-            (props.connectState === CONNECTED && props.type !== 'cloud') && (
+            (props.connectState === CONNECTED && props.type !== 'cloud' && props.onLongPressNexus) && (
               <DropdownItem key="longPressNexus" onClick={handleLongPressNexus}>
                 {t("Long press Nexus")}
+              </DropdownItem>
+            )
+          }
+
+          {
+            props.connectState === CONNECTED && props.onAudio && (
+              <DropdownItem key="audio" onClick={handleAudio}>
+                {props.audioMuted ? t("Open Audio") : t("Close Audio")}
               </DropdownItem>
             )
           }
@@ -93,22 +86,30 @@ function ActionBar(props) {
             {t("Toggle fullscreen")}
           </DropdownItem>
 
-          <DropdownItem
-            key="disconnectPoweroff"
-            className="text-danger"
-            color="danger"
-            onClick={handleDisconnectAndPoweroff}
-          >
-            {t("Disconnect and power off")}
-          </DropdownItem>
-          <DropdownItem
-            key="disconnect"
-            className="text-danger"
-            color="danger"
-            onClick={handleDisconnect}
-          >
-            {t("Disconnect")}
-          </DropdownItem>
+          {
+            props.onDisconnectPowerOff && (
+              <DropdownItem
+                key="disconnectPoweroff"
+                className="text-danger"
+                color="danger"
+                onClick={handleDisconnectAndPoweroff}
+              >
+                {t("Disconnect and power off")}
+              </DropdownItem>
+            )
+          }
+          {
+            props.onDisconnect && (
+              <DropdownItem
+                key="disconnect"
+                className="text-danger"
+                color="danger"
+                onClick={handleDisconnect}
+              >
+                {t("Disconnect")}
+              </DropdownItem>
+            )
+          }
         </DropdownMenu>
       </Dropdown>
     </div>

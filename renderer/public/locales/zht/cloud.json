@@ -49,6 +49,8 @@
   "Connecting...": "正在連接...",
   "Disconnecting...": "正在斷開連接...",
   "Audio": "声音",
+  "Open Audio": "打開聲音",
+  "Close Audio": "關閉聲音",
   "Volume": "音量",
   "Audio settings": "声音设置",
   "Send text": "发送文字",

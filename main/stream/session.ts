@@ -1061,6 +1061,11 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
 const createSession = (sessionOptions: any) => {
   streamSession = new (chiaki as any).Session(sessionOptions, {
     onEvent: (event) => {
+      broadcastText({
+        type: "session_event",
+        name: event?.name || "unknown",
+      });
+
       if (event?.name === "connected") {
         broadcastText({ type: "session_status", status: "connected" });
         pushControllerState("connected-init");

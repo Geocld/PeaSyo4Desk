@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import Layout from "../../components/Layout";
+import { useRouter } from "next/router";
+import { useTranslation } from "next-i18next";
+import { addToast } from "@heroui/react";
+import ActionBar from "../../components/ActionBar";
+import Loading from "../../components/Loading";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
 
@@ -66,12 +70,17 @@ type ControllerStatePayload = {
 };
 
 function StreamPage() {
-  const [status, setStatus] = useState("initializing...");
+  const { t } = useTranslation("cloud");
+  const router = useRouter();
+
+  const [status, setStatus] = useState("");
+  const [connectState, setConnectState] = useState("initializing");
   const [wsUrl, setWsUrl] = useState("");
-  const [audioButtonText, setAudioButtonText] = useState("点击开启声音");
-  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioAvailable, setAudioAvailable] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(false);
+  const [showPerformance, setShowPerformance] = useState(false);
   const [statsText, setStatsText] = useState("");
-  const [outgoingMessage, setOutgoingMessage] = useState('{"type":"ping"}');
+  const [videoReady, setVideoReady] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -93,8 +102,10 @@ function StreamPage() {
   const lastStatsAtRef = useRef(Date.now());
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const audioGainNodeRef = useRef<GainNode | null>(null);
   const audioUnlockedRef = useRef(false);
-  const audioEnabledRef = useRef(false);
+  const audioAvailableRef = useRef(false);
+  const audioMutedRef = useRef(false);
   const audioChannelsRef = useRef(2);
   const audioRateRef = useRef(48000);
   const audioFrameSamplesRef = useRef(960);
@@ -108,6 +119,12 @@ function StreamPage() {
   const controlSendCountRef = useRef(0);
   const controlSendErrorCountRef = useRef(0);
   const lastControlStateKeyRef = useRef("");
+  const disconnectingRef = useRef(false);
+  const connectedToastShownRef = useRef(false);
+  const videoReadyRef = useRef(false);
+
+  const isSessionConnected = connectState === "connected";
+  const shouldShowVideo = isSessionConnected && videoReady;
 
   const applyVideoConfig = (config: any) => {
     const width = Number(config?.width || widthRef.current);
@@ -127,12 +144,21 @@ function StreamPage() {
     }
   };
 
+  const setAudioMutedState = (muted: boolean) => {
+    audioMutedRef.current = muted;
+    setAudioMuted(muted);
+
+    if (audioGainNodeRef.current) {
+      audioGainNodeRef.current.gain.value = muted ? 0 : 1;
+    }
+  };
+
   const applyAudioConfig = (config: any) => {
-    const enabled = !!config?.enabled;
-    audioEnabledRef.current = enabled;
-    setAudioEnabled(enabled);
-    if (!enabled) {
-      setAudioButtonText("等待音频流");
+    const available = !!config?.enabled;
+    audioAvailableRef.current = available;
+    setAudioAvailable(available);
+    if (!available) {
+      setAudioMutedState(false);
       return;
     }
 
@@ -143,8 +169,7 @@ function StreamPage() {
     if (channels > 0) audioChannelsRef.current = channels;
     if (rate > 0) audioRateRef.current = rate;
     if (frameSamples > 0) audioFrameSamplesRef.current = frameSamples;
-
-    setAudioButtonText(audioUnlockedRef.current ? "声音已开启" : "点击开启声音");
+    void ensureAudioContext();
   };
 
   const ensure2dContext = () => {
@@ -234,7 +259,7 @@ function StreamPage() {
 
   const playAudioChunk = (arrayBuffer: ArrayBuffer) => {
     const audioContext = audioContextRef.current;
-    if (!audioContext || audioContext.state !== "running" || !audioEnabledRef.current) {
+    if (!audioContext || audioContext.state !== "running" || !audioAvailableRef.current) {
       return false;
     }
 
@@ -271,7 +296,7 @@ function StreamPage() {
 
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
+    source.connect(audioGainNodeRef.current || audioContext.destination);
     source.start(nextAudioTimeRef.current);
     nextAudioTimeRef.current += audioBuffer.duration;
     audioPlayedChunksRef.current += 1;
@@ -300,7 +325,7 @@ function StreamPage() {
     const aligned = new Uint8Array(audioBytes.byteLength);
     aligned.set(audioBytes);
 
-    if (!audioUnlockedRef.current) {
+    if (!audioUnlockedRef.current || !videoReadyRef.current) {
       queueAudioBuffer(aligned.buffer);
       return;
     }
@@ -343,17 +368,22 @@ function StreamPage() {
   };
 
   const ensureAudioContext = async () => {
-    if (!audioEnabledRef.current) {
+    if (!audioAvailableRef.current) {
       return;
     }
 
     if (!audioContextRef.current) {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (!Ctx) {
-        setAudioButtonText("浏览器不支持音频");
+        setStatus("Audio context is not supported.");
         return;
       }
       audioContextRef.current = new Ctx({ latencyHint: "interactive" });
+    }
+
+    if (!audioGainNodeRef.current && audioContextRef.current) {
+      audioGainNodeRef.current = audioContextRef.current.createGain();
+      audioGainNodeRef.current.connect(audioContextRef.current.destination);
     }
 
     if (audioContextRef.current.state !== "running") {
@@ -365,10 +395,22 @@ function StreamPage() {
     }
 
     audioUnlockedRef.current = audioContextRef.current.state === "running";
-    setAudioButtonText(audioUnlockedRef.current ? "声音已开启" : "点击开启声音");
     if (audioUnlockedRef.current) {
+      setAudioMutedState(audioMutedRef.current);
       flushPendingAudio();
     }
+  };
+
+  const toggleAudioMuted = async () => {
+    if (!audioAvailableRef.current) {
+      return;
+    }
+
+    if (!audioUnlockedRef.current || !audioContextRef.current) {
+      await ensureAudioContext();
+    }
+
+    setAudioMutedState(!audioMutedRef.current);
   };
 
   const normalizeAxis = (value: number) => {
@@ -533,6 +575,16 @@ function StreamPage() {
       latestFrameRef.current = null;
       drawI420Cpu(frame);
       renderedFramesRef.current += 1;
+
+      if (!videoReadyRef.current) {
+        videoReadyRef.current = true;
+        setVideoReady(true);
+        if (audioAvailableRef.current) {
+          void ensureAudioContext().then(() => {
+            flushPendingAudio();
+          });
+        }
+      }
     }
 
     rafRef.current = requestAnimationFrame(renderLoop);
@@ -543,6 +595,14 @@ function StreamPage() {
 
     const start = async () => {
       try {
+        disconnectingRef.current = false;
+        connectedToastShownRef.current = false;
+        videoReadyRef.current = false;
+        setVideoReady(false);
+        setAudioMutedState(false);
+        setAudioAvailable(false);
+        audioAvailableRef.current = false;
+
         const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
         if (!raw) {
           setStatus("缺少 pending-stream-config，请从 Home 页面重新进入。");
@@ -566,10 +626,12 @@ function StreamPage() {
 
         if (!streamHost) {
           setStatus("streamHost 为空，无法启动串流。");
+          setConnectState("error");
           return;
         }
 
-        setStatus("正在启动串流 session...");
+        setStatus(t("Connecting..."));
+        setConnectState("starting");
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,
           isRemote: !!pendingConfig?.isRemote,
@@ -579,7 +641,7 @@ function StreamPage() {
 
         const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
         setWsUrl(url);
-        setStatus("WebSocket connecting...");
+        setStatus(t("Connecting..."));
 
         const socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
@@ -588,7 +650,7 @@ function StreamPage() {
         socket.onopen = () => {
           if (!active) return;
           lastControlStateKeyRef.current = "";
-          setStatus("WebSocket connected, waiting stream data...");
+          setStatus(t("Connecting..."));
         };
 
         socket.onmessage = (event) => {
@@ -601,10 +663,46 @@ function StreamPage() {
                 applyVideoConfig(msg);
               } else if (msg?.type === "audio_config") {
                 applyAudioConfig(msg);
+              } else if (msg?.type === "session_event") {
+                if (msg?.name === "connected") {
+                  setConnectState("connected");
+                  setStatus(t("Connected"));
+                  if (!connectedToastShownRef.current) {
+                    connectedToastShownRef.current = true;
+                    addToast({
+                      title: t("Connected"),
+                      color: "success",
+                    });
+                  }
+                  void ensureAudioContext();
+                } else if (msg?.name === "quit") {
+                  setConnectState("quit");
+                  setStatus("session: quit");
+                } else if (typeof msg?.name === "string") {
+                  setStatus(`session: ${msg.name}`);
+                }
               } else if (msg?.type === "session_status") {
-                setStatus(`session: ${msg.status}`);
+                if (msg?.status === "connected") {
+                  setConnectState("connected");
+                  setStatus(t("Connected"));
+                  if (!connectedToastShownRef.current) {
+                    connectedToastShownRef.current = true;
+                    addToast({
+                      title: t("Connected"),
+                      color: "success",
+                    });
+                  }
+                } else if (msg?.status === "starting") {
+                  setConnectState("starting");
+                  setStatus(t("Connecting..."));
+                } else if (msg?.status === "quit" || msg?.status === "stopped") {
+                  setConnectState(String(msg.status));
+                  setStatus(`session: ${msg.status}`);
+                } else {
+                  setStatus(`session: ${msg.status}`);
+                }
               } else if (msg?.type === "connected") {
-                setStatus("stream socket connected");
+                setStatus(t("Connecting..."));
               }
             } catch {
               // ignore malformed text frame
@@ -631,17 +729,22 @@ function StreamPage() {
         socket.onerror = () => {
           if (!active) return;
           setStatus("WebSocket error");
+          setConnectState("error");
         };
 
         socket.onclose = () => {
           if (!active) return;
           setStatus("WebSocket closed");
+          if (!disconnectingRef.current) {
+            setConnectState("closed");
+          }
           if (socketRef.current === socket) {
             socketRef.current = null;
           }
         };
       } catch (error: any) {
         setStatus(`启动失败: ${error?.message || String(error)}`);
+        setConnectState("error");
       }
     };
 
@@ -667,63 +770,99 @@ function StreamPage() {
       socketRef.current = null;
       lastControlStateKeyRef.current = "";
 
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => undefined);
+      }
+      audioContextRef.current = null;
+      audioGainNodeRef.current = null;
+      audioUnlockedRef.current = false;
+      audioAvailableRef.current = false;
+      videoReadyRef.current = false;
+      setVideoReady(false);
+
       Ipc.send("app", "stopStreamSession").catch(() => undefined);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t]);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (audioAvailableRef.current && !audioUnlockedRef.current) {
+        void ensureAudioContext();
+      }
+    };
+
+    window.addEventListener("pointerdown", unlockAudio);
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sendTestMessage = () => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setStatus("socket not connected");
+  const handleDisconnect = async () => {
+    if (disconnectingRef.current) {
       return;
     }
 
-    socket.send(outgoingMessage);
+    disconnectingRef.current = true;
+    setConnectState("disconnecting");
+    setStatus(t("Disconnecting..."));
+
+    try {
+      if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
+        socketRef.current.close();
+      }
+    } catch {
+      // ignore close errors
+    }
+
+    await Ipc.send("app", "stopStreamSession").catch(() => undefined);
+    const localeParam = Array.isArray(router.query.locale)
+      ? router.query.locale[0]
+      : router.query.locale || "en";
+    router.push(`/${localeParam}/home`);
   };
 
   return (
-    <Layout>
-      <div className="flex flex-col gap-2 h-[calc(100vh-120px)] p-4 text-sm">
-        <div>WebSocket status: {status}</div>
-        <div>WebSocket url: {wsUrl || "-"}</div>
-        <div>{statsText || "-"}</div>
+    <div className="relative h-screen w-screen overflow-hidden bg-black">
+      <ActionBar
+        type="remoteplay"
+        connectState={connectState}
+        audioMuted={audioMuted}
+        onAudio={audioAvailable ? toggleAudioMuted : undefined}
+        onDisconnect={handleDisconnect}
+        onTogglePerformance={() => setShowPerformance((prev) => !prev)}
+      />
 
-        <div className="flex gap-2 mt-2 max-w-2xl">
-          <button
-            type="button"
-            className="border rounded px-3 py-1"
-            disabled={!audioEnabled}
-            onClick={() => ensureAudioContext()}
-          >
-            {audioButtonText}
-          </button>
-          <input
-            className="border rounded px-2 py-1 flex-1 bg-transparent"
-            value={outgoingMessage}
-            onChange={(event) => setOutgoingMessage(event.target.value)}
-            placeholder="message to websocket"
-          />
-          <button type="button" className="border rounded px-3 py-1" onClick={sendTestMessage}>
-            Send
-          </button>
+      {showPerformance ? (
+        <div className="absolute left-4 top-4 z-[100] max-w-[calc(100%-120px)] rounded bg-black/55 px-3 py-2 text-xs text-white backdrop-blur-sm">
+          <div>{status || "-"}</div>
+          <div>{wsUrl || "-"}</div>
+          <div>{statsText || "-"}</div>
         </div>
+      ) : null}
 
-        <canvas
-          ref={canvasRef}
-          width={1280}
-          height={720}
-          className="w-full max-w-[1280px] border rounded bg-black"
-        />
-      </div>
-    </Layout>
+      <canvas
+        ref={canvasRef}
+        width={1280}
+        height={720}
+        className={`absolute inset-0 h-full w-full object-cover ${
+          shouldShowVideo ? "opacity-100" : "opacity-0"
+        }`}
+      />
+
+      {!shouldShowVideo ? (
+        <Loading loadingText={status || t("Connecting...")} />
+      ) : null}
+    </div>
   );
 }
 
 export default StreamPage;
 
 // eslint-disable-next-line react-refresh/only-export-components
-export const getStaticProps = makeStaticProperties(["common", "home"]);
+export const getStaticProps = makeStaticProperties(["common", "home", "cloud"]);
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { getStaticPaths };

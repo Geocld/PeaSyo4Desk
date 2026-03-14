@@ -39,6 +39,8 @@
   "The terminal seems to have been without a screen for a long time. Please try reconnecting.": "The terminal seems to have been without a screen for a long time. Please try reconnecting.",
   "Keep waiting": "Keep waiting",
   "Audio": "Audio",
+  "Open Audio": "Open Audio",
+  "Close Audio": "Close Audio",
   "Volume": "Volume",
   "Audio settings": "Audio settings",
   "Send text": "Send text",
