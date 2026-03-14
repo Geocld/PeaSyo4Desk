@@ -1055,14 +1055,16 @@ function StreamPage() {
         </div>
       ) : null}
 
-      <canvas
-        ref={canvasRef}
-        width={1280}
-        height={720}
-        className={`absolute inset-0 h-full w-full object-cover ${
-          shouldShowVideo ? "opacity-100" : "opacity-0"
-        }`}
-      />
+      <div className="absolute inset-0 flex items-center justify-center bg-black">
+        <canvas
+          ref={canvasRef}
+          width={1280}
+          height={720}
+          className={`block h-auto w-full max-h-full max-w-full ${
+            shouldShowVideo ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      </div>
 
       {!shouldShowVideo ? (
         <Loading loadingText={status || t("Connecting...")} />
