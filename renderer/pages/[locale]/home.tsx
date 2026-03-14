@@ -16,6 +16,7 @@ import PsnLoginModals from "../../components/PsnLoginModals";
 import StartStreamModals from "../../components/StartStreamModals";
 
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
+import mockConsoles from '../../../mock/console.json'
 
 const PSN_LOGIN_STORAGE_KEY = "psn-login-info";
 const LOCAL_CONSOLES_KEY = "local-consoles";
@@ -126,9 +127,12 @@ function Home() {
       return;
     }
 
-    setConsoles(
-      parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY))
-    );
+    // Just for mock
+    setConsoles(mockConsoles);
+
+    // setConsoles(
+    //   parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY))
+    // );
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {

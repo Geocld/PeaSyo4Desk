@@ -110,6 +110,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       });
 
       setInfoText(t("Local wakeup packet sent."));
+
       if (props.consoleItem) {
         props.onStartPrepared({
           consoleInfo: {
@@ -120,6 +121,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           wakeBeforeConnect: true,
         });
       }
+      
     } catch (error) {
       setErrorText(getErrorMessage(error, t("Failed to send wakeup packet.")));
       return;
