@@ -10,6 +10,7 @@ import {
 } from "@heroui/react";
 import { useTranslation } from "next-i18next";
 import Ipc from "../lib/ipc";
+import { getWakeupCredentialFromRegistKey } from "../common/remotePlay";
 
 type ConsoleItem = {
   consoleId?: string;
@@ -18,6 +19,7 @@ type ConsoleItem = {
   host?: string;
   remoteHost?: string;
   parsedRemoteHost?: string;
+  rpRegistKey?: string;
   userCredential?: string | number;
 };
 
@@ -85,7 +87,9 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
   const sendWakeup = async (host: string) => {
     return Ipc.send("app", "sendWakeupPacket", {
       host,
-      userCredential: props.consoleItem?.userCredential,
+      userCredential:
+        props.consoleItem?.userCredential ||
+        getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey),
     });
   };
 

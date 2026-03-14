@@ -14,7 +14,6 @@ export type PsnLoginInfo = {
 };
 
 export type ConsoleCacheItem = {
-  target?: number;
   rpKey?: string;
   rpRegistKey?: string;
   rpRegistKeyRaw?: string;
@@ -36,10 +35,75 @@ export type ConsoleCacheItem = {
   stateName?: string;
 };
 
-const compactConsoleItem = (item: ConsoleCacheItem) => {
-  return Object.fromEntries(
-    Object.entries(item).filter(([, value]) => value !== undefined)
-  ) as ConsoleCacheItem;
+const buildStorageConsoleId = (item: ConsoleCacheItem) => {
+  return String(item.consoleId || item.hostId || item.serverMac || item.host || "").trim();
+};
+
+const normalizeStoredRegistKey = (item: ConsoleCacheItem) => {
+  const preferredValue = String(item.rpRegistKeyRaw || item.rpRegistKey || "").trim();
+  if (!preferredValue) {
+    return "";
+  }
+
+  if (item.rpRegistKeyRaw) {
+    return preferredValue;
+  }
+
+  if (/^[0-9a-fA-F]+$/.test(preferredValue)) {
+    return btoa(preferredValue.padEnd(16, "\0"));
+  }
+
+  return preferredValue;
+};
+
+export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheItem => {
+  const rpKey = String(item.rpKey || "").trim();
+  const rpRegistKey = normalizeStoredRegistKey(item);
+  const apName = String(item.apName || "").trim();
+  const apBssid = String(item.apBssid || "").trim();
+  const serverMac = String(item.serverMac || "").trim();
+  const apKey = String(item.apKey || "").trim();
+  const serverNickname = String(item.serverNickname || "").trim();
+  const apSsid = String(item.apSsid || "").trim();
+  const consoleId = buildStorageConsoleId(item);
+  const host = String(item.host || "").trim();
+  const remoteHost = String(item.remoteHost || "").trim();
+  const registedTime = Number(item.registedTime || Date.now());
+
+  return {
+    rpKey,
+    rpRegistKey,
+    apName,
+    apBssid,
+    serverMac,
+    apKey,
+    serverNickname,
+    apSsid,
+    consoleId,
+    host,
+    remoteHost,
+    registedTime: Number.isFinite(registedTime) ? registedTime : Date.now(),
+  };
+};
+
+export const getWakeupCredentialFromRegistKey = (
+  rpRegistKey: string | undefined
+) => {
+  const encoded = String(rpRegistKey || "").trim();
+  if (!encoded) {
+    return "";
+  }
+
+  try {
+    const decoded = atob(encoded);
+    const hexText = decoded.replace(/\0+$/g, "").trim();
+    if (!hexText) {
+      return "";
+    }
+    return BigInt(`0x${hexText}`).toString(10);
+  } catch {
+    return "";
+  }
 };
 
 export const hasLoginCredential = (loginInfo: PsnLoginInfo | null | undefined) => {
@@ -67,11 +131,13 @@ export const parseCachedConsoles = (raw: string | null): ConsoleCacheItem[] => {
     const parsed = JSON.parse(raw);
 
     if (Array.isArray(parsed)) {
-      return parsed.filter((item) => item && typeof item === "object");
+      return parsed
+        .filter((item) => item && typeof item === "object")
+        .map((item) => normalizeConsoleCacheItem(item as ConsoleCacheItem));
     }
 
     if (parsed && typeof parsed === "object") {
-      return [parsed];
+      return [normalizeConsoleCacheItem(parsed as ConsoleCacheItem)];
     }
 
     return [];
@@ -85,13 +151,9 @@ export const upsertConsoleCache = (
   consoles: ConsoleCacheItem[],
   incomingConsole: ConsoleCacheItem
 ) => {
-  const normalizedIncoming = compactConsoleItem(incomingConsole);
+  const normalizedIncoming = normalizeConsoleCacheItem(incomingConsole);
   const index = consoles.findIndex((item) => {
     if (normalizedIncoming.consoleId && item.consoleId === normalizedIncoming.consoleId) {
-      return true;
-    }
-
-    if (normalizedIncoming.hostId && item.hostId === normalizedIncoming.hostId) {
       return true;
     }
 
@@ -116,7 +178,7 @@ export const upsertConsoleCache = (
   }
 
   const nextConsoles = [...consoles];
-  nextConsoles[index] = compactConsoleItem({
+  nextConsoles[index] = normalizeConsoleCacheItem({
     ...consoles[index],
     ...normalizedIncoming,
   });

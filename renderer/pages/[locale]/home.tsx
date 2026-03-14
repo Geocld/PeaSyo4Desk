@@ -30,6 +30,19 @@ const formatConsoleType = (item: ConsoleCacheItem) => {
   return "PS";
 };
 
+const formatRegisteredTime = (value: number | undefined) => {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleString();
+};
+
 function Home() {
   const { t, i18n: { language: locale } } = useTranslation("home");
   const router = useRouter();
@@ -88,7 +101,11 @@ function Home() {
       return;
     }
 
-    setConsoles(parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY)));
+    const cachedConsoles = parseCachedConsoles(
+      localStorage.getItem(LOCAL_CONSOLES_KEY)
+    );
+    localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(cachedConsoles));
+    setConsoles(cachedConsoles);
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {
@@ -166,8 +183,9 @@ function Home() {
                 const nickname =
                   item.serverNickname || `${t("Consoles")} ${index + 1}`;
                 const type = formatConsoleType(item);
-                const hostText = item.remoteHost || item.host || "-";
+                const hostText = item.host || "-";
                 const consoleId = item.consoleId || "-";
+                const registeredTimeText = formatRegisteredTime(item.registedTime);
 
                 return (
                   <Card key={`${item.consoleId || "console"}-${index}`}>
@@ -182,8 +200,23 @@ function Home() {
                           {t("Cached host")}
                         </Chip>
                       </div>
-                      <div className="text-xs text-gray-500 break-all text-center">
-                        {hostText}
+                      <div className="flex flex-col gap-2 text-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-gray-500">{t("Host name")}</span>
+                          <span className="text-right break-all">{nickname}</span>
+                        </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-gray-500">{t("Host ID")}</span>
+                          <span className="text-right break-all">{consoleId}</span>
+                        </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-gray-500">{t("Host IP")}</span>
+                          <span className="text-right break-all">{hostText}</span>
+                        </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-gray-500">{t("Registered at")}</span>
+                          <span className="text-right break-all">{registeredTimeText}</span>
+                        </div>
                       </div>
                     </CardBody>
                     <Divider />
