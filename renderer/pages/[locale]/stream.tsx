@@ -177,6 +177,7 @@ function StreamPage() {
   const audioUnlockedRef = useRef(false);
   const audioAvailableRef = useRef(false);
   const audioMutedRef = useRef(false);
+  const audioPlaybackEnabledRef = useRef(false);
   const audioChannelsRef = useRef(2);
   const audioRateRef = useRef(48000);
   const audioFrameSamplesRef = useRef(960);
@@ -192,8 +193,11 @@ function StreamPage() {
   const lastControlStateKeyRef = useRef("");
   const disconnectingRef = useRef(false);
   const connectedToastShownRef = useRef(false);
+  const sessionConnectedRef = useRef(false);
   const videoReadyRef = useRef(false);
   const sessionErrorHandledRef = useRef(false);
+  const connectedToastRafRef = useRef<number | null>(null);
+  const audioStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -411,7 +415,11 @@ function StreamPage() {
     const aligned = new Uint8Array(audioBytes.byteLength);
     aligned.set(audioBytes);
 
-    if (!audioUnlockedRef.current || !videoReadyRef.current) {
+    if (
+      !audioUnlockedRef.current ||
+      !videoReadyRef.current ||
+      !audioPlaybackEnabledRef.current
+    ) {
       queueAudioBuffer(aligned.buffer);
       return;
     }
@@ -453,7 +461,7 @@ function StreamPage() {
     }
   };
 
-  const ensureAudioContext = async () => {
+  const ensureAudioContext = async (flushPending = false) => {
     if (!audioAvailableRef.current) {
       return;
     }
@@ -483,8 +491,64 @@ function StreamPage() {
     audioUnlockedRef.current = audioContextRef.current.state === "running";
     if (audioUnlockedRef.current) {
       setAudioMutedState(audioMutedRef.current);
-      flushPendingAudio();
+      if (flushPending && videoReadyRef.current && audioPlaybackEnabledRef.current) {
+        flushPendingAudio();
+      }
     }
+  };
+
+  const clearConnectedFeedbackTimers = () => {
+    if (connectedToastRafRef.current !== null) {
+      cancelAnimationFrame(connectedToastRafRef.current);
+      connectedToastRafRef.current = null;
+    }
+
+    if (audioStartTimerRef.current) {
+      clearTimeout(audioStartTimerRef.current);
+      audioStartTimerRef.current = null;
+    }
+  };
+
+  const showConnectedToastThenEnableAudio = () => {
+    if (
+      !sessionConnectedRef.current ||
+      !videoReadyRef.current ||
+      connectedToastShownRef.current ||
+      disconnectingRef.current
+    ) {
+      return;
+    }
+
+    connectedToastShownRef.current = true;
+    clearConnectedFeedbackTimers();
+
+    const runAfterVideoPaint = () => {
+      connectedToastRafRef.current = requestAnimationFrame(() => {
+        connectedToastRafRef.current = requestAnimationFrame(() => {
+          connectedToastRafRef.current = null;
+
+          if (disconnectingRef.current) {
+            return;
+          }
+
+          addToast({
+            title: t("Connected"),
+            color: "success",
+          });
+
+          audioStartTimerRef.current = setTimeout(() => {
+            audioStartTimerRef.current = null;
+            audioPlaybackEnabledRef.current = true;
+
+            if (audioAvailableRef.current) {
+              void ensureAudioContext(true);
+            }
+          }, 180);
+        });
+      });
+    };
+
+    runAfterVideoPaint();
   };
 
   const toggleAudioMuted = async () => {
@@ -493,7 +557,7 @@ function StreamPage() {
     }
 
     if (!audioUnlockedRef.current || !audioContextRef.current) {
-      await ensureAudioContext();
+      await ensureAudioContext(false);
     }
 
     setAudioMutedState(!audioMutedRef.current);
@@ -665,11 +729,7 @@ function StreamPage() {
       if (!videoReadyRef.current) {
         videoReadyRef.current = true;
         setVideoReady(true);
-        if (audioAvailableRef.current) {
-          void ensureAudioContext().then(() => {
-            flushPendingAudio();
-          });
-        }
+        showConnectedToastThenEnableAudio();
       }
     }
 
@@ -683,8 +743,11 @@ function StreamPage() {
       try {
         disconnectingRef.current = false;
         connectedToastShownRef.current = false;
+        sessionConnectedRef.current = false;
         videoReadyRef.current = false;
         sessionErrorHandledRef.current = false;
+        audioPlaybackEnabledRef.current = false;
+        clearConnectedFeedbackTimers();
         setVideoReady(false);
         setAudioMutedState(false);
         setAudioAvailable(false);
@@ -759,16 +822,10 @@ function StreamPage() {
                 const eventName = String(sessionEvent.name || msg?.name || "unknown");
 
                 if (eventName === "connected") {
+                  sessionConnectedRef.current = true;
                   setConnectState("connected");
                   setStatus(t("Connected"));
-                  if (!connectedToastShownRef.current) {
-                    connectedToastShownRef.current = true;
-                    addToast({
-                      title: t("Connected"),
-                      color: "success",
-                    });
-                  }
-                  void ensureAudioContext();
+                  showConnectedToastThenEnableAudio();
                 } else if (!NON_ERROR_SESSION_EVENT_NAMES.has(eventName)) {
                   openSessionAlert(
                     buildSessionEventErrorMessage(sessionEvent),
@@ -779,15 +836,10 @@ function StreamPage() {
                 }
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
+                  sessionConnectedRef.current = true;
                   setConnectState("connected");
                   setStatus(t("Connected"));
-                  if (!connectedToastShownRef.current) {
-                    connectedToastShownRef.current = true;
-                    addToast({
-                      title: t("Connected"),
-                      color: "success",
-                    });
-                  }
+                  showConnectedToastThenEnableAudio();
                 } else if (msg?.status === "starting") {
                   setConnectState("starting");
                   setStatus(t("Connecting..."));
@@ -869,6 +921,7 @@ function StreamPage() {
       }
       socketRef.current = null;
       lastControlStateKeyRef.current = "";
+      clearConnectedFeedbackTimers();
 
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => undefined);
@@ -877,6 +930,8 @@ function StreamPage() {
       audioGainNodeRef.current = null;
       audioUnlockedRef.current = false;
       audioAvailableRef.current = false;
+      audioPlaybackEnabledRef.current = false;
+      sessionConnectedRef.current = false;
       videoReadyRef.current = false;
       sessionErrorHandledRef.current = false;
       setVideoReady(false);
@@ -889,7 +944,7 @@ function StreamPage() {
   useEffect(() => {
     const unlockAudio = () => {
       if (audioAvailableRef.current && !audioUnlockedRef.current) {
-        void ensureAudioContext();
+        void ensureAudioContext(false);
       }
     };
 
@@ -907,6 +962,8 @@ function StreamPage() {
     }
 
     disconnectingRef.current = true;
+    audioPlaybackEnabledRef.current = false;
+    clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting..."));
 
@@ -931,6 +988,8 @@ function StreamPage() {
     }
 
     disconnectingRef.current = true;
+    audioPlaybackEnabledRef.current = false;
+    clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting and putting console into standby..."));
 
