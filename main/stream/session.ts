@@ -235,7 +235,6 @@ const ensureInitialized = () => {
 };
 
 const resolveResolution = (resolution: number) => {
-  if (resolution >= 2160) return { width: 3840, height: 2160 };
   if (resolution >= 1080) return { width: 1920, height: 1080 };
   if (resolution >= 720) return { width: 1280, height: 720 };
   if (resolution >= 540) return { width: 960, height: 540 };
