@@ -14,55 +14,16 @@ import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
 import StartStreamModals from "../../components/StartStreamModals";
-
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
-import mockConsoles from '../../../mock/console.json'
-
-const PSN_LOGIN_STORAGE_KEY = "psn-login-info";
-const LOCAL_CONSOLES_KEY = "local-consoles";
-const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
-
-type ConsoleCacheItem = {
-  rpKey?: string;
-  rpRegistKey?: string;
-  apName?: string;
-  apBssid?: string;
-  serverMac?: string;
-  apKey?: string;
-  serverNickname?: string;
-  apSsid?: string;
-  consoleId?: string;
-  host?: string;
-  remoteHost?: string;
-  parsedRemoteHost?: string;
-  userCredential?: string | number;
-  registedTime?: number;
-};
-
-const hasLoginCredential = (loginInfo: any) => {
-  return Boolean(loginInfo?.accessToken || loginInfo?.userInfo?.account_id);
-};
-
-const parseCachedConsoles = (raw: string | null): ConsoleCacheItem[] => {
-  if (!raw) return [];
-
-  try {
-    const parsed = JSON.parse(raw);
-
-    if (Array.isArray(parsed)) {
-      return parsed.filter((item) => item && typeof item === "object");
-    }
-
-    if (parsed && typeof parsed === "object") {
-      return [parsed];
-    }
-
-    return [];
-  } catch (error) {
-    console.error("Invalid local consoles cache:", error);
-    return [];
-  }
-};
+import {
+  ConsoleCacheItem,
+  hasLoginCredential,
+  LOCAL_CONSOLES_KEY,
+  PENDING_STREAM_STORAGE_KEY,
+  parseCachedConsoles,
+  PSN_LOGIN_STORAGE_KEY,
+  upsertConsoleCache,
+} from "../../common/remotePlay";
 
 const formatConsoleType = (item: ConsoleCacheItem) => {
   if (item.apName) return item.apName;
@@ -127,12 +88,7 @@ function Home() {
       return;
     }
 
-    // Just for mock
-    setConsoles(mockConsoles);
-
-    // setConsoles(
-    //   parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY))
-    // );
+    setConsoles(parseCachedConsoles(localStorage.getItem(LOCAL_CONSOLES_KEY)));
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {
@@ -147,7 +103,7 @@ function Home() {
   };
 
   const handleAddHostClick = () => {
-    console.log("[home] Add host clicked. TODO: implement register flow.");
+    router.push(`/${locale}/registry`);
   };
 
   const handleStartStreamClick = (item: ConsoleCacheItem) => {
@@ -162,22 +118,7 @@ function Home() {
 
   const handleConsoleUpdated = (updatedConsole: ConsoleCacheItem) => {
     setConsoles((prevConsoles) => {
-      const nextConsoles = prevConsoles.map((item) => {
-        if (item.consoleId && updatedConsole.consoleId) {
-          if (item.consoleId !== updatedConsole.consoleId) return item;
-          return { ...item, ...updatedConsole };
-        }
-
-        if (
-          item.serverNickname === updatedConsole.serverNickname &&
-          item.host === updatedConsole.host
-        ) {
-          return { ...item, ...updatedConsole };
-        }
-
-        return item;
-      });
-
+      const nextConsoles = upsertConsoleCache(prevConsoles, updatedConsole);
       localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(nextConsoles));
       return nextConsoles;
     });
@@ -207,45 +148,59 @@ function Home() {
 
       <Layout>
         {isLogined && consoles.length > 0 ? (
-          <div className="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-            {consoles.map((item, index) => {
-              const nickname =
-                item.serverNickname || `${t("Consoles")} ${index + 1}`;
-              const type = formatConsoleType(item);
-              const hostText = item.remoteHost || item.host || "-";
-              const consoleId = item.consoleId || "-";
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-2xl font-semibold">{t("Consoles")}</p>
+                <p className="text-sm text-gray-500">
+                  {t("Registered consoles are stored locally on this device.")}
+                </p>
+              </div>
+              <Button color="primary" onPress={handleAddHostClick}>
+                {t("Add host")}
+              </Button>
+            </div>
 
-              return (
-                <Card key={`${item.consoleId || "console"}-${index}`}>
-                  <CardBody>
-                    <p className="text-center">{nickname}</p>
-                    <p className="text-center text-sm text-gray-400">{type}</p>
-                    <p className="text-center text-xs text-gray-500">
-                      ({consoleId})
-                    </p>
-                    <div className="flex justify-center py-2">
-                      <Chip size="sm" radius="none" color="success">
-                        {t("Cached host")}
-                      </Chip>
-                    </div>
-                    <div className="text-xs text-gray-500 break-all text-center">
-                      {hostText}
-                    </div>
-                  </CardBody>
-                  <Divider />
-                  <CardFooter>
-                    <Button
-                      color="primary"
-                      size="sm"
-                      className="w-full"
-                      onPress={() => handleStartStreamClick(item)}
-                    >
-                      {t("Start stream")}
-                    </Button>
-                  </CardFooter>
-                </Card>
-              );
-            })}
+            <div className="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+              {consoles.map((item, index) => {
+                const nickname =
+                  item.serverNickname || `${t("Consoles")} ${index + 1}`;
+                const type = formatConsoleType(item);
+                const hostText = item.remoteHost || item.host || "-";
+                const consoleId = item.consoleId || "-";
+
+                return (
+                  <Card key={`${item.consoleId || "console"}-${index}`}>
+                    <CardBody>
+                      <p className="text-center">{nickname}</p>
+                      <p className="text-center text-sm text-gray-400">{type}</p>
+                      <p className="text-center text-xs text-gray-500">
+                        ({consoleId})
+                      </p>
+                      <div className="flex justify-center py-2">
+                        <Chip size="sm" radius="none" color="success">
+                          {t("Cached host")}
+                        </Chip>
+                      </div>
+                      <div className="text-xs text-gray-500 break-all text-center">
+                        {hostText}
+                      </div>
+                    </CardBody>
+                    <Divider />
+                    <CardFooter>
+                      <Button
+                        color="primary"
+                        size="sm"
+                        className="w-full"
+                        onPress={() => handleStartStreamClick(item)}
+                      >
+                        {t("Start stream")}
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
         ) : isLogined ? (
           <Card className="max-w-2xl mx-auto">

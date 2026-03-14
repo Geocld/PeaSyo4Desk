@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react'
 import {
   Navbar,
   NavbarBrand,
   NavbarContent,
-  NavbarItem,
   DropdownItem,
   DropdownTrigger,
   Dropdown,
@@ -13,52 +11,16 @@ import {
   PopoverTrigger,
   PopoverContent,
   Button,
-  Tabs,
-  Tab
 } from "@heroui/react";
 
 import { useTranslation } from "next-i18next";
-
-import { useRouter } from "next/router";
 import Ipc from "../lib/ipc";
-import updater from "../lib/updater";
 import pkg from '../../package.json';
 
-const Nav = ({ isLogined }) => {
+const Nav = () => {
 
   const { t, i18n: { language: locale } } = useTranslation("common");
-  const [newVersions, setNewVersions] = useState(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  const router = useRouter();
-
-
-  useEffect(() => {
-  }, [isLogined])
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
-  const handleLouout = () => {
-    Ipc.send("app", "clearData");
-  }
-
-  const handleToggleScreen = () => {
-    if (isFullscreen) {
-      document.exitFullscreen();
-    } else {
-      Ipc.send("app", "toggleFullscreen")
-    }
-  }
+  const newVersions = null;
 
   const handleExit = () => {
     Ipc.send("app", "quit")

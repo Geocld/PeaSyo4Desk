@@ -3,6 +3,7 @@ import { session } from "electron";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
 import net from "node:net";
+import chiaki from "../chiaki/chiaki.node";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { StreamSessionService } from "../stream/session";
 
@@ -13,6 +14,281 @@ const DDP_MODEL = "w";
 const DDP_APP_TYPE = "r";
 const DDP_VERSION = "00030010";
 const DEFAULT_WAKEUP_CREDENTIAL = "4077903901";
+const CHIAKI_DISCOVERY_TIMEOUT_MS = 3000;
+const CHIAKI_REGIST_TIMEOUT_MS = 90000;
+const CHIAKI_PS4_TARGET = 1000;
+const CHIAKI_PS5_TARGET = 1000100;
+
+let chiakiInitialized = false;
+
+type DiscoveryHost = {
+  state?: number;
+  stateName?: string;
+  hostRequestPort?: number;
+  isPs5?: boolean;
+  target?: number;
+  hostAddr?: string;
+  systemVersion?: string;
+  protocolVersion?: string;
+  hostName?: string;
+  hostType?: string;
+  hostId?: string;
+  runningAppTitleId?: string;
+  runningAppName?: string;
+};
+
+type DiscoverConsolesArgs = {
+  ps5?: boolean;
+  timeoutMs?: number;
+};
+
+type RegisterConsoleArgs = {
+  host: string;
+  pin: string | number;
+  ps5?: boolean;
+  broadcast?: boolean;
+  psnAccountId: string;
+  psnOnlineId?: string;
+  timeoutMs?: number;
+};
+
+type RegisteredHost = {
+  target?: number;
+  apSsid?: string;
+  apBssid?: string;
+  apKey?: string;
+  apName?: string;
+  serverMac?: string;
+  serverNickname?: string;
+  rpRegistKey?: string;
+  rpRegistKeyRaw?: string;
+  rpKeyType?: number;
+  rpKey?: string;
+  consolePin?: number;
+};
+
+const ensureChiakiInitialized = () => {
+  if (chiakiInitialized) {
+    return;
+  }
+
+  if (typeof (chiaki as any).init === "function") {
+    (chiaki as any).init();
+  }
+
+  chiakiInitialized = true;
+};
+
+const stopChiakiHandle = (handle: any) => {
+  if (!handle) {
+    return;
+  }
+
+  try {
+    handle.stop();
+  } catch {
+    // ignore close errors
+  }
+
+  try {
+    handle.close();
+  } catch {
+    // ignore close errors
+  }
+};
+
+const getChiakiUserCredential = (rpRegistKey: string | undefined) => {
+  const normalizedKey = String(rpRegistKey || "")
+    .replace(/\0+$/g, "")
+    .trim();
+
+  if (!normalizedKey) {
+    return "";
+  }
+
+  try {
+    return BigInt(`0x${normalizedKey}`).toString(10);
+  } catch {
+    return "";
+  }
+};
+
+const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
+  new Promise<DiscoveryHost[]>((resolve, reject) => {
+    ensureChiakiInitialized();
+
+    let discovery: any = null;
+    let timeout: NodeJS.Timeout | undefined;
+    let finished = false;
+    const consoles = new Map<string, DiscoveryHost>();
+
+    const complete = (error?: Error | null) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+
+      stopChiakiHandle(discovery);
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(Array.from(consoles.values()));
+    };
+
+    try {
+      discovery = new (chiaki as any).Discovery(
+        {
+          family: "ipv4",
+        },
+        {
+          onHost: (host: DiscoveryHost) => {
+            const key = String(host?.hostId || host?.hostAddr || "").trim();
+            if (!key) {
+              return;
+            }
+            consoles.set(key, host);
+          },
+          onLog: (event: any) => {
+            if (event?.message) {
+              console.log(`[chiaki:${event.levelChar || "?"}]`, event.message);
+            }
+          },
+        }
+      );
+
+      discovery.start({ oneshot: false });
+      discovery.sendSearch({ ps5: !!args.ps5 });
+
+      timeout = setTimeout(() => {
+        complete(null);
+      }, Number(args.timeoutMs || CHIAKI_DISCOVERY_TIMEOUT_MS));
+    } catch (error: any) {
+      complete(
+        error instanceof Error ? error : new Error(String(error || "Discovery failed."))
+      );
+    }
+  });
+
+const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
+  new Promise<RegisteredHost & { userCredential?: string }>((resolve, reject) => {
+    ensureChiakiInitialized();
+
+    const host = String(args.host || "").trim();
+    const pinText = String(args.pin || "").trim();
+    const psnAccountId = String(args.psnAccountId || "").trim();
+
+    if (!host) {
+      reject(new Error("Host is required."));
+      return;
+    }
+
+    if (!pinText || !/^\d+$/.test(pinText)) {
+      reject(new Error("Registration PIN is invalid."));
+      return;
+    }
+
+    if (!psnAccountId) {
+      reject(new Error("PSN account id is required."));
+      return;
+    }
+
+    const pin = Number(pinText);
+    if (!Number.isInteger(pin) || pin < 0) {
+      reject(new Error("Registration PIN is invalid."));
+      return;
+    }
+
+    let regist: any = null;
+    let timeout: NodeJS.Timeout | undefined;
+    let finished = false;
+
+    const complete = (
+      error?: Error | null,
+      result?: RegisteredHost & { userCredential?: string }
+    ) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+
+      stopChiakiHandle(regist);
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(result || {});
+    };
+
+    try {
+      regist = new (chiaki as any).Regist(
+        {
+          target: args.ps5 ? CHIAKI_PS5_TARGET : CHIAKI_PS4_TARGET,
+          host,
+          pin,
+          broadcast: !!args.broadcast,
+          psnAccountId,
+          ...(args.psnOnlineId ? { psnOnlineId: String(args.psnOnlineId).trim() } : {}),
+        },
+        {
+          onEvent: (event: any) => {
+            if (event?.name === "finished_success") {
+              const registeredHost = (event?.host || {}) as RegisteredHost;
+              complete(null, {
+                ...registeredHost,
+                userCredential: getChiakiUserCredential(registeredHost.rpRegistKey),
+              });
+              return;
+            }
+
+            if (event?.name === "finished_failed") {
+              complete(new Error("Host registration failed."));
+              return;
+            }
+
+            if (event?.name === "finished_canceled") {
+              complete(new Error("Host registration canceled."));
+            }
+          },
+          onLog: (event: any) => {
+            if (event?.message) {
+              console.log(`[chiaki:${event.levelChar || "?"}]`, event.message);
+            }
+          },
+        }
+      );
+
+      regist.start();
+
+      timeout = setTimeout(() => {
+        complete(
+          new Error(
+            `Host registration timed out after ${
+              Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS) / 1000
+            } seconds.`
+          )
+        );
+      }, Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS));
+    } catch (error: any) {
+      complete(
+        error instanceof Error
+          ? error
+          : new Error(String(error || "Host registration failed."))
+      );
+    }
+  });
 
 const buildWakeupMessage = (userCredential: string | number) => {
   return (
@@ -209,6 +485,14 @@ export default class IpcApp extends IpcBase {
 
   loginWithAccountId(data: { accountId: string }) {
     return this._application._authentication.loginWithAccountId(data.accountId);
+  }
+
+  discoverConsoles(data: DiscoverConsolesArgs = {}) {
+    return discoverConsolesWithChiaki(data);
+  }
+
+  registerConsole(data: RegisterConsoleArgs) {
+    return registerConsoleWithChiaki(data);
   }
 
   resolveHost(data: { host: string }) {
