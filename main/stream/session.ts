@@ -241,6 +241,32 @@ const resolveResolution = (resolution: number) => {
   return { width: 640, height: 360 };
 };
 
+const getAutoBitrateForResolution = (resolution: number) => {
+  if (resolution >= 1080) return 27000;
+  if (resolution >= 720) return 10000;
+  if (resolution >= 540) return 6000;
+  return 2000;
+};
+
+const normalizeBitrateMode = (mode: unknown) => {
+  return String(mode || "auto").toLowerCase() === "custom" ? "custom" : "auto";
+};
+
+const ensureBitrateForMode = (
+  resolution: number,
+  bitrateMode: unknown,
+  bitrate: unknown
+) => {
+  if (normalizeBitrateMode(bitrateMode) === "custom") {
+    const parsed = Math.round(Number(bitrate));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(50000, Math.max(1000, parsed));
+    }
+  }
+
+  return getAutoBitrateForResolution(resolution);
+};
+
 const codecName = (codec: number) => {
   if (codec === (chiaki as any).codecs.H265) return "H265";
   if (codec === (chiaki as any).codecs.H265_HDR) return "H265_HDR";
@@ -1051,14 +1077,27 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
   const isRemote = !!args.isRemote;
   const settingsResolution = isRemote ? settings.remote_resolution : settings.resolution;
   const settingsBitrate = isRemote ? settings.remote_bitrate : settings.bitrate;
+  const settingsBitrateMode = normalizeBitrateMode(
+    isRemote ? settings.remote_bitrate_mode : settings.bitrate_mode
+  );
   const settingsFps = isRemote ? settings.remote_fps : settings.fps;
   const settingsCodec = isRemote ? settings.remote_codec : settings.codec;
+  const selectedResolution = Number(settingsResolution || 1080);
 
   const profileResolution = args.videoProfile?.width && args.videoProfile?.height
     ? { width: Number(args.videoProfile.width), height: Number(args.videoProfile.height) }
-    : resolveResolution(Number(settingsResolution || 1080));
+    : resolveResolution(selectedResolution);
   const profileFps = Number(args.videoProfile?.maxFps || settingsFps || 60);
-  const profileBitrate = Number(args.videoProfile?.bitrate || settingsBitrate || (isRemote ? 10000 : 27000));
+  const defaultBitrate = ensureBitrateForMode(
+    selectedResolution,
+    settingsBitrateMode,
+    settingsBitrate
+  );
+  const requestedBitrate = Number(args.videoProfile?.bitrate);
+  const profileBitrate =
+    Number.isFinite(requestedBitrate) && requestedBitrate > 0
+      ? requestedBitrate
+      : defaultBitrate;
   const profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
   const ps5 = typeof args.ps5 === "boolean"
     ? args.ps5

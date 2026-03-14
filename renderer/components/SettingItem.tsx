@@ -74,7 +74,17 @@ const SettingItem = (props) => {
     }
   }, [item.name, t, setSettings, settings]);
 
-  const handleChangeSetting = (value) => {
+  const displayData = (item.name === "signaling_cloud" || item.name === "signaling_home") ? regionData : (item.data || []);
+
+  const findActualValue = (rawValue) => {
+    const matched = displayData.find((entry) => String(entry.value) === String(rawValue));
+    return matched ? matched.value : rawValue;
+  };
+
+  const getDisplayLabel = (entry) => entry.label ?? entry.text ?? String(entry.value);
+
+  const handleChangeSetting = (rawValue) => {
+    const value = findActualValue(rawValue);
     console.log("handleChangeSetting:", value);
     const key = item.name;
     if (key) {
@@ -114,8 +124,6 @@ const SettingItem = (props) => {
     setDefaultValue(value);
   };
 
-  const displayData = (item.name === "signaling_cloud" || item.name === "signaling_home") ? regionData : (item.data || []);
-
   return (
     <div className="setting-item">
       <Card>
@@ -127,7 +135,7 @@ const SettingItem = (props) => {
               className="setting-select"
               labelPlacement={"outside-left"}
               label={item.title}
-              selectedKey={defaultValue}
+              selectedKey={String(defaultValue)}
               isClearable={false}
               onSelectionChange={(value) => {
                 handleChangeSetting(value);
@@ -145,7 +153,9 @@ const SettingItem = (props) => {
             >
               {displayData.map((i) => {
                 return (
-                  <AutocompleteItem key={i.value}>{i.label}</AutocompleteItem>
+                  <AutocompleteItem key={String(i.value)}>
+                    {getDisplayLabel(i)}
+                  </AutocompleteItem>
                 );
               })}
             </Autocomplete>
@@ -154,15 +164,15 @@ const SettingItem = (props) => {
           {item.type === "radio" && (
             <RadioGroup
               orientation="horizontal"
-              value={defaultValue}
+              value={String(defaultValue)}
               onValueChange={(value) => {
                 handleChangeSetting(value);
               }}
             >
               {displayData.map((i) => {
                 return (
-                  <Radio value={i.value} key={i.value}>
-                    {i.label}
+                  <Radio value={String(i.value)} key={String(i.value)}>
+                    {getDisplayLabel(i)}
                   </Radio>
                 );
               })}

@@ -1,163 +1,323 @@
-import React, { useEffect, useState, useRef } from "react";
-import { Button, Tabs, Tab, Card, CardBody, Input, addToast } from "@heroui/react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  Button,
+  Card,
+  CardBody,
+  Input,
+  Radio,
+  RadioGroup,
+  Tab,
+  Tabs,
+  addToast,
+} from "@heroui/react";
 import { useTranslation } from "next-i18next";
 import { useRouter } from "next/router";
-import { useSettings } from "../../context/userContext";
-
 import Ipc from "../../lib/ipc";
 import Layout from "../../components/Layout";
 import SettingItem from "../../components/SettingItem";
 import Alert from "../../components/Alert";
-import getSettingsMetas from "../../common/settings";
-import Nav from "../../components/Nav";
-import FeedbackModal from "../../components/FeedbackModal";
 import ConfirmModal from "../../components/ConfirmModal";
-import KeyboardMap from "../../components/KeyboardMap";
+import Nav from "../../components/Nav";
 import updater from "../../lib/updater";
-import { FOCUS_ELEMS } from '../../common/constans';
+import { useSettings } from "../../context/userContext";
+import { defaultSettings } from "../../context/userContext.defaults";
+import getSettingsMetas from "../../common/settings";
+import {
+  LOCAL_CONSOLES_KEY,
+  PENDING_STREAM_STORAGE_KEY,
+  PSN_LOGIN_STORAGE_KEY,
+} from "../../common/remotePlay";
 import pkg from "../../../package.json";
-
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
-function Settings() {
-  const { t, i18n: { language: locale } } = useTranslation("settings");
-  const { settings: localSettings, setSettings: setLocalSettings, resetSettings } = useSettings();
+type BasicStreamDraft = {
+  resolution: number;
+  bitrate_mode: "auto" | "custom";
+  bitrate: number;
+  codec: string;
+  fps: number;
+  remote_resolution: number;
+  remote_bitrate_mode: "auto" | "custom";
+  remote_bitrate: number;
+  remote_codec: string;
+  remote_fps: number;
+};
+
+const getAutoBitrateForResolution = (resolution: number) => {
+  if (resolution >= 1080) return 27000;
+  if (resolution >= 720) return 10000;
+  if (resolution >= 540) return 6000;
+  return 2000;
+};
+
+const normalizeBitrateMode = (mode: unknown): "auto" | "custom" => {
+  return String(mode || "auto").toLowerCase() === "custom" ? "custom" : "auto";
+};
+
+const clampStreamBitrate = (bitrate: unknown, resolution: number) => {
+  const parsed = Math.round(Number(bitrate));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return getAutoBitrateForResolution(resolution);
+  }
+
+  return Math.min(50000, Math.max(1000, parsed));
+};
+
+const ensureBitrateForMode = (
+  resolution: number,
+  bitrateMode: unknown,
+  bitrate: unknown
+) => {
+  if (normalizeBitrateMode(bitrateMode) === "custom") {
+    return clampStreamBitrate(bitrate, resolution);
+  }
+
+  return getAutoBitrateForResolution(resolution);
+};
+
+const createDraftFromSettings = (settings: any): BasicStreamDraft => {
+  const resolution = Number(settings?.resolution || defaultSettings.resolution);
+  const bitrateMode = normalizeBitrateMode(settings?.bitrate_mode);
+  const remoteResolution = Number(
+    settings?.remote_resolution || defaultSettings.remote_resolution
+  );
+  const remoteBitrateMode = normalizeBitrateMode(settings?.remote_bitrate_mode);
+
+  return {
+    resolution,
+    bitrate_mode: bitrateMode,
+    bitrate: ensureBitrateForMode(resolution, bitrateMode, settings?.bitrate),
+    codec: String(settings?.codec || defaultSettings.codec),
+    fps: Number(settings?.fps || defaultSettings.fps),
+    remote_resolution: remoteResolution,
+    remote_bitrate_mode: remoteBitrateMode,
+    remote_bitrate: ensureBitrateForMode(
+      remoteResolution,
+      remoteBitrateMode,
+      settings?.remote_bitrate
+    ),
+    remote_codec: String(settings?.remote_codec || defaultSettings.remote_codec),
+    remote_fps: Number(settings?.remote_fps || defaultSettings.remote_fps),
+  };
+};
+
+const defaultDraft = createDraftFromSettings(defaultSettings);
+
+const getOptionLabel = (option: any) => option?.label ?? option?.text ?? String(option?.value);
+
+function SettingsPage() {
+  const {
+    t,
+    i18n: { language: locale },
+  } = useTranslation("settings");
   const router = useRouter();
+  const { settings, setSettings } = useSettings();
 
-  console.log('locale:', locale)
-
+  const [draft, setDraft] = useState<BasicStreamDraft>(defaultDraft);
+  const [bitrateInputs, setBitrateInputs] = useState({
+    local: String(defaultDraft.bitrate),
+    remote: String(defaultDraft.remote_bitrate),
+  });
   const [showAlert, setShowAlert] = useState(false);
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [alertMessage, setAlertMessage] = useState("");
   const [updateText, setUpdateText] = useState("");
   const [updateUrl, setUpdateUrl] = useState("");
-  const [alertMessage, setAlertMessage] = useState("");
-  const [isLogined, setIsLogined] = useState(false);
-  const [showFeedback, setShowFeedback] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
-  const [settings, setSettings] = useState<any>({});
-
-  const [serverUrl, setServerUrl] = useState('');
-  const [serverUsername, setServerUsername] = useState('');
-  const [serverPwd, setServerPwd] = useState('');
-
-  const currentIndex = useRef(0);
-  const focusable = useRef<any>([]);
 
   useEffect(() => {
-    const _isLogined = window.sessionStorage.getItem("isLogined") || "0";
-    if (_isLogined === "1") {
-      setIsLogined(true);
+    const localFontSize = localStorage.getItem("fontSize");
+    if (localFontSize && localFontSize !== "16") {
+      document.documentElement.style.fontSize = `${localFontSize}px`;
     }
+  }, []);
 
-    const localFontSize = localStorage.getItem('fontSize');
-    if (localFontSize && localFontSize !== '16') {
-      document.documentElement.style.fontSize = localFontSize + 'px';
-    }
+  useEffect(() => {
+    const nextDraft = createDraftFromSettings(settings);
+    setDraft(nextDraft);
+    setBitrateInputs({
+      local: String(nextDraft.bitrate),
+      remote: String(nextDraft.remote_bitrate),
+    });
+  }, [settings]);
 
-    const _settings = getSettingsMetas(t);
-    setSettings(_settings);
+  const settingsMetas = useMemo(() => getSettingsMetas(t), [t]);
+  const baseMetas = settingsMetas.base || [];
+  const localMetas = settingsMetas.local || [];
+  const remoteMetas = settingsMetas.remote || [];
+  const otherMetas = settingsMetas.others || [];
 
-    setTimeout(() => {
-      focusable.current = document.querySelectorAll(FOCUS_ELEMS);
+  const persistedDraft = useMemo(() => createDraftFromSettings(settings), [settings]);
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(persistedDraft);
 
-      setServerUrl(localSettings.server_url);
-      setServerUsername(localSettings.server_username);
-      setServerPwd(localSettings.server_credential);
-    }, 1000);
-
-    function nextItem(index) {
-      index++;
-      currentIndex.current = index % focusable.current.length;
-      const elem = focusable.current[currentIndex.current];
-      const keyboardEvent = new KeyboardEvent('keydown', {
-        key: 'Tab',
-        code: 'Tab',
-        keyCode: 9,
-        charCode: 9,
-        view: window,
-        bubbles: true
-      });
-
-      document.dispatchEvent(keyboardEvent);
-      elem.focus();
-    }
-
-    function prevItem(index) {
-      if (index === 0) {
-        currentIndex.current = focusable.current.length - 1
-      } else {
-        index -= 1;
-        currentIndex.current = index % focusable.current.length;
-      }
-
-      const elem = focusable.current[currentIndex.current];
-      const keyboardEvent = new KeyboardEvent('keydown', {
-        key: 'Tab',
-        code: 'Tab',
-        keyCode: 9,
-        charCode: 9,
-        view: window,
-        bubbles: true,
-        shiftKey: true
-      });
-      document.dispatchEvent(keyboardEvent);
-      elem && elem.focus();
-    }
-
-    function clickItem() {
-      setTimeout(() => {
-        const elem = focusable.current[currentIndex.current];
-        elem && elem.blur();
-        elem && elem.click();
-      }, 300);
-    }
-
-    const pollGamepads = () => {
-      const gamepads = navigator.getGamepads();
-      let _gamepad = null
-      gamepads.forEach(gp => {
-        if (gp) _gamepad = gp
-      })
-      if (_gamepad) {
-        _gamepad.buttons.forEach((b, idx) => {
-          if (b.pressed) {
-            if (idx === 0) {
-              clickItem();
-            } else if (idx === 12) {
-              prevItem(currentIndex.current);
-            } else if (idx === 13) {
-              nextItem(currentIndex.current);
-            } else if (idx === 14) {
-              prevItem(currentIndex.current);
-            } else if (idx === 15) {
-              nextItem(currentIndex.current);
-            }
-          }
-        })
-      }
-    }
-
-    const timer = setInterval(pollGamepads, 100);
-
-    return () => {
-      timer && clearInterval(timer)
-    }
-  }, [t, localSettings]);
-
-  const resetNavigationElems = () => {
-    setTimeout(() => {
-      focusable.current = document.querySelectorAll(FOCUS_ELEMS);
-    }, 800);
+  const syncDraft = (nextDraft: BasicStreamDraft) => {
+    setDraft(nextDraft);
+    setBitrateInputs({
+      local: String(nextDraft.bitrate),
+      remote: String(nextDraft.remote_bitrate),
+    });
   };
 
-  const handleResetSettings = () => {
-    window.localStorage.clear();
-    resetSettings();
-    setTimeout(() => {
-      setAlertMessage(t("Reset Successfully"));
-      setShowAlert(true);
-    }, 100);
+  const handleResolutionChange = (type: "local" | "remote", resolution: number) => {
+    const autoBitrate = getAutoBitrateForResolution(resolution);
+
+    if (type === "local") {
+      setDraft((prev) => ({
+        ...prev,
+        resolution,
+        bitrate_mode: "auto",
+        bitrate: autoBitrate,
+      }));
+      setBitrateInputs((prev) => ({ ...prev, local: String(autoBitrate) }));
+      return;
+    }
+
+    setDraft((prev) => ({
+      ...prev,
+      remote_resolution: resolution,
+      remote_bitrate_mode: "auto",
+      remote_bitrate: autoBitrate,
+    }));
+    setBitrateInputs((prev) => ({ ...prev, remote: String(autoBitrate) }));
+  };
+
+  const handleBitrateModeChange = (
+    type: "local" | "remote",
+    mode: "auto" | "custom"
+  ) => {
+    if (type === "local") {
+      const nextBitrate =
+        mode === "auto"
+          ? getAutoBitrateForResolution(draft.resolution)
+          : clampStreamBitrate(draft.bitrate, draft.resolution);
+      setDraft((prev) => ({
+        ...prev,
+        bitrate_mode: mode,
+        bitrate: nextBitrate,
+      }));
+      setBitrateInputs((prev) => ({ ...prev, local: String(nextBitrate) }));
+      return;
+    }
+
+    const nextBitrate =
+      mode === "auto"
+        ? getAutoBitrateForResolution(draft.remote_resolution)
+        : clampStreamBitrate(draft.remote_bitrate, draft.remote_resolution);
+    setDraft((prev) => ({
+      ...prev,
+      remote_bitrate_mode: mode,
+      remote_bitrate: nextBitrate,
+    }));
+    setBitrateInputs((prev) => ({ ...prev, remote: String(nextBitrate) }));
+  };
+
+  const handleCodecChange = (type: "local" | "remote", codec: string) => {
+    if (type === "local") {
+      setDraft((prev) => ({ ...prev, codec }));
+      return;
+    }
+
+    setDraft((prev) => ({ ...prev, remote_codec: codec }));
+  };
+
+  const handleFpsChange = (type: "local" | "remote", fps: number) => {
+    if (type === "local") {
+      setDraft((prev) => ({ ...prev, fps }));
+      return;
+    }
+
+    setDraft((prev) => ({ ...prev, remote_fps: fps }));
+  };
+
+  const handleBitrateInputChange = (type: "local" | "remote", value: string) => {
+    setBitrateInputs((prev) => ({
+      ...prev,
+      [type]: value,
+    }));
+
+    const numericValue = Math.round(Number(value));
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return;
+    }
+
+    if (type === "local") {
+      setDraft((prev) => ({ ...prev, bitrate: numericValue }));
+      return;
+    }
+
+    setDraft((prev) => ({ ...prev, remote_bitrate: numericValue }));
+  };
+
+  const handleBitrateInputBlur = (type: "local" | "remote") => {
+    if (type === "local") {
+      const nextValue = clampStreamBitrate(bitrateInputs.local, draft.resolution);
+      setDraft((prev) => ({ ...prev, bitrate: nextValue }));
+      setBitrateInputs((prev) => ({ ...prev, local: String(nextValue) }));
+      return;
+    }
+
+    const nextValue = clampStreamBitrate(
+      bitrateInputs.remote,
+      draft.remote_resolution
+    );
+    setDraft((prev) => ({ ...prev, remote_bitrate: nextValue }));
+    setBitrateInputs((prev) => ({ ...prev, remote: String(nextValue) }));
+  };
+
+  const handleResetStreamSettings = () => {
+    syncDraft(defaultDraft);
+  };
+
+  const handleSaveStreamSettings = () => {
+    const nextDraft: BasicStreamDraft = {
+      ...draft,
+      bitrate: ensureBitrateForMode(draft.resolution, draft.bitrate_mode, draft.bitrate),
+      remote_bitrate: ensureBitrateForMode(
+        draft.remote_resolution,
+        draft.remote_bitrate_mode,
+        draft.remote_bitrate
+      ),
+    };
+
+    syncDraft(nextDraft);
+    setSettings({
+      ...settings,
+      ...nextDraft,
+    });
+
+    addToast({
+      title: t("Saved"),
+      color: "success",
+    });
+  };
+
+  const handleResetAppSettings = () => {
+    localStorage.removeItem("theme");
+    localStorage.removeItem("fontSize");
+    document.documentElement.style.fontSize = "16px";
+    Ipc.send("app", "exitFullscreen").catch(() => undefined);
+
+    const nextSettings = {
+      ...settings,
+      ...defaultSettings,
+      locale: defaultSettings.locale,
+      fullscreen: defaultSettings.fullscreen,
+    };
+    setSettings(nextSettings);
+    syncDraft(createDraftFromSettings(nextSettings));
+
+    addToast({
+      title: t("Saved"),
+      color: "success",
+    });
+  };
+
+  const clearLocalCache = () => {
+    localStorage.removeItem(LOCAL_CONSOLES_KEY);
+    localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
+    localStorage.removeItem(PENDING_STREAM_STORAGE_KEY);
+    sessionStorage.removeItem("isLogined");
   };
 
   const handleCheckUpdate = () => {
@@ -166,9 +326,7 @@ function Settings() {
       setIsChecking(false);
       if (infos) {
         const { latestVer, version, url } = infos;
-        setUpdateText(
-          `Check new version ${latestVer}, current version is ${version}`
-        );
+        setUpdateText(`Check new version ${latestVer}, current version is ${version}`);
         setUpdateUrl(url);
         setShowUpdateModal(true);
       } else {
@@ -178,81 +336,228 @@ function Settings() {
     });
   };
 
-  const handleLogout = () => {
-    Ipc.send("app", "clearData");
-    Ipc.send("app", "clearUserData");
-    handleClearLocalStorage();
+  const handleClearCache = async () => {
+    await Ipc.send("app", "clearData").catch(() => undefined);
+    await Ipc.send("app", "clearUserData").catch(() => undefined);
+    clearLocalCache();
+    Ipc.send("app", "restart");
   };
 
-  const handleClearCache = (isClearAll = false) => {
-    if (isClearAll) {
-      Ipc.send("app", "clearData");
-    }
-    Ipc.send("app", "clearUserData");
-    handleClearLocalStorage();
-  };
-
-  const handleClearLocalStorage = () => {
-    const LOCAL_TITLES = 'local-titles';
-    const LOCAL_NEW_TITLES = 'local-new-titles';
-    const LOCAL_ORG_TITLES = 'local-org-titles';
-    const LOCAL_RECENT_TITLES = 'local-recent-titles';
-    const LOCAL_CONSOLES = 'local-consoles';
-
-    localStorage.removeItem(LOCAL_TITLES);
-    localStorage.removeItem(LOCAL_NEW_TITLES);
-    localStorage.removeItem(LOCAL_ORG_TITLES);
-    localStorage.removeItem(LOCAL_RECENT_TITLES);
-    localStorage.removeItem(LOCAL_CONSOLES);
-    localStorage.removeItem('signaling_cloud');
-    localStorage.removeItem('signaling_home');
-  };
-
-  const handleExit = () => {
-    Ipc.send("app", "quit");
-  };
-
-  const handleServerChange = (name: string, text: string) => {
-    if (name === 'url') {
-      setServerUrl(text);
-    }
-    if (name === 'username') {
-      setServerUsername(text);
-    }
-    if (name === 'password') {
-      setServerPwd(text);
+  const handleOtherAction = (item: any) => {
+    switch (item.action) {
+      case "open-map":
+        router.push({
+          pathname: `/${locale}/map`,
+        });
+        return;
+      case "open-test":
+        router.push({
+          pathname: `/${locale}/test`,
+        });
+        return;
+      case "reset-settings":
+        handleResetAppSettings();
+        return;
+      case "check-update":
+        handleCheckUpdate();
+        return;
+      case "clear-cache":
+        void handleClearCache();
+        return;
+      case "exit":
+        Ipc.send("app", "quit");
+        return;
+      default:
+        return;
     }
   };
 
-  const handleSaveServer = () => {
-    if (serverUrl && !serverUrl.startsWith('turn:')) {
-      alert(t('UrlIncorrect'));
-      return;
+  const renderSettingCard = (
+    title: string,
+    description: string,
+    children: ReactNode,
+    tips?: string
+  ) => {
+    return (
+      <div className="setting-item">
+        <Card>
+          <CardBody>
+            <div className="setting-title text-foreground">{title}</div>
+            <div className="setting-description text-default-500">{description}</div>
+            {tips ? <div className="setting-description text-warning">{tips}</div> : null}
+            {children}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
+  const renderProfile = (type: "local" | "remote") => {
+    const metas = type === "local" ? localMetas : remoteMetas;
+    const resolutionKey = type === "local" ? "resolution" : "remote_resolution";
+    const bitrateModeKey = type === "local" ? "bitrate_mode" : "remote_bitrate_mode";
+    const codecKey = type === "local" ? "codec" : "remote_codec";
+    const fpsKey = type === "local" ? "fps" : "remote_fps";
+
+    const resolutionMeta = metas.find((item) => item.name === resolutionKey);
+    const bitrateMeta = metas.find((item) => item.name === bitrateModeKey);
+    const codecMeta = metas.find((item) => item.name === codecKey);
+    const fpsMeta = metas.find((item) => item.name === fpsKey);
+
+    if (!resolutionMeta || !bitrateMeta || !codecMeta || !fpsMeta) {
+      return null;
     }
-    setLocalSettings({
-      ...localSettings,
-      server_url: serverUrl,
-      server_username: serverUsername,
-      server_credential: serverPwd
-    });
-    addToast({
-      title: t('Saved'),
-      color: 'success'
-    });
+
+    const resolution = draft[resolutionKey];
+    const bitrateMode = draft[bitrateModeKey];
+    const codec = draft[codecKey];
+    const fps = draft[fpsKey];
+    const autoBitrate = getAutoBitrateForResolution(resolution);
+
+    return (
+      <>
+        {renderSettingCard(
+          resolutionMeta.title,
+          resolutionMeta.description,
+          <RadioGroup
+            orientation="horizontal"
+            value={String(resolution)}
+            onValueChange={(value) => handleResolutionChange(type, Number(value))}
+          >
+            {resolutionMeta.data.map((option) => (
+              <Radio key={String(option.value)} value={String(option.value)}>
+                {getOptionLabel(option)}
+              </Radio>
+            ))}
+          </RadioGroup>
+        )}
+
+        {renderSettingCard(
+          bitrateMeta.title,
+          bitrateMeta.description,
+          <div className="space-y-4">
+            <RadioGroup
+              orientation="horizontal"
+              value={bitrateMode}
+              onValueChange={(value) =>
+                handleBitrateModeChange(type, normalizeBitrateMode(value))
+              }
+            >
+              {bitrateMeta.data.map((option) => (
+                <Radio key={String(option.value)} value={String(option.value)}>
+                  {getOptionLabel(option)}
+                </Radio>
+              ))}
+            </RadioGroup>
+
+            {bitrateMode === "custom" ? (
+              <Input
+                type="number"
+                label={t("Custom bitrate (kbps)")}
+                labelPlacement="outside"
+                value={type === "local" ? bitrateInputs.local : bitrateInputs.remote}
+                min={1000}
+                max={50000}
+                onValueChange={(value) => handleBitrateInputChange(type, value)}
+                onBlur={() => handleBitrateInputBlur(type)}
+                endContent={<span className="text-xs text-default-500">kbps</span>}
+              />
+            ) : (
+              <p className="text-sm text-default-500">
+                {t(
+                  "Automatic bitrate will follow the selected resolution and use {{bitrate}} kbps.",
+                  { bitrate: autoBitrate }
+                )}
+              </p>
+            )}
+          </div>,
+          bitrateMeta.tips
+        )}
+
+        {renderSettingCard(
+          codecMeta.title,
+          codecMeta.description,
+          <RadioGroup
+            orientation="horizontal"
+            value={codec}
+            onValueChange={(value) => handleCodecChange(type, value)}
+          >
+            {codecMeta.data.map((option) => (
+              <Radio key={String(option.value)} value={String(option.value)}>
+                {getOptionLabel(option)}
+              </Radio>
+            ))}
+          </RadioGroup>
+        )}
+
+        {renderSettingCard(
+          fpsMeta.title,
+          fpsMeta.description,
+          <RadioGroup
+            orientation="horizontal"
+            value={String(fps)}
+            onValueChange={(value) => handleFpsChange(type, Number(value))}
+          >
+            {fpsMeta.data.map((option) => (
+              <Radio key={String(option.value)} value={String(option.value)}>
+                {getOptionLabel(option)}
+              </Radio>
+            ))}
+          </RadioGroup>
+        )}
+
+        <div className="setting-item">
+          <Card>
+            <CardBody className="flex flex-row justify-end gap-3">
+              <Button variant="flat" onPress={handleResetStreamSettings}>
+                {t("Reset stream settings")}
+              </Button>
+              <Button
+                color="primary"
+                onPress={handleSaveStreamSettings}
+                isDisabled={!isDirty}
+              >
+                {t("Save changes")}
+              </Button>
+            </CardBody>
+          </Card>
+        </div>
+      </>
+    );
+  };
+
+  const renderOtherActionCard = (item: any) => {
+    const description =
+      item.action === "check-update"
+        ? `${item.description} ${pkg.version}`
+        : item.description;
+
+    return (
+      <Card className="setting-item" key={item.name}>
+        <CardBody>
+          <div className="setting-title">{item.title}</div>
+          {description ? (
+            <div className="setting-description">{description}</div>
+          ) : null}
+          <Button
+            color={item.color || "primary"}
+            isLoading={item.action === "check-update" && isChecking}
+            onPress={() => handleOtherAction(item)}
+          >
+            {item.buttonText}
+          </Button>
+        </CardBody>
+      </Card>
+    );
   };
 
   return (
     <>
-      <Nav current={t("Settings")} isLogined={isLogined} />
+      <Nav />
 
-      {showAlert && (
+      {showAlert ? (
         <Alert content={alertMessage} onClose={() => setShowAlert(false)} />
-      )}
-
-      <FeedbackModal
-        show={showFeedback}
-        onClose={() => setShowFeedback(false)}
-      />
+      ) : null}
 
       <ConfirmModal
         show={showRestartModal}
@@ -277,229 +582,27 @@ function Settings() {
       />
 
       <Layout>
-        <Tabs aria-label="Options" onSelectionChange={() => {
-          resetNavigationElems()
-        }}>
+        <Tabs aria-label="Options">
           <Tab key="Base" title={t("Base")}>
-            {settings.language &&
-              settings.language.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
+            {baseMetas.map((item) => (
+              <SettingItem
+                key={item.name}
+                item={item}
+                onRestartWarn={() => setShowRestartModal(true)}
+              />
+            ))}
           </Tab>
 
-          <Tab key="Streaming" title={t("Streaming")}>
-            {settings.streaming &&
-              settings.streaming.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
-
-            <div className="setting-item">
-              <Card>
-                <CardBody>
-                  <div className="setting-title text-foreground">{t('TURN server')}</div>
-                  <div className="setting-description text-default-500">{t('Custom TURN server')}</div>
-                  <Input className="mb-4" value={serverUrl} label="URL" type="text" labelPlacement="outside-top" size="sm" isClearable onValueChange={(text: string) => handleServerChange('url', text)} />
-                  <Input className="mb-4" value={serverUsername} label={t('Username')} type="text" labelPlacement="outside-top" isClearable size="sm" onValueChange={(text: string) => handleServerChange('username', text)} />
-                  <Input className="mb-4" value={serverPwd} label={t('Password')} type="text" labelPlacement="outside-top" size="sm" isClearable onValueChange={(text: string) => handleServerChange('password', text)} />
-
-                  <Button color="primary" onPress={handleSaveServer}>
-                    {t('Save server')}
-                  </Button>
-                </CardBody>
-              </Card>
-            </div>
+          <Tab key="Local" title={t("Local streaming")}>
+            {renderProfile("local")}
           </Tab>
 
-          <Tab key="Gamepad" title={t("Gamepad")}>
-            {settings.gamepad &&
-              settings.gamepad.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
-
-            <Card className="setting-item">
-              <CardBody>
-                <div className="setting-title">{t("Gamepad mapping")}</div>
-                <div className="setting-description">
-                  {t("Mapping key of gamepad")}
-                </div>
-
-                <Button
-                  color="primary"
-                  onPress={() => {
-                    router.push({
-                      pathname: `/${locale}/map`
-                    });
-                  }}
-                >
-                  {t('Settings')}
-                </Button>
-              </CardBody>
-            </Card>
-          </Tab>
-
-          <Tab key="Audio" title={t("Audio")}>
-            {settings.audio &&
-              settings.audio.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
-          </Tab>
-
-          <Tab key="XHome" title={t("Xhome")}>
-            {settings.xhome &&
-              settings.xhome.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
-          </Tab>
-
-          <Tab key="Xcloud" title={t("Xcloud")}>
-            {settings.xcloud &&
-              settings.xcloud.map((item) => {
-                return (
-                  <SettingItem
-                    key={item.name}
-                    item={item}
-                    onRestartWarn={() => setShowRestartModal(true)}
-                    onClearCache={() => handleClearCache()}
-                  />
-                );
-              })}
+          <Tab key="Remote" title={t("Remote streaming")}>
+            {renderProfile("remote")}
           </Tab>
 
           <Tab key="Others" title={t("Others")}>
-            <Card className="setting-item">
-              <CardBody>
-                <div className="setting-title">{t("Gamepad tester")}</div>
-                <div className="setting-description">
-                  {t("Test connected gamepad")}
-                </div>
-
-                <Button
-                  color="primary"
-                  onPress={() => {
-                    router.push({
-                      pathname: `/${locale}/test`
-                    });
-                  }}
-                >
-                  test
-                </Button>
-              </CardBody>
-            </Card>
-
-            <Card className="setting-item">
-              <CardBody>
-                <div className="setting-title">{t("Reset Settings")}</div>
-                <div className="setting-description">
-                  {t("Reset XStreaming settings to default")}
-                </div>
-
-                <Button color="primary" onPress={handleResetSettings}>
-                  {t("Reset Settings")}
-                </Button>
-              </CardBody>
-            </Card>
-
-            <KeyboardMap />
-
-            <Card className="setting-item">
-              <CardBody>
-                <div className="setting-title">{t("Check update")}</div>
-                <div className="setting-description">
-                  {t("Check XStreaming update, current version is:")}{" "}
-                  {pkg.version}
-                </div>
-
-                <Button
-                  color="primary"
-                  isLoading={isChecking}
-                  onPress={handleCheckUpdate}
-                >
-                  {t("Check")}
-                </Button>
-              </CardBody>
-            </Card>
-
-            {(locale === "zh" || locale === "zht") && (
-              <Card className="setting-item">
-                <CardBody>
-                  <div className="setting-title">支持及交流</div>
-                  <div className="setting-description">
-                    支持开发或交流更多串流技术
-                  </div>
-
-                  <Button color="primary" onPress={() => setShowFeedback(true)}>
-                    加群
-                  </Button>
-                </CardBody>
-              </Card>
-            )}
-
-            {
-              isLogined && (
-                <Card className="setting-item">
-                  <CardBody>
-                    <Button color="danger" onPress={handleLogout}>
-                      {t("Logout")}
-                    </Button>
-                  </CardBody>
-                </Card>
-              )
-            }
-
-            <Card className="setting-item">
-              <CardBody>
-                <Button color="danger" onPress={() => {
-                  handleLogout();
-                  Ipc.send("app", "restart");
-                }}>
-                  {t("Clear cache")}
-                </Button>
-              </CardBody>
-            </Card>
-
-            <Card className="setting-item">
-              <CardBody>
-                <Button color="danger" onPress={handleExit}>
-                  {t("Exit")}
-                </Button>
-              </CardBody>
-            </Card>
-
+            {otherMetas.map((item) => renderOtherActionCard(item))}
           </Tab>
         </Tabs>
       </Layout>
@@ -507,7 +610,7 @@ function Settings() {
   );
 }
 
-export default Settings;
+export default SettingsPage;
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const getStaticProps = makeStaticProperties(["common", "settings"]);
