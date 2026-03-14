@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { addToast } from "@heroui/react";
 import ActionBar from "../../components/ActionBar";
+import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
@@ -69,6 +70,60 @@ type ControllerStatePayload = {
   rightY: number;
 };
 
+const NON_ERROR_SESSION_EVENT_NAMES = new Set([
+  "connected",
+  "holepunch",
+  "nickname_received",
+  "keyboard_open",
+  "keyboard_text_change",
+  "keyboard_remote_close",
+  "rumble",
+  "trigger_effects",
+  "motion_reset",
+  "led_color",
+  "haptic_intensity",
+  "trigger_intensity",
+  "haptic_audio",
+]);
+
+const buildSessionEventErrorMessage = (event: any) => {
+  const sessionEvent =
+    event && typeof event === "object" ? event : { name: String(event || "unknown") };
+  const name = String(sessionEvent.name || "unknown");
+
+  if (name === "quit") {
+    const lines = [
+      `event: ${name}`,
+      `reason: ${String(sessionEvent.reasonName || sessionEvent.reason || "-")}`,
+    ];
+    if (sessionEvent.reasonText) {
+      lines.push(`detail: ${String(sessionEvent.reasonText)}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (name === "login_pin_request") {
+    return [
+      `event: ${name}`,
+      `pinIncorrect: ${String(!!sessionEvent.pinIncorrect)}`,
+      "The current session requested a login PIN, which is not handled in this page.",
+    ].join("\n");
+  }
+
+  return JSON.stringify(sessionEvent, null, 2);
+};
+
+const buildSocketCloseMessage = (event: CloseEvent) => {
+  const lines = [`event: websocket_close`, `code: ${event.code}`];
+
+  if (event.reason) {
+    lines.push(`reason: ${event.reason}`);
+  }
+
+  lines.push(`wasClean: ${String(event.wasClean)}`);
+  return lines.join("\n");
+};
+
 function StreamPage() {
   const { t } = useTranslation("cloud");
   const router = useRouter();
@@ -81,6 +136,10 @@ function StreamPage() {
   const [showPerformance, setShowPerformance] = useState(false);
   const [statsText, setStatsText] = useState("");
   const [videoReady, setVideoReady] = useState(false);
+  const [sessionAlert, setSessionAlert] = useState<{
+    title: string;
+    content: string;
+  } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -122,9 +181,24 @@ function StreamPage() {
   const disconnectingRef = useRef(false);
   const connectedToastShownRef = useRef(false);
   const videoReadyRef = useRef(false);
+  const sessionErrorHandledRef = useRef(false);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
+
+  const openSessionAlert = (content: string, nextStatus?: string) => {
+    if (sessionErrorHandledRef.current || disconnectingRef.current) {
+      return;
+    }
+
+    sessionErrorHandledRef.current = true;
+    setConnectState("session_error");
+    setStatus(nextStatus || t("Session error"));
+    setSessionAlert({
+      title: t("Session error"),
+      content,
+    });
+  };
 
   const applyVideoConfig = (config: any) => {
     const width = Number(config?.width || widthRef.current);
@@ -598,10 +672,12 @@ function StreamPage() {
         disconnectingRef.current = false;
         connectedToastShownRef.current = false;
         videoReadyRef.current = false;
+        sessionErrorHandledRef.current = false;
         setVideoReady(false);
         setAudioMutedState(false);
         setAudioAvailable(false);
         audioAvailableRef.current = false;
+        setSessionAlert(null);
 
         const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
         if (!raw) {
@@ -664,7 +740,13 @@ function StreamPage() {
               } else if (msg?.type === "audio_config") {
                 applyAudioConfig(msg);
               } else if (msg?.type === "session_event") {
-                if (msg?.name === "connected") {
+                const sessionEvent =
+                  msg?.event && typeof msg.event === "object"
+                    ? msg.event
+                    : { name: msg?.name || "unknown" };
+                const eventName = String(sessionEvent.name || msg?.name || "unknown");
+
+                if (eventName === "connected") {
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   if (!connectedToastShownRef.current) {
@@ -675,11 +757,13 @@ function StreamPage() {
                     });
                   }
                   void ensureAudioContext();
-                } else if (msg?.name === "quit") {
-                  setConnectState("quit");
-                  setStatus("session: quit");
-                } else if (typeof msg?.name === "string") {
-                  setStatus(`session: ${msg.name}`);
+                } else if (!NON_ERROR_SESSION_EVENT_NAMES.has(eventName)) {
+                  openSessionAlert(
+                    buildSessionEventErrorMessage(sessionEvent),
+                    `session: ${eventName}`
+                  );
+                } else if (typeof eventName === "string") {
+                  setStatus(`session: ${eventName}`);
                 }
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
@@ -696,8 +780,10 @@ function StreamPage() {
                   setConnectState("starting");
                   setStatus(t("Connecting..."));
                 } else if (msg?.status === "quit" || msg?.status === "stopped") {
-                  setConnectState(String(msg.status));
-                  setStatus(`session: ${msg.status}`);
+                  openSessionAlert(
+                    `status: ${String(msg.status)}`,
+                    `session: ${String(msg.status)}`
+                  );
                 } else {
                   setStatus(`session: ${msg.status}`);
                 }
@@ -728,15 +814,17 @@ function StreamPage() {
 
         socket.onerror = () => {
           if (!active) return;
-          setStatus("WebSocket error");
-          setConnectState("error");
+          openSessionAlert("event: websocket_error", "WebSocket error");
         };
 
-        socket.onclose = () => {
+        socket.onclose = (closeEvent) => {
           if (!active) return;
-          setStatus("WebSocket closed");
           if (!disconnectingRef.current) {
-            setConnectState("closed");
+            if (sessionErrorHandledRef.current) {
+              setStatus("WebSocket closed");
+            } else {
+              openSessionAlert(buildSocketCloseMessage(closeEvent), "WebSocket closed");
+            }
           }
           if (socketRef.current === socket) {
             socketRef.current = null;
@@ -778,6 +866,7 @@ function StreamPage() {
       audioUnlockedRef.current = false;
       audioAvailableRef.current = false;
       videoReadyRef.current = false;
+      sessionErrorHandledRef.current = false;
       setVideoReady(false);
 
       Ipc.send("app", "stopStreamSession").catch(() => undefined);
@@ -824,8 +913,25 @@ function StreamPage() {
     router.push(`/${localeParam}/home`);
   };
 
+  const handleSessionAlertConfirm = async () => {
+    setSessionAlert(null);
+    await handleDisconnect();
+  };
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-black">
+      {sessionAlert ? (
+        <Alert
+          title={sessionAlert.title}
+          content={
+            <pre className="whitespace-pre-wrap break-all text-sm">
+              {sessionAlert.content}
+            </pre>
+          }
+          onClose={handleSessionAlertConfirm}
+        />
+      ) : null}
+
       <ActionBar
         type="remoteplay"
         connectState={connectState}

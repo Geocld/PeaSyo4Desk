@@ -187,6 +187,41 @@ const log = (...args) => {
   console.log("[stream-service]", ...args);
 };
 
+const serializeSessionEventValue = (value: any, depth = 0): any => {
+  if (depth > 3) {
+    return "[MaxDepth]";
+  }
+
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (Buffer.isBuffer(value)) {
+    if (value.length <= 16) {
+      return `Buffer(${value.length}):${value.toString("hex")}`;
+    }
+    return `Buffer(${value.length})`;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 32).map((item) => serializeSessionEventValue(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const result: Record<string, any> = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      result[key] = serializeSessionEventValue(nestedValue, depth + 1);
+    }
+    return result;
+  }
+
+  return value;
+};
+
+const serializeSessionEvent = (event: any) => {
+  return serializeSessionEventValue(event, 0);
+};
+
 const ensureInitialized = () => {
   if (initialized) return;
   initialized = true;
@@ -1064,6 +1099,7 @@ const createSession = (sessionOptions: any) => {
       broadcastText({
         type: "session_event",
         name: event?.name || "unknown",
+        event: serializeSessionEvent(event),
       });
 
       if (event?.name === "connected") {
