@@ -21,6 +21,10 @@ type ConsoleItem = {
   parsedRemoteHost?: string;
   rpRegistKey?: string;
   userCredential?: string | number;
+  hostId?: string;
+  hostType?: string;
+  isPs5?: boolean;
+  stateName?: string;
 };
 
 type StartStreamModalsProps = {
@@ -39,6 +43,16 @@ type StartStreamModalsProps = {
 type Step = "mode" | "remote";
 type LoadingType = "local" | "direct" | "wake" | null;
 
+type DiscoveredConsole = {
+  id: string;
+  host: string;
+  hostId?: string;
+  hostType?: string;
+  isPs5: boolean;
+  stateName?: string;
+  name?: string;
+};
+
 const getErrorMessage = (error: any, fallback: string) => {
   if (typeof error === "string" && error.trim().length > 0) {
     return error;
@@ -50,6 +64,35 @@ const getErrorMessage = (error: any, fallback: string) => {
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const buildConsoleId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `console-${Date.now()}`;
+};
+
+const normalizeStateName = (value: unknown) => {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+};
+
+const mapDiscoveredConsole = (item: any): DiscoveredConsole => {
+  const host = String(item?.hostAddr || "").trim();
+  const hostId = String(item?.hostId || "").trim();
+
+  return {
+    id: hostId || host || buildConsoleId(),
+    host,
+    hostId: hostId || undefined,
+    hostType: String(item?.hostType || (item?.isPs5 ? "PS5" : "PS4")).trim(),
+    isPs5: Boolean(item?.isPs5),
+    stateName: String(item?.stateName || "").trim(),
+    name: String(item?.hostName || "").trim(),
+  };
+};
 
 export default function StartStreamModals(props: StartStreamModalsProps) {
   const { t } = useTranslation("home");
@@ -93,6 +136,42 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
     });
   };
 
+  const discoverLocalConsole = async () => {
+    const isPs5 = Boolean(
+      props.consoleItem?.isPs5 ||
+      props.consoleItem?.apName?.toUpperCase().includes("PS5") ||
+      props.consoleItem?.hostType?.toUpperCase().includes("PS5")
+    );
+
+    const result = await Ipc.send("app", "discoverConsoles", {
+      ps5: isPs5,
+    });
+
+    return Array.isArray(result) ? result.map(mapDiscoveredConsole) : [];
+  };
+
+  const startPreparedLocalStream = (
+    streamHost: string,
+    consoleInfo?: ConsoleItem,
+    wakeBeforeConnect = false
+  ) => {
+    if (!props.consoleItem) {
+      return;
+    }
+
+    props.onStartPrepared({
+      consoleInfo: consoleInfo || props.consoleItem,
+      streamHost,
+      isRemote: false,
+      wakeBeforeConnect,
+    });
+  };
+
+  const updateCachedConsole = (updatedConsole: ConsoleItem) => {
+    props.onConsoleUpdated(updatedConsole);
+    return updatedConsole;
+  };
+
   const handleLocalStream = async () => {
     const localHost = (props.consoleItem?.host || "").trim();
     if (!localHost) {
@@ -104,30 +183,87 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
     setInfoText("");
     setLoadingType("local");
     try {
-      const resolved = await resolveHost(localHost);
-      await sendWakeup(resolved.preferredAddress);
+      setInfoText(t("Checking local console status..."));
 
-      console.log("[home] Local stream wakeup sent:", {
-        inputHost: localHost,
-        resolved,
-        consoleId: props.consoleItem?.consoleId,
+      const discoveredConsoles = await discoverLocalConsole();
+      const matchedConsole = discoveredConsoles.find((item) => {
+        const cachedConsoleId = String(props.consoleItem?.consoleId || "").trim();
+        const cachedHostId = String(props.consoleItem?.hostId || "").trim();
+
+        if (cachedConsoleId && item.id === cachedConsoleId) {
+          return true;
+        }
+
+        if (cachedHostId && item.hostId === cachedHostId) {
+          return true;
+        }
+
+        return item.host === localHost;
       });
 
-      setInfoText(t("Local wakeup packet sent."));
-
-      if (props.consoleItem) {
-        props.onStartPrepared({
-          consoleInfo: {
-            ...props.consoleItem,
-          },
-          streamHost: resolved.preferredAddress,
-          isRemote: false,
-          wakeBeforeConnect: true,
+      if (matchedConsole?.host && matchedConsole.host !== localHost && props.consoleItem) {
+        updateCachedConsole({
+          ...props.consoleItem,
+          host: matchedConsole.host,
+          hostId: matchedConsole.hostId || props.consoleItem.hostId,
+          hostType: matchedConsole.hostType || props.consoleItem.hostType,
+          isPs5: matchedConsole.isPs5,
+          stateName: matchedConsole.stateName || props.consoleItem.stateName,
         });
       }
-      
+
+      const nextHost = matchedConsole?.host || localHost;
+      const nextConsoleInfo =
+        matchedConsole && props.consoleItem
+          ? {
+              ...props.consoleItem,
+              host: nextHost,
+              hostId: matchedConsole.hostId || props.consoleItem.hostId,
+              hostType: matchedConsole.hostType || props.consoleItem.hostType,
+              isPs5: matchedConsole.isPs5,
+              stateName: matchedConsole.stateName || props.consoleItem.stateName,
+            }
+          : props.consoleItem || undefined;
+      const stateName = normalizeStateName(matchedConsole?.stateName);
+
+      if (stateName === "AWAKE") {
+        console.log("[home] Local console already awake:", {
+          localHost,
+          matchedConsole,
+          consoleId: props.consoleItem?.consoleId,
+        });
+        setInfoText(t("Local console is powered on, starting stream..."));
+        startPreparedLocalStream(nextHost, nextConsoleInfo, false);
+      } else if (stateName === "STANDBY") {
+        setInfoText(t("Local console is in standby, sending wakeup packet..."));
+        await sendWakeup(nextHost);
+
+        console.log("[home] Local wakeup sent:", {
+          localHost,
+          matchedConsole,
+          consoleId: props.consoleItem?.consoleId,
+        });
+
+        setInfoText(t("Waiting for local console to wake up..."));
+        await wait(5000);
+        await sendWakeup(nextHost);
+        await wait(20000);
+        startPreparedLocalStream(nextHost, nextConsoleInfo, true);
+      } else {
+        const resolved = await resolveHost(nextHost);
+
+        console.log("[home] Local console state unknown, fallback to direct connect:", {
+          localHost,
+          matchedConsole,
+          resolved,
+          consoleId: props.consoleItem?.consoleId,
+        });
+
+        setInfoText(t("Local console was not discovered, trying direct connect..."));
+        startPreparedLocalStream(resolved.preferredAddress, nextConsoleInfo, false);
+      }
     } catch (error) {
-      setErrorText(getErrorMessage(error, t("Failed to send wakeup packet.")));
+      setErrorText(getErrorMessage(error, t("Failed to prepare local stream.")));
       return;
     } finally {
       setLoadingType(null);

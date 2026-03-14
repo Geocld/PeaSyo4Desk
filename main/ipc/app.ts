@@ -624,6 +624,10 @@ export default class IpcApp extends IpcBase {
     return StreamSessionService.stopSession(true);
   }
 
+  gotoBedAndStopStreamSession() {
+    return StreamSessionService.gotoBedAndStop(true);
+  }
+
   resetAutoConnect() {
     return new Promise((resolve) => {
       this._application.resetAutoConnect();

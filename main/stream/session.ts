@@ -187,6 +187,11 @@ const log = (...args) => {
   console.log("[stream-service]", ...args);
 };
 
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 const serializeSessionEventValue = (value: any, depth = 0): any => {
   if (depth > 3) {
     return "[MaxDepth]";
@@ -1175,6 +1180,32 @@ const stopSession = async (closeSocketServer = true) => {
   return { stopped: true };
 };
 
+const gotoBedAndStop = async (closeSocketServer = true) => {
+  let gotoBedError: Error | null = null;
+
+  if (streamSession) {
+    try {
+      streamSession.gotoBed();
+      await wait(800);
+    } catch (error: any) {
+      gotoBedError =
+        error instanceof Error
+          ? error
+          : new Error(String(error || "Failed to put console into standby."));
+    }
+  }
+
+  const result = await stopSession(closeSocketServer);
+  if (gotoBedError) {
+    throw gotoBedError;
+  }
+
+  return {
+    ...result,
+    gotoBedSent: true,
+  };
+};
+
 const startSession = async (args: StartStreamSessionArgs) => {
   ensureInitialized();
   const wsInfo = await startSocketServer();
@@ -1220,4 +1251,5 @@ export const StreamSessionService = {
   stopSocketServer,
   startSession,
   stopSession,
+  gotoBedAndStop,
 };

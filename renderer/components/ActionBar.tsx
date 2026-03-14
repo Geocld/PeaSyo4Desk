@@ -39,7 +39,12 @@ function ActionBar(props) {
 
   const handleToggleFullscreen = () => {
     Ipc.send('app', 'toggleFullscreen')
-  }
+  };
+
+  const disconnectPowerActionLabel =
+    props.type === "remoteplay"
+      ? t("Disconnect and standby")
+      : t("Disconnect and power off");
 
   return (
     <div id="actionBar">
@@ -94,7 +99,7 @@ function ActionBar(props) {
                 color="danger"
                 onClick={handleDisconnectAndPoweroff}
               >
-                {t("Disconnect and power off")}
+                {disconnectPowerActionLabel}
               </DropdownItem>
             )
           }

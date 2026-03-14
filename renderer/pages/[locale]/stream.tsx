@@ -124,6 +124,18 @@ const buildSocketCloseMessage = (event: CloseEvent) => {
   return lines.join("\n");
 };
 
+const getErrorMessage = (error: any, fallback: string) => {
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  if (error?.message && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return fallback;
+};
+
 function StreamPage() {
   const { t } = useTranslation("cloud");
   const router = useRouter();
@@ -913,6 +925,40 @@ function StreamPage() {
     router.push(`/${localeParam}/home`);
   };
 
+  const handleDisconnectAndStandby = async () => {
+    if (disconnectingRef.current) {
+      return;
+    }
+
+    disconnectingRef.current = true;
+    setConnectState("disconnecting");
+    setStatus(t("Disconnecting and putting console into standby..."));
+
+    try {
+      if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
+        socketRef.current.close();
+      }
+    } catch {
+      // ignore close errors
+    }
+
+    try {
+      await Ipc.send("app", "gotoBedAndStopStreamSession");
+    } catch (error) {
+      addToast({
+        title: t("Failed to put console into standby."),
+        description: getErrorMessage(error, t("Failed to put console into standby.")),
+        color: "danger",
+      });
+      await Ipc.send("app", "stopStreamSession").catch(() => undefined);
+    }
+
+    const localeParam = Array.isArray(router.query.locale)
+      ? router.query.locale[0]
+      : router.query.locale || "en";
+    router.push(`/${localeParam}/home`);
+  };
+
   const handleSessionAlertConfirm = async () => {
     setSessionAlert(null);
     await handleDisconnect();
@@ -938,6 +984,7 @@ function StreamPage() {
         audioMuted={audioMuted}
         onAudio={audioAvailable ? toggleAudioMuted : undefined}
         onDisconnect={handleDisconnect}
+        onDisconnectPowerOff={handleDisconnectAndStandby}
         onTogglePerformance={() => setShowPerformance((prev) => !prev)}
       />
 
