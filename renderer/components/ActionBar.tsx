@@ -72,38 +72,6 @@ function ActionBar(props) {
               </DropdownItem>
             )
           }
-          
-          {
-            props.connectState === CONNECTED && (
-              <DropdownItem key="display" onClick={handleDisplay}>
-                {t("Display settings")}
-              </DropdownItem>
-            )
-          }
-
-          {
-            props.connectState === CONNECTED && settings.enable_audio_control && (
-              <DropdownItem key="audio" onClick={handleAudio}>
-                {t("Audio settings")}
-              </DropdownItem>
-            )
-          }
-
-          {
-            props.connectState === CONNECTED && (
-              <DropdownItem key="mic" onClick={handleMic}>
-                {props.openMicro ? t("Close Mic") : t("Open Mic")}
-              </DropdownItem>
-            )
-          }
-
-          {
-            (props.connectState === CONNECTED && props.type !== 'cloud') && (
-              <DropdownItem key="text" onClick={handleText}>
-                {t("Send text")}
-              </DropdownItem>
-            )
-          }
 
           {
             props.connectState === CONNECTED && (
@@ -125,18 +93,14 @@ function ActionBar(props) {
             {t("Toggle fullscreen")}
           </DropdownItem>
 
-          {
-            (props.connectState === CONNECTED && settings.power_on && props.type !== 'cloud') && (
-              <DropdownItem
-                key="disconnectPoweroff"
-                className="text-danger"
-                color="danger"
-                onClick={handleDisconnectAndPoweroff}
-              >
-                {t("Disconnect and power off")}
-              </DropdownItem>
-            )
-          }
+          <DropdownItem
+            key="disconnectPoweroff"
+            className="text-danger"
+            color="danger"
+            onClick={handleDisconnectAndPoweroff}
+          >
+            {t("Disconnect and power off")}
+          </DropdownItem>
           <DropdownItem
             key="disconnect"
             className="text-danger"
