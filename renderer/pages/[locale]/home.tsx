@@ -161,7 +161,7 @@ function Home() {
 
   return (
     <>
-      <Nav isLogined={isLogined} />
+      <Nav current="home" isLogined={isLogined} />
 
       <Layout>
         {isLogined && consoles.length > 0 ? (

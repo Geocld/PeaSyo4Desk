@@ -109,7 +109,7 @@ function Map() {
 
   return (
     <div className="map-page">
-      <Nav current={t("Settings")} isLogined={isLogined} />
+      <Nav current="settings" isLogined={isLogined} />
 
       {showModal && (
         <GamepadMapModal

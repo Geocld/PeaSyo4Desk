@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/react";
-import { useTranslation } from "next-i18next";
 import Nav from "../../components/Nav";
 
 import Ipc from "../../lib/ipc";
@@ -9,7 +8,6 @@ import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
 function GamepadTester() {
   const [isLogined, setIsLogined] = useState(false);
-  const { t } = useTranslation("settings");
 
   const timer = useRef(null);
 
@@ -194,7 +192,7 @@ function GamepadTester() {
   return (
     <div id="gamepadTest">
       <Nav
-        current={t("Settings")}
+        current="settings"
         isLogined={isLogined}
       />
       <div>

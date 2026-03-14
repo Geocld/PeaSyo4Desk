@@ -12,19 +12,72 @@ import {
   PopoverContent,
   Button,
 } from "@heroui/react";
-
+import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import Ipc from "../lib/ipc";
 import pkg from '../../package.json';
 
-const Nav = () => {
+type NavSection = "home" | "settings";
+
+type NavProps = {
+  current?: NavSection;
+  isLogined?: boolean;
+};
+
+const getCurrentSection = (
+  pathname: string,
+  current?: NavSection
+): NavSection => {
+  if (current) {
+    return current;
+  }
+
+  if (
+    pathname.endsWith("/settings") ||
+    pathname.endsWith("/map") ||
+    pathname.endsWith("/test")
+  ) {
+    return "settings";
+  }
+
+  return "home";
+};
+
+const Nav = ({ current }: NavProps) => {
+  const router = useRouter();
 
   const { t, i18n: { language: locale } } = useTranslation("common");
   const newVersions = null;
+  const currentSection = getCurrentSection(router.pathname, current);
+
+  const navItems: Array<{
+    key: NavSection;
+    label: string;
+    href: string;
+  }> = [
+    {
+      key: "home",
+      label: t("Home"),
+      href: `/${locale}/home`,
+    },
+    {
+      key: "settings",
+      label: t("Settings"),
+      href: `/${locale}/settings`,
+    },
+  ];
 
   const handleExit = () => {
     Ipc.send("app", "quit")
-  }
+  };
+
+  const handleNavigate = (href: string) => {
+    if (router.asPath === href) {
+      return;
+    }
+
+    void router.push(href);
+  };
 
   const renderBrandInfo = () => (
     <div className="flex items-center gap-2 whitespace-nowrap">
@@ -67,6 +120,25 @@ const Nav = () => {
       </NavbarBrand>
 
       <NavbarContent as="div" justify="end" className="flex-1 basis-0 gap-2">
+        <div className="flex items-center gap-2">
+          {navItems.map((item) => {
+            const isActive = item.key === currentSection;
+
+            return (
+              <Button
+                key={item.key}
+                size="sm"
+                radius="full"
+                color={isActive ? "primary" : "default"}
+                variant={isActive ? "solid" : "light"}
+                className={isActive ? "font-semibold" : "text-default-600"}
+                onPress={() => handleNavigate(item.href)}
+              >
+                {item.label}
+              </Button>
+            );
+          })}
+        </div>
 
         <Dropdown
           placement="bottom-end"
@@ -101,9 +173,6 @@ const Nav = () => {
               ]
             }}
           >
-            <DropdownItem key="settings" onPress={() => window.location.assign(`/${locale}/settings`)} showDivider>
-              {t('Settings')}
-            </DropdownItem>
             <DropdownItem key="exit" className="text-danger" color="danger" onPress={handleExit}>
               {t('Exit')}
             </DropdownItem>

@@ -553,7 +553,7 @@ function SettingsPage() {
 
   return (
     <>
-      <Nav />
+      <Nav current="settings" />
 
       {showAlert ? (
         <Alert content={alertMessage} onClose={() => setShowAlert(false)} />
