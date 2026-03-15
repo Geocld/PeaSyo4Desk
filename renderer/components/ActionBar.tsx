@@ -29,12 +29,12 @@ function ActionBar(props) {
     props.onAudio && props.onAudio();
   };
 
-  const handlePressNexus = () => {
-    props.onPressNexus && props.onPressNexus();
+  const handlePressPs = () => {
+    props.onPressPs && props.onPressPs();
   };
 
-  const handleLongPressNexus = () => {
-    props.onLongPressNexus && props.onLongPressNexus();
+  const handleLongPressPs = () => {
+    props.onLongPressPs && props.onLongPressPs();
   };
 
   const handleToggleFullscreen = () => {
@@ -64,17 +64,17 @@ function ActionBar(props) {
           }
 
           {
-            props.connectState === CONNECTED && props.onPressNexus && (
-              <DropdownItem key="pressNexus" onClick={handlePressNexus}>
-                {t("Press Nexus")}
+            props.connectState === CONNECTED && props.onPressPs && (
+              <DropdownItem key="pressPs" onClick={handlePressPs}>
+                {t("Press PS Button")}
               </DropdownItem>
             )
           }
 
           {
-            (props.connectState === CONNECTED && props.type !== 'cloud' && props.onLongPressNexus) && (
-              <DropdownItem key="longPressNexus" onClick={handleLongPressNexus}>
-                {t("Long press Nexus")}
+            (props.connectState === CONNECTED && props.type !== 'cloud' && props.onLongPressPs) && (
+              <DropdownItem key="longPressPs" onClick={handleLongPressPs}>
+                {t("Long press PS Button")}
               </DropdownItem>
             )
           }

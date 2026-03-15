@@ -14,6 +14,8 @@ const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
+const SHORT_PS_PRESS_MS = 150;
+const LONG_PS_PRESS_MS = 1000;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -1548,6 +1550,45 @@ function StreamPage() {
     router.push(`/${localeParam}/home`);
   };
 
+  const sendControlButtonState = (button: string, pressed: boolean) => {
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "control_button",
+          button,
+          pressed,
+        })
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const sendControlButtonTap = (button: string, holdMs: number) => {
+    const pressed = sendControlButtonState(button, true);
+    if (!pressed) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      sendControlButtonState(button, false);
+    }, holdMs);
+  };
+
+  const handlePressPs = () => {
+    sendControlButtonTap("ps", SHORT_PS_PRESS_MS);
+  };
+
+  const handleLongPressPs = () => {
+    sendControlButtonTap("ps", LONG_PS_PRESS_MS);
+  };
+
   const handleDisconnectAndStandby = async () => {
     if (disconnectingRef.current) {
       return;
@@ -1609,6 +1650,8 @@ function StreamPage() {
         connectState={connectState}
         audioMuted={audioMuted}
         onAudio={audioAvailable ? toggleAudioMuted : undefined}
+        onPressPs={handlePressPs}
+        onLongPressPs={handleLongPressPs}
         onDisconnect={handleDisconnect}
         onDisconnectPowerOff={handleDisconnectAndStandby}
         onTogglePerformance={() => setShowPerformance((prev) => !prev)}
