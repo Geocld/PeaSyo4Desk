@@ -41,6 +41,13 @@ type DiscoveredConsole = {
   hostId?: string;
 };
 
+type RegisterConsoleFailure = {
+  code?: string;
+  message?: string;
+  details?: string;
+  logs?: string[];
+};
+
 const getErrorMessage = (error: any, fallback: string) => {
   if (typeof error === "string" && error.trim().length > 0) {
     return error;
@@ -51,6 +58,47 @@ const getErrorMessage = (error: any, fallback: string) => {
   }
 
   return fallback;
+};
+
+const getRegisterErrorMessage = (
+  error: RegisterConsoleFailure | Error | string | unknown,
+  t: (key: string) => string
+) => {
+  const code = String((error as RegisterConsoleFailure)?.code || "").trim();
+  const rawMessage = getErrorMessage(error, t("Failed to register host."));
+
+  if (code === "REGIST_INVALID_PIN" || /invalid PIN/i.test(rawMessage)) {
+    return t(
+      "Registration PIN appears to be incorrect. Please confirm the 8-digit PIN shown on the console and try again."
+    );
+  }
+
+  if (code === "REGIST_TIMEOUT" || /timed out/i.test(rawMessage)) {
+    return t(
+      "Host registration timed out. Please keep the console on the registration screen and try again."
+    );
+  }
+
+  if (code === "REGIST_CANCELED" || /canceled/i.test(rawMessage)) {
+    return t("Host registration was canceled.");
+  }
+
+  if (
+    code === "REGIST_ACCOUNT_MISMATCH" ||
+    code === "REGIST_REMOTE_PLAY_IN_USE" ||
+    code === "REGIST_REMOTE_PLAY_CRASHED" ||
+    code === "REGIST_VERSION_MISMATCH" ||
+    code === "REGIST_HTTP_ERROR" ||
+    code === "REGIST_FAILED" ||
+    /Invalid PSN ID/i.test(rawMessage) ||
+    /Host registration failed/i.test(rawMessage)
+  ) {
+    return t(
+      "Registration failed. Please make sure the PSN account signed in on this app matches the account on the console. If they already match, restart the console and try again."
+    );
+  }
+
+  return rawMessage;
 };
 
 const buildConsoleId = () => {
@@ -268,7 +316,7 @@ function RegistryPage() {
       setSuccessText(t("Host registered successfully."));
       router.push(`/${locale}/home`);
     } catch (error) {
-      setErrorText(getErrorMessage(error, t("Failed to register host.")));
+      setErrorText(getRegisterErrorMessage(error, t));
     } finally {
       setIsRegistering(false);
     }

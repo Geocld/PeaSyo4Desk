@@ -67,6 +67,13 @@ type RegisteredHost = {
   consolePin?: number;
 };
 
+type RegisterConsoleFailure = {
+  code: string;
+  message: string;
+  details?: string;
+  logs?: string[];
+};
+
 const ensureChiakiInitialized = () => {
   if (chiakiInitialized) {
     return;
@@ -111,6 +118,134 @@ const getChiakiUserCredential = (rpRegistKey: string | undefined) => {
   } catch {
     return "";
   }
+};
+
+const REGISTER_LOG_LIMIT = 20;
+
+const pushRegisterLog = (logs: string[], message: string) => {
+  const normalizedMessage = String(message || "").trim();
+  if (!normalizedMessage) {
+    return;
+  }
+
+  logs.push(normalizedMessage);
+  if (logs.length > REGISTER_LOG_LIMIT) {
+    logs.splice(0, logs.length - REGISTER_LOG_LIMIT);
+  }
+};
+
+const createRegisterFailure = (
+  code: string,
+  message: string,
+  logs: string[],
+  details?: string
+): RegisterConsoleFailure => {
+  return {
+    code,
+    message,
+    details: details || logs[logs.length - 1] || undefined,
+    logs: logs.slice(-6),
+  };
+};
+
+const buildRegisterFailureFromLogs = (
+  logs: string[],
+  fallbackMessage = "Host registration failed."
+): RegisterConsoleFailure => {
+  const recentLogs = logs.slice(-8);
+  const joinedLogs = recentLogs.join("\n");
+
+  if (/Invalid PSN ID/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_ACCOUNT_MISMATCH",
+      "Host registration failed because the PSN account does not match the console account.",
+      recentLogs
+    );
+  }
+
+  if (/Regist failed, probably invalid PIN/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_INVALID_PIN",
+      "Host registration failed because the registration PIN is invalid.",
+      recentLogs
+    );
+  }
+
+  if (/Remote is already in use/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_REMOTE_PLAY_IN_USE",
+      "Host registration failed because Remote Play is already in use on the console.",
+      recentLogs
+    );
+  }
+
+  if (/Remote Play on Console crashed/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_REMOTE_PLAY_CRASHED",
+      "Host registration failed because Remote Play on the console is unavailable.",
+      recentLogs
+    );
+  }
+
+  if (/RP-Version mismatch/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_VERSION_MISMATCH",
+      "Host registration failed because the console Remote Play version is not supported.",
+      recentLogs
+    );
+  }
+
+  if (/Regist received HTTP code/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_HTTP_ERROR",
+      "Host registration failed because the console rejected the registration request.",
+      recentLogs
+    );
+  }
+
+  return createRegisterFailure("REGIST_FAILED", fallbackMessage, recentLogs);
+};
+
+const normalizeRegisterFailure = (
+  error: unknown,
+  logs: string[],
+  fallbackCode = "REGIST_FAILED",
+  fallbackMessage = "Host registration failed."
+): RegisterConsoleFailure => {
+  if (error && typeof error === "object") {
+    const currentCode = String((error as RegisterConsoleFailure).code || "").trim();
+    const currentMessage = String((error as RegisterConsoleFailure).message || "").trim();
+
+    if (currentCode || currentMessage) {
+      return {
+        code: currentCode || fallbackCode,
+        message: currentMessage || fallbackMessage,
+        details:
+          String((error as RegisterConsoleFailure).details || "").trim() ||
+          logs[logs.length - 1] ||
+          undefined,
+        logs:
+          Array.isArray((error as RegisterConsoleFailure).logs) &&
+          (error as RegisterConsoleFailure).logs.length > 0
+            ? (error as RegisterConsoleFailure).logs.slice(-6)
+            : logs.slice(-6),
+      };
+    }
+  }
+
+  if (error instanceof Error) {
+    return createRegisterFailure(
+      fallbackCode,
+      error.message || fallbackMessage,
+      logs
+    );
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return createRegisterFailure(fallbackCode, error.trim(), logs);
+  }
+
+  return createRegisterFailure(fallbackCode, fallbackMessage, logs);
 };
 
 const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
@@ -208,9 +343,10 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
     let regist: any = null;
     let timeout: NodeJS.Timeout | undefined;
     let finished = false;
+    const registerLogs: string[] = [];
 
     const complete = (
-      error?: Error | null,
+      error?: unknown,
       result?: RegisteredHost & { userCredential?: string }
     ) => {
       if (finished) {
@@ -225,7 +361,7 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
       stopChiakiHandle(regist);
 
       if (error) {
-        reject(error);
+        reject(normalizeRegisterFailure(error, registerLogs));
         return;
       }
 
@@ -254,16 +390,23 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
             }
 
             if (event?.name === "finished_failed") {
-              complete(new Error("Host registration failed."));
+              complete(buildRegisterFailureFromLogs(registerLogs));
               return;
             }
 
             if (event?.name === "finished_canceled") {
-              complete(new Error("Host registration canceled."));
+              complete(
+                createRegisterFailure(
+                  "REGIST_CANCELED",
+                  "Host registration canceled.",
+                  registerLogs
+                )
+              );
             }
           },
           onLog: (event: any) => {
             if (event?.message) {
+              pushRegisterLog(registerLogs, String(event.message));
               console.log(`[chiaki:${event.levelChar || "?"}]`, event.message);
             }
           },
@@ -274,19 +417,17 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
 
       timeout = setTimeout(() => {
         complete(
-          new Error(
+          createRegisterFailure(
+            "REGIST_TIMEOUT",
             `Host registration timed out after ${
               Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS) / 1000
-            } seconds.`
+            } seconds.`,
+            registerLogs
           )
         );
       }, Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS));
     } catch (error: any) {
-      complete(
-        error instanceof Error
-          ? error
-          : new Error(String(error || "Host registration failed."))
-      );
+      complete(error);
     }
   });
 
