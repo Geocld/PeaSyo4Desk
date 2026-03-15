@@ -11,7 +11,10 @@ const STREAM_WS_PATH = "/stream";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const MAX_CLIENT_BACKLOG_BYTES = 8 * 1024 * 1024;
-const PIX_FMT = "yuv420p";
+const SDR_STREAM_FORMAT = "I420";
+const HDR_STREAM_FORMAT = "I010";
+const SDR_PIXEL_FORMAT = "yuv420p";
+const HDR_PIXEL_FORMAT = "yuv420p10le";
 
 const BUTTONS = (chiaki as any).controllerButtons || {
   CROSS: 1 << 0,
@@ -79,6 +82,8 @@ type StreamSessionSettings = {
   remote_fps?: number;
 };
 
+type StreamPixelFormat = typeof SDR_STREAM_FORMAT | typeof HDR_STREAM_FORMAT;
+
 type StartStreamSessionArgs = {
   streamHost?: string;
   host?: string;
@@ -111,8 +116,18 @@ type VideoConfig = {
   bitrate: number;
   codec: number;
   codecName: string;
+  format: StreamPixelFormat;
+  outputPixelFormat: string;
+  isHdr: boolean;
   frameSize: number;
   inputFormat: string;
+};
+
+type VideoOutputFormat = {
+  format: StreamPixelFormat;
+  outputPixelFormat: string;
+  isHdr: boolean;
+  frameSize: number;
 };
 
 const wsClients = new Set<any>();
@@ -304,6 +319,20 @@ const resolveInputFormat = (codec: number) => {
   return "h264";
 };
 
+const resolveOutputFormat = (
+  codec: number,
+  width: number,
+  height: number
+): VideoOutputFormat => {
+  const isHdr = codec === (chiaki as any).codecs.H265_HDR;
+  return {
+    format: isHdr ? HDR_STREAM_FORMAT : SDR_STREAM_FORMAT,
+    outputPixelFormat: isHdr ? HDR_PIXEL_FORMAT : SDR_PIXEL_FORMAT,
+    isHdr,
+    frameSize: isHdr ? width * height * 3 : Math.floor((width * height * 3) / 2),
+  };
+};
+
 const normalizeButtonName = (buttonName: unknown) => {
   const key = String(buttonName || "").trim().toLowerCase();
   return BUTTON_NAME_TO_MASK[key] ? key : null;
@@ -443,7 +472,7 @@ const sendVideoConfigToClient = (client: any) => {
     width: streamVideoConfig.width,
     height: streamVideoConfig.height,
     fps: streamVideoConfig.fps,
-    format: "I420",
+    format: streamVideoConfig.format,
     frameSize: streamVideoConfig.frameSize,
   });
 };
@@ -770,7 +799,7 @@ const createVideoDecodePipeline = () => {
     .outputOptions("-sn")
     .outputOptions("-dn")
     .outputOptions("-r", String(streamVideoConfig.fps))
-    .outputOptions("-pix_fmt", PIX_FMT)
+    .outputOptions("-pix_fmt", streamVideoConfig.outputPixelFormat)
     .outputOptions("-f", "rawvideo")
     .outputOptions("-vcodec", "rawvideo")
     .on("start", (cmd) => log("ffmpeg video decoder started:", cmd))
@@ -1104,6 +1133,11 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
       ? requestedBitrate
       : defaultBitrate;
   const profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
+  const outputFormat = resolveOutputFormat(
+    profileCodec,
+    profileResolution.width,
+    profileResolution.height
+  );
   const ps5 = typeof args.ps5 === "boolean"
     ? args.ps5
     : !String(consoleInfo.apName || "").toUpperCase().includes("PS4");
@@ -1115,7 +1149,10 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     bitrate: profileBitrate,
     codec: profileCodec,
     codecName: codecName(profileCodec),
-    frameSize: Math.floor((profileResolution.width * profileResolution.height * 3) / 2),
+    format: outputFormat.format,
+    outputPixelFormat: outputFormat.outputPixelFormat,
+    isHdr: outputFormat.isHdr,
+    frameSize: outputFormat.frameSize,
     inputFormat: resolveInputFormat(profileCodec),
   };
 
@@ -1233,7 +1270,7 @@ const startSession = async (args: StartStreamSessionArgs) => {
       width: streamVideoConfig.width,
       height: streamVideoConfig.height,
       fps: streamVideoConfig.fps,
-      format: "I420",
+      format: streamVideoConfig.format,
       frameSize: streamVideoConfig.frameSize,
     });
   }

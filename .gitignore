@@ -69,3 +69,5 @@ yarn-error.log
 
 # testing
 /coverage
+
+*.tsbuildinfo
