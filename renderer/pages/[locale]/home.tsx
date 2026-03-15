@@ -15,13 +15,12 @@ import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
 import StartStreamModals from "../../components/StartStreamModals";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
+import Ipc from "../../lib/ipc";
 import {
   ConsoleCacheItem,
   hasLoginCredential,
-  LOCAL_CONSOLES_KEY,
   PENDING_STREAM_STORAGE_KEY,
   parseCachedConsoles,
-  PSN_LOGIN_STORAGE_KEY,
   upsertConsoleCache,
 } from "../../common/remotePlay";
 
@@ -56,6 +55,29 @@ function Home() {
   );
 
   useEffect(() => {
+    let active = true;
+
+    const initializeLoginState = async () => {
+      const storedLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
+        () => null
+      );
+      const hasCachedLogin = hasLoginCredential(storedLoginInfo);
+      if (!active) {
+        return;
+      }
+
+      if (!hasCachedLogin) {
+        window.sessionStorage.setItem("isLogined", "0");
+        setIsLogined(false);
+        setShowLoginModal(true);
+        return;
+      }
+
+      window.sessionStorage.setItem("isLogined", "1");
+      setIsLogined(true);
+      setShowLoginModal(false);
+    };
+
     const localTheme = localStorage.getItem('theme');
     if (localTheme === 'xbox-light') {
       setTheme(localTheme)
@@ -66,33 +88,11 @@ function Home() {
       document.documentElement.style.fontSize = localFontSize + 'px';
     }
 
-    const localLoginInfo = localStorage.getItem(PSN_LOGIN_STORAGE_KEY);
-    if (!localLoginInfo) {
-      window.sessionStorage.setItem("isLogined", "0");
-      setIsLogined(false);
-      setShowLoginModal(true);
-      return;
-    }
+    void initializeLoginState();
 
-    try {
-      const parsedLoginInfo = JSON.parse(localLoginInfo);
-      if (hasLoginCredential(parsedLoginInfo)) {
-        window.sessionStorage.setItem("isLogined", "1");
-        setIsLogined(true);
-        setShowLoginModal(false);
-      } else {
-        localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
-        window.sessionStorage.setItem("isLogined", "0");
-        setIsLogined(false);
-        setShowLoginModal(true);
-      }
-    } catch (error) {
-      console.error("Invalid login cache:", error);
-      localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
-      window.sessionStorage.setItem("isLogined", "0");
-      setIsLogined(false);
-      setShowLoginModal(true);
-    }
+    return () => {
+      active = false;
+    };
   }, [setTheme]);
 
   useEffect(() => {
@@ -101,11 +101,24 @@ function Home() {
       return;
     }
 
-    const cachedConsoles = parseCachedConsoles(
-      localStorage.getItem(LOCAL_CONSOLES_KEY)
-    );
-    localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(cachedConsoles));
-    setConsoles(cachedConsoles);
+    let active = true;
+
+    const loadCachedConsoles = async () => {
+      const storedConsoles = await Ipc.send("app", "getCachedConsoles").catch(
+        () => []
+      );
+      if (!active) {
+        return;
+      }
+
+      setConsoles(parseCachedConsoles(storedConsoles));
+    };
+
+    void loadCachedConsoles();
+
+    return () => {
+      active = false;
+    };
   }, [isLogined]);
 
   const handleLoginSuccess = (loginInfo: any) => {
@@ -113,7 +126,6 @@ function Home() {
       throw new Error("Failed to get valid PSN login info.");
     }
 
-    localStorage.setItem(PSN_LOGIN_STORAGE_KEY, JSON.stringify(loginInfo));
     window.sessionStorage.setItem("isLogined", "1");
     setIsLogined(true);
     setShowLoginModal(false);
@@ -136,7 +148,9 @@ function Home() {
   const handleConsoleUpdated = (updatedConsole: ConsoleCacheItem) => {
     setConsoles((prevConsoles) => {
       const nextConsoles = upsertConsoleCache(prevConsoles, updatedConsole);
-      localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(nextConsoles));
+      void Ipc.send("app", "setCachedConsoles", {
+        consoles: nextConsoles,
+      }).catch(() => undefined);
       return nextConsoles;
     });
   };

@@ -1,5 +1,3 @@
-export const PSN_LOGIN_STORAGE_KEY = "psn-login-info";
-export const LOCAL_CONSOLES_KEY = "local-consoles";
 export const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 
 export type PsnLoginInfo = {
@@ -122,13 +120,16 @@ export const getPsnOnlineId = (loginInfo: PsnLoginInfo | null | undefined) => {
   return String(loginInfo?.userInfo?.online_id || loginInfo?.online_id || "").trim();
 };
 
-export const parseCachedConsoles = (raw: string | null): ConsoleCacheItem[] => {
+export const parseCachedConsoles = (raw: unknown): ConsoleCacheItem[] => {
   if (!raw) {
     return [];
   }
 
   try {
-    const parsed = JSON.parse(raw);
+    const parsed =
+      typeof raw === "string"
+        ? JSON.parse(raw)
+        : raw;
 
     if (Array.isArray(parsed)) {
       return parsed

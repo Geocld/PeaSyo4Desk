@@ -5,6 +5,8 @@ import { addToast } from "@heroui/react";
 import ActionBar from "../../components/ActionBar";
 import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
+import { useSettings } from "../../context/userContext";
+import { defaultSettings } from "../../context/userContext.defaults";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
 
@@ -59,6 +61,30 @@ const CONTROLLER_ANALOG_BUTTONS = {
   L2: 1 << 16,
   R2: 1 << 17,
 };
+
+const KEYBOARD_BUTTON_ACTION_MASKS = {
+  DPadUp: CONTROLLER_BUTTONS.DPAD_UP,
+  DPadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
+  DPadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
+  DPadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
+  A: CONTROLLER_BUTTONS.CROSS,
+  B: CONTROLLER_BUTTONS.MOON,
+  X: CONTROLLER_BUTTONS.BOX,
+  Y: CONTROLLER_BUTTONS.PYRAMID,
+  View: CONTROLLER_BUTTONS.SHARE,
+  Menu: CONTROLLER_BUTTONS.OPTIONS,
+  Nexus: CONTROLLER_BUTTONS.PS,
+  Touchpad: CONTROLLER_BUTTONS.TOUCHPAD,
+  LeftShoulder: CONTROLLER_BUTTONS.L1,
+  RightShoulder: CONTROLLER_BUTTONS.R1,
+  LeftThumb: CONTROLLER_BUTTONS.L3,
+  RightThumb: CONTROLLER_BUTTONS.R3,
+} as const;
+
+const KEYBOARD_INPUT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+const DEFAULT_KEYBOARD_MAPPING = defaultSettings.input_mousekeyboard_maping;
+const LEGACY_TOUCHPAD_KEY = "t";
+const LEGACY_RIGHT_STICK_UP_KEY = "r";
 
 type ControllerStatePayload = {
   buttons: number;
@@ -227,9 +253,72 @@ const getErrorMessage = (error: any, fallback: string) => {
   return fallback;
 };
 
+const normalizeKeyboardMapping = (value: unknown) => {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_KEYBOARD_MAPPING as Record<string, string>;
+  }
+
+  const nextMapping: Record<string, string> = {};
+  for (const [key, action] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof key === "string" && typeof action === "string") {
+      nextMapping[key] = action;
+    }
+  }
+
+  const mergedMapping = {
+    ...DEFAULT_KEYBOARD_MAPPING,
+    ...nextMapping,
+  } as Record<string, string>;
+  const rawTouchpadBinding = nextMapping[LEGACY_TOUCHPAD_KEY];
+  const hasTouchpadBinding = Object.values(nextMapping).includes("Touchpad");
+  const hasRightStickUpBindingOnOtherKey = Object.entries(nextMapping).some(
+    ([key, action]) =>
+      key !== LEGACY_TOUCHPAD_KEY && action === "RightThumbYAxisPlus"
+  );
+
+  if (!hasTouchpadBinding) {
+    if (
+      rawTouchpadBinding === "RightThumbYAxisPlus" &&
+      !hasRightStickUpBindingOnOtherKey
+    ) {
+      mergedMapping[LEGACY_RIGHT_STICK_UP_KEY] = "RightThumbYAxisPlus";
+      delete mergedMapping[LEGACY_TOUCHPAD_KEY];
+    } else if (rawTouchpadBinding && rawTouchpadBinding !== "Touchpad") {
+      return mergedMapping;
+    }
+
+    mergedMapping[LEGACY_TOUCHPAD_KEY] = "Touchpad";
+  }
+
+  return mergedMapping;
+};
+
+const mergeAnalogInput = (gamepadValue: number, keyboardValue: number) => {
+  return Math.abs(keyboardValue) >= Math.abs(gamepadValue) ? keyboardValue : gamepadValue;
+};
+
+const getKeyboardAxisValue = (
+  activeActions: Set<string>,
+  negativeAction: string,
+  positiveAction: string
+) => {
+  const negative = activeActions.has(negativeAction) ? -1 : 0;
+  const positive = activeActions.has(positiveAction) ? 1 : 0;
+  return Math.max(-1, Math.min(1, negative + positive));
+};
+
+const isEditableKeyboardTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return KEYBOARD_INPUT_TAGS.has(target.tagName) || target.isContentEditable;
+};
+
 function StreamPage() {
   const { t } = useTranslation("cloud");
   const router = useRouter();
+  const { settings } = useSettings();
 
   const [status, setStatus] = useState("");
   const [connectState, setConnectState] = useState("initializing");
@@ -293,6 +382,8 @@ function StreamPage() {
   const sessionErrorHandledRef = useRef(false);
   const connectedToastRafRef = useRef<number | null>(null);
   const audioStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
+  const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -309,6 +400,16 @@ function StreamPage() {
       title: t("Session error"),
       content,
     });
+  };
+
+  useEffect(() => {
+    keyboardMappingRef.current = normalizeKeyboardMapping(
+      settings?.input_mousekeyboard_maping
+    );
+  }, [settings?.input_mousekeyboard_maping]);
+
+  const clearPressedKeyboardKeys = () => {
+    keyboardPressedKeysRef.current.clear();
   };
 
   const applyVideoConfig = (config: any) => {
@@ -1044,6 +1145,43 @@ function StreamPage() {
       if (Math.abs(rightY) > Math.abs(rightYNorm)) rightYNorm = rightY;
     }
 
+    if (keyboardPressedKeysRef.current.size > 0) {
+      const activeActions = new Set(Array.from(keyboardPressedKeysRef.current.values()));
+
+      for (const [action, mask] of Object.entries(KEYBOARD_BUTTON_ACTION_MASKS)) {
+        if (activeActions.has(action)) {
+          mergedState.buttons |= mask;
+        }
+      }
+
+      if (activeActions.has("LeftTrigger")) {
+        mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
+        mergedState.l2State = Math.max(mergedState.l2State, 255);
+      }
+
+      if (activeActions.has("RightTrigger")) {
+        mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
+        mergedState.r2State = Math.max(mergedState.r2State, 255);
+      }
+
+      leftXNorm = mergeAnalogInput(
+        leftXNorm,
+        getKeyboardAxisValue(activeActions, "LeftThumbXAxisPlus", "LeftThumbXAxisMinus")
+      );
+      leftYNorm = mergeAnalogInput(
+        leftYNorm,
+        getKeyboardAxisValue(activeActions, "LeftThumbYAxisPlus", "LeftThumbYAxisMinus")
+      );
+      rightXNorm = mergeAnalogInput(
+        rightXNorm,
+        getKeyboardAxisValue(activeActions, "RightThumbXAxisPlus", "RightThumbXAxisMinus")
+      );
+      rightYNorm = mergeAnalogInput(
+        rightYNorm,
+        getKeyboardAxisValue(activeActions, "RightThumbYAxisPlus", "RightThumbYAxisMinus")
+      );
+    }
+
     mergedState.leftX = toSignedAxis(leftXNorm);
     mergedState.leftY = toSignedAxis(leftYNorm);
     mergedState.rightX = toSignedAxis(rightXNorm);
@@ -1305,6 +1443,7 @@ function StreamPage() {
       audioUnlockedRef.current = false;
       audioAvailableRef.current = false;
       audioPlaybackEnabledRef.current = false;
+      clearPressedKeyboardKeys();
       sessionConnectedRef.current = false;
       videoReadyRef.current = false;
       sessionErrorHandledRef.current = false;
@@ -1334,6 +1473,54 @@ function StreamPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const handleKeyboardChange = (event: KeyboardEvent, pressed: boolean) => {
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+
+      const mappedAction = keyboardMappingRef.current[event.key];
+      if (!mappedAction) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (pressed) {
+        keyboardPressedKeysRef.current.set(event.key, mappedAction);
+      } else {
+        keyboardPressedKeysRef.current.delete(event.key);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      handleKeyboardChange(event, true);
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      handleKeyboardChange(event, false);
+    };
+
+    const clearKeyboardState = () => {
+      clearPressedKeyboardKeys();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", clearKeyboardState);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", clearKeyboardState);
+      clearPressedKeyboardKeys();
+    };
+  }, []);
+
   const handleDisconnect = async () => {
     if (disconnectingRef.current) {
       return;
@@ -1341,6 +1528,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    clearPressedKeyboardKeys();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting..."));
@@ -1367,6 +1555,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    clearPressedKeyboardKeys();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting and putting console into standby..."));

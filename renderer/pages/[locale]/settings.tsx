@@ -15,6 +15,7 @@ import { useRouter } from "next/router";
 import Ipc from "../../lib/ipc";
 import Layout from "../../components/Layout";
 import SettingItem from "../../components/SettingItem";
+import KeyboardMap from "../../components/KeyboardMap";
 import Alert from "../../components/Alert";
 import ConfirmModal from "../../components/ConfirmModal";
 import Nav from "../../components/Nav";
@@ -22,11 +23,7 @@ import updater from "../../lib/updater";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import getSettingsMetas from "../../common/settings";
-import {
-  LOCAL_CONSOLES_KEY,
-  PENDING_STREAM_STORAGE_KEY,
-  PSN_LOGIN_STORAGE_KEY,
-} from "../../common/remotePlay";
+import { PENDING_STREAM_STORAGE_KEY } from "../../common/remotePlay";
 import pkg from "../../../package.json";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
@@ -282,8 +279,6 @@ function SettingsPage() {
   };
 
   const clearLocalCache = () => {
-    localStorage.removeItem(LOCAL_CONSOLES_KEY);
-    localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
     localStorage.removeItem(PENDING_STREAM_STORAGE_KEY);
     sessionStorage.removeItem("isLogined");
   };
@@ -307,6 +302,8 @@ function SettingsPage() {
   const handleClearCache = async () => {
     await Ipc.send("app", "clearData").catch(() => undefined);
     await Ipc.send("app", "clearUserData").catch(() => undefined);
+    await Ipc.send("app", "clearCachedPsnLoginInfo").catch(() => undefined);
+    await Ipc.send("app", "clearCachedConsoles").catch(() => undefined);
     clearLocalCache();
     Ipc.send("app", "restart");
   };
@@ -585,7 +582,12 @@ function SettingsPage() {
           </Tab>
 
           <Tab key="Others" title={t("Others")}>
-            {otherMetas.map((item) => renderOtherActionCard(item))}
+            {otherMetas.map((item) => (
+              <div key={item.name}>
+                {renderOtherActionCard(item)}
+                {item.name === "gamepad_tester" ? <KeyboardMap /> : null}
+              </div>
+            ))}
           </Tab>
         </Tabs>
       </Layout>

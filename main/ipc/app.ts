@@ -18,8 +18,17 @@ const CHIAKI_DISCOVERY_TIMEOUT_MS = 3000;
 const CHIAKI_REGIST_TIMEOUT_MS = 90000;
 const CHIAKI_PS4_TARGET = 1000;
 const CHIAKI_PS5_TARGET = 1000100;
+const PSN_LOGIN_INFO_STORE_KEY = "psn-login-info";
+const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
 
 let chiakiInitialized = false;
+
+const isPersistableConsoleCache = (value: unknown) => {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => item && typeof item === "object" && !Array.isArray(item))
+  );
+};
 
 type DiscoveryHost = {
   state?: number;
@@ -609,7 +618,10 @@ export default class IpcApp extends IpcBase {
   }
 
   login() {
-    return this._application._authentication.startAuthflow();
+    return this._application._authentication.startAuthflow().then((loginInfo) => {
+      this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
+      return loginInfo;
+    });
   }
 
   getPsnLoginUrl() {
@@ -617,15 +629,67 @@ export default class IpcApp extends IpcBase {
   }
 
   manualLoginByRedirect(data: { redirectUrl: string }) {
-    return this._application._authentication.manualLoginByRedirect(data.redirectUrl);
+    return this._application._authentication
+      .manualLoginByRedirect(data.redirectUrl)
+      .then((loginInfo) => {
+        this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
+        return loginInfo;
+      });
   }
 
   loginWithUsername(data: { username: string }) {
-    return this._application._authentication.loginWithUsername(data.username);
+    return this._application._authentication.loginWithUsername(data.username).then((loginInfo) => {
+      this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
+      return loginInfo;
+    });
   }
 
   loginWithAccountId(data: { accountId: string }) {
-    return this._application._authentication.loginWithAccountId(data.accountId);
+    return this._application._authentication
+      .loginWithAccountId(data.accountId)
+      .then((loginInfo) => {
+        this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
+        return loginInfo;
+      });
+  }
+
+  getCachedPsnLoginInfo() {
+    return Promise.resolve(
+      this._application._store.get(PSN_LOGIN_INFO_STORE_KEY, null)
+    );
+  }
+
+  clearCachedPsnLoginInfo() {
+    return new Promise<boolean>((resolve) => {
+      this._application._store.delete(PSN_LOGIN_INFO_STORE_KEY);
+      resolve(true);
+    });
+  }
+
+  getCachedConsoles() {
+    return Promise.resolve(
+      this._application._store.get(LOCAL_CONSOLES_STORE_KEY, [])
+    );
+  }
+
+  setCachedConsoles(data: { consoles?: unknown }) {
+    return new Promise((resolve, reject) => {
+      const consoles = data?.consoles;
+      if (!isPersistableConsoleCache(consoles)) {
+        reject(new Error("Valid consoles array is required."));
+        return;
+      }
+
+      this._application._store.set(LOCAL_CONSOLES_STORE_KEY, consoles);
+      resolve(consoles);
+    });
+  }
+
+  clearCachedConsoles() {
+    return new Promise<boolean>((resolve) => {
+      this._application._store.delete(LOCAL_CONSOLES_STORE_KEY);
+      resolve(true);
+    });
   }
 
   discoverConsoles(data: DiscoverConsolesArgs = {}) {

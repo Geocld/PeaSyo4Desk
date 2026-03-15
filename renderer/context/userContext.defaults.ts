@@ -55,9 +55,10 @@ export const defaultSettings = {
 
     'f': 'RightThumbXAxisPlus',
     'h': 'RightThumbXAxisMinus',
-    't': 'RightThumbYAxisPlus',
+    'r': 'RightThumbYAxisPlus',
     'g': 'RightThumbYAxisMinus',
 
+    't': 'Touchpad',
     v: 'View',
     m: 'Menu',
     n: 'Nexus',

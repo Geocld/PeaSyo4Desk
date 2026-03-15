@@ -19,9 +19,7 @@ import {
   getPsnAccountId,
   getPsnOnlineId,
   hasLoginCredential,
-  LOCAL_CONSOLES_KEY,
   parseCachedConsoles,
-  PSN_LOGIN_STORAGE_KEY,
   upsertConsoleCache,
   type PsnLoginInfo,
 } from "../../common/remotePlay";
@@ -141,28 +139,31 @@ function RegistryPage() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [successText, setSuccessText] = useState("");
+  const [loginInfo, setLoginInfo] = useState<PsnLoginInfo | null>(null);
 
   useEffect(() => {
-    const localLoginInfo = localStorage.getItem(PSN_LOGIN_STORAGE_KEY);
-    if (!localLoginInfo) {
-      router.replace(`/${locale}/home`);
-      return;
-    }
+    let active = true;
 
-    try {
-      const parsedLoginInfo = JSON.parse(localLoginInfo) as PsnLoginInfo;
-      if (!hasLoginCredential(parsedLoginInfo)) {
-        localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
-        router.replace(`/${locale}/home`);
+    const loadLoginInfo = async () => {
+      const storedLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
+        () => null
+      );
+      if (hasLoginCredential(storedLoginInfo)) {
+        if (!active) return;
+        setLoginInfo(storedLoginInfo as PsnLoginInfo);
+        setIsLogined(true);
         return;
       }
 
-      setIsLogined(true);
-    } catch (error) {
-      console.error("Invalid login cache:", error);
-      localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
+      if (!active) return;
       router.replace(`/${locale}/home`);
-    }
+    };
+
+    void loadLoginInfo();
+
+    return () => {
+      active = false;
+    };
   }, [locale, router]);
 
   const refreshDiscoveredConsoles = async (type: ConsoleType = consoleType) => {
@@ -246,20 +247,8 @@ function RegistryPage() {
       return;
     }
 
-    const localLoginInfo = localStorage.getItem(PSN_LOGIN_STORAGE_KEY);
-    if (!localLoginInfo) {
+    if (!loginInfo || !hasLoginCredential(loginInfo)) {
       setErrorText(t("Please login first."));
-      router.replace(`/${locale}/home`);
-      return;
-    }
-
-    let loginInfo: PsnLoginInfo;
-    try {
-      loginInfo = JSON.parse(localLoginInfo) as PsnLoginInfo;
-    } catch (error) {
-      console.error("Invalid login cache:", error);
-      setErrorText(t("Please login first."));
-      localStorage.removeItem(PSN_LOGIN_STORAGE_KEY);
       router.replace(`/${locale}/home`);
       return;
     }
@@ -308,10 +297,12 @@ function RegistryPage() {
       } satisfies ConsoleCacheItem;
 
       const cachedConsoles = parseCachedConsoles(
-        localStorage.getItem(LOCAL_CONSOLES_KEY)
+        await Ipc.send("app", "getCachedConsoles").catch(() => [])
       );
       const nextConsoles = upsertConsoleCache(cachedConsoles, nextConsole);
-      localStorage.setItem(LOCAL_CONSOLES_KEY, JSON.stringify(nextConsoles));
+      await Ipc.send("app", "setCachedConsoles", {
+        consoles: nextConsoles,
+      });
 
       setSuccessText(t("Host registered successfully."));
       router.push(`/${locale}/home`);

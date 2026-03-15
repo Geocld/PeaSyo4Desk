@@ -98,6 +98,7 @@
   "Reset stream settings": "重置串流设置",
   "Keyboard mapping": "键盘映射",
   "Config keyboard key mapping": "重新映射键盘按键",
+  "Press a key to bind it. Press Backspace to clear the current binding.": "点击输入框后按下键盘按键即可绑定，按 Backspace 可清除当前映射。",
   "Key Maping": "按键映射",
   "Please press the button on the controller, which will be mapped to:": "请按手柄上的按键，该按键将映射为:",
   "After successful mapping, this pop-up will automatically close": "映射成功后将自动关闭此弹窗",
