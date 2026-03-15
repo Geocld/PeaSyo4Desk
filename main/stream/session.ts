@@ -265,7 +265,7 @@ const ensureBitrateForMode = (
   if (normalizeBitrateMode(bitrateMode) === "custom") {
     const parsed = Math.round(Number(bitrate));
     if (Number.isFinite(parsed) && parsed > 0) {
-      return Math.min(50000, Math.max(1000, parsed));
+      return Math.min(100000, Math.max(1000, parsed));
     }
   }
 

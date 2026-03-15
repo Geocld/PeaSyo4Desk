@@ -3,9 +3,9 @@ import {
   Button,
   Card,
   CardBody,
-  Input,
   Radio,
   RadioGroup,
+  Slider,
   Tab,
   Tabs,
   addToast,
@@ -54,13 +54,17 @@ const normalizeBitrateMode = (mode: unknown): "auto" | "custom" => {
   return String(mode || "auto").toLowerCase() === "custom" ? "custom" : "auto";
 };
 
+const getSliderValue = (value: number | number[]) => {
+  return Array.isArray(value) ? Number(value[0] || 0) : Number(value || 0);
+};
+
 const clampStreamBitrate = (bitrate: unknown, resolution: number) => {
   const parsed = Math.round(Number(bitrate));
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return getAutoBitrateForResolution(resolution);
   }
 
-  return Math.min(50000, Math.max(1000, parsed));
+  return Math.min(100000, Math.max(1000, parsed));
 };
 
 const ensureBitrateForMode = (
@@ -104,6 +108,7 @@ const createDraftFromSettings = (settings: any): BasicStreamDraft => {
 const defaultDraft = createDraftFromSettings(defaultSettings);
 
 const getOptionLabel = (option: any) => option?.label ?? option?.text ?? String(option?.value);
+const formatBitrateText = (bitrate: number) => `${Math.round(bitrate / 1000)} Mbps`;
 
 function SettingsPage() {
   const {
@@ -114,10 +119,6 @@ function SettingsPage() {
   const { settings, setSettings } = useSettings();
 
   const [draft, setDraft] = useState<BasicStreamDraft>(defaultDraft);
-  const [bitrateInputs, setBitrateInputs] = useState({
-    local: String(defaultDraft.bitrate),
-    remote: String(defaultDraft.remote_bitrate),
-  });
   const [showAlert, setShowAlert] = useState(false);
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -136,10 +137,6 @@ function SettingsPage() {
   useEffect(() => {
     const nextDraft = createDraftFromSettings(settings);
     setDraft(nextDraft);
-    setBitrateInputs({
-      local: String(nextDraft.bitrate),
-      remote: String(nextDraft.remote_bitrate),
-    });
   }, [settings]);
 
   const settingsMetas = useMemo(() => getSettingsMetas(t), [t]);
@@ -153,10 +150,6 @@ function SettingsPage() {
 
   const syncDraft = (nextDraft: BasicStreamDraft) => {
     setDraft(nextDraft);
-    setBitrateInputs({
-      local: String(nextDraft.bitrate),
-      remote: String(nextDraft.remote_bitrate),
-    });
   };
 
   const handleResolutionChange = (type: "local" | "remote", resolution: number) => {
@@ -169,7 +162,6 @@ function SettingsPage() {
         bitrate_mode: "auto",
         bitrate: autoBitrate,
       }));
-      setBitrateInputs((prev) => ({ ...prev, local: String(autoBitrate) }));
       return;
     }
 
@@ -179,7 +171,6 @@ function SettingsPage() {
       remote_bitrate_mode: "auto",
       remote_bitrate: autoBitrate,
     }));
-    setBitrateInputs((prev) => ({ ...prev, remote: String(autoBitrate) }));
   };
 
   const handleBitrateModeChange = (
@@ -196,7 +187,6 @@ function SettingsPage() {
         bitrate_mode: mode,
         bitrate: nextBitrate,
       }));
-      setBitrateInputs((prev) => ({ ...prev, local: String(nextBitrate) }));
       return;
     }
 
@@ -209,7 +199,6 @@ function SettingsPage() {
       remote_bitrate_mode: mode,
       remote_bitrate: nextBitrate,
     }));
-    setBitrateInputs((prev) => ({ ...prev, remote: String(nextBitrate) }));
   };
 
   const handleCodecChange = (type: "local" | "remote", codec: string) => {
@@ -230,39 +219,18 @@ function SettingsPage() {
     setDraft((prev) => ({ ...prev, remote_fps: fps }));
   };
 
-  const handleBitrateInputChange = (type: "local" | "remote", value: string) => {
-    setBitrateInputs((prev) => ({
-      ...prev,
-      [type]: value,
-    }));
-
-    const numericValue = Math.round(Number(value));
-    if (!Number.isFinite(numericValue) || numericValue <= 0) {
-      return;
-    }
+  const handleBitrateSliderChange = (
+    type: "local" | "remote",
+    value: number | number[]
+  ) => {
+    const bitrate = Math.min(100000, Math.max(1000, getSliderValue(value) * 1000));
 
     if (type === "local") {
-      setDraft((prev) => ({ ...prev, bitrate: numericValue }));
+      setDraft((prev) => ({ ...prev, bitrate }));
       return;
     }
 
-    setDraft((prev) => ({ ...prev, remote_bitrate: numericValue }));
-  };
-
-  const handleBitrateInputBlur = (type: "local" | "remote") => {
-    if (type === "local") {
-      const nextValue = clampStreamBitrate(bitrateInputs.local, draft.resolution);
-      setDraft((prev) => ({ ...prev, bitrate: nextValue }));
-      setBitrateInputs((prev) => ({ ...prev, local: String(nextValue) }));
-      return;
-    }
-
-    const nextValue = clampStreamBitrate(
-      bitrateInputs.remote,
-      draft.remote_resolution
-    );
-    setDraft((prev) => ({ ...prev, remote_bitrate: nextValue }));
-    setBitrateInputs((prev) => ({ ...prev, remote: String(nextValue) }));
+    setDraft((prev) => ({ ...prev, remote_bitrate: bitrate }));
   };
 
   const handleResetStreamSettings = () => {
@@ -413,6 +381,8 @@ function SettingsPage() {
     const codec = draft[codecKey];
     const fps = draft[fpsKey];
     const autoBitrate = getAutoBitrateForResolution(resolution);
+    const customBitrate = type === "local" ? draft.bitrate : draft.remote_bitrate;
+    const customBitrateSliderValue = Math.round(customBitrate / 1000);
 
     return (
       <>
@@ -451,17 +421,30 @@ function SettingsPage() {
             </RadioGroup>
 
             {bitrateMode === "custom" ? (
-              <Input
-                type="number"
-                label={t("Custom bitrate (kbps)")}
-                labelPlacement="outside"
-                value={type === "local" ? bitrateInputs.local : bitrateInputs.remote}
-                min={1000}
-                max={50000}
-                onValueChange={(value) => handleBitrateInputChange(type, value)}
-                onBlur={() => handleBitrateInputBlur(type)}
-                endContent={<span className="text-xs text-default-500">kbps</span>}
-              />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-default-500">{t("Custom bitrate (kbps)")}</span>
+                  <span className="font-medium text-foreground">
+                    {formatBitrateText(customBitrate)}
+                  </span>
+                </div>
+
+                <Slider
+                  className="setting-slider"
+                  size="sm"
+                  label={t("Custom bitrate (kbps)")}
+                  step={1}
+                  minValue={1}
+                  maxValue={100}
+                  value={customBitrateSliderValue}
+                  onChange={(value) => handleBitrateSliderChange(type, value)}
+                />
+
+                <div className="flex items-center justify-between text-xs text-default-400">
+                  <span>1 Mbps</span>
+                  <span>100 Mbps</span>
+                </div>
+              </div>
             ) : (
               <p className="text-sm text-default-500">
                 {t(

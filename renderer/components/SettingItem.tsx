@@ -215,7 +215,7 @@ const SettingItem = (props) => {
                   size="sm"
                   label="bitrate"
                   step={1}
-                  maxValue={50}
+                  maxValue={100}
                   minValue={1}
                   defaultValue={defaultValue}
                   onChange={(value) => {
