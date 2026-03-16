@@ -21,7 +21,7 @@ function TitleItem(props) {
   return (
     <Card
       isPressable
-      className="group relative w-full aspect-[2/3] rounded-xl overflow-hidden bg-content1 transition-all duration-300 hover:scale-[1.04] hover:shadow-[0_0_30px_rgba(26,201,84,0.3)] hover:ring-2 hover:ring-primary shadow-lg border border-divider"
+      className="group relative w-full aspect-[2/3] rounded-xl overflow-hidden bg-content1 transition-all duration-300 hover:scale-[1.04] hover:shadow-[0_0_30px_rgba(223,96,105,0.32)] hover:ring-2 hover:ring-primary shadow-lg border border-divider"
       onClick={handleClick}
     >
       {titleItem.Image_Poster && (
@@ -35,11 +35,11 @@ function TitleItem(props) {
       )}
 
       <div className="absolute top-2 right-2 z-20 flex flex-col gap-2 opacity-80 transition-opacity duration-300 group-hover:opacity-100">
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#107C10]/70 backdrop-blur-md shadow-sm">
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#DF6069]/75 backdrop-blur-md shadow-sm">
           <Image src={"/images/icons/gamepad.svg"} alt="gamepad" width={16} height={16} />
         </div>
         {isSupportMKB && (
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#107C10]/70 backdrop-blur-md shadow-sm">
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#DF6069]/75 backdrop-blur-md shadow-sm">
             <Image src={"/images/icons/keyboard-mouse.svg"} alt="mkb" width={16} height={16} />
           </div>
         )}

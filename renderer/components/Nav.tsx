@@ -2,11 +2,6 @@ import {
   Navbar,
   NavbarBrand,
   NavbarContent,
-  DropdownItem,
-  DropdownTrigger,
-  Dropdown,
-  DropdownMenu,
-  Avatar,
   Popover,
   PopoverTrigger,
   PopoverContent,
@@ -35,12 +30,21 @@ const getCurrentSection = (
   if (
     pathname.endsWith("/settings") ||
     pathname.endsWith("/map") ||
-    pathname.endsWith("/test")
+    pathname.endsWith("/test") ||
+    pathname.endsWith("/transfer")
   ) {
     return "settings";
   }
 
   return "home";
+};
+
+const isSettingsSubpage = (pathname: string) => {
+  return (
+    pathname.endsWith("/map") ||
+    pathname.endsWith("/test") ||
+    pathname.endsWith("/transfer")
+  );
 };
 
 const Nav = ({ current }: NavProps) => {
@@ -49,6 +53,7 @@ const Nav = ({ current }: NavProps) => {
   const { t, i18n: { language: locale } } = useTranslation("common");
   const newVersions = null;
   const currentSection = getCurrentSection(router.pathname, current);
+  const showBackToSettings = isSettingsSubpage(router.pathname);
 
   const navItems: Array<{
     key: NavSection;
@@ -68,7 +73,7 @@ const Nav = ({ current }: NavProps) => {
   ];
 
   const handleExit = () => {
-    Ipc.send("app", "quit")
+    void Ipc.send("app", "quit");
   };
 
   const handleNavigate = (href: string) => {
@@ -77,6 +82,10 @@ const Nav = ({ current }: NavProps) => {
     }
 
     void router.push(href);
+  };
+
+  const handleBackToSettings = () => {
+    handleNavigate(`/${locale}/settings`);
   };
 
   const renderBrandInfo = () => (
@@ -120,6 +129,17 @@ const Nav = ({ current }: NavProps) => {
       </NavbarBrand>
 
       <NavbarContent as="div" justify="end" className="flex-1 basis-0 gap-2">
+        {showBackToSettings ? (
+          <Button
+            size="sm"
+            radius="full"
+            variant="flat"
+            onPress={handleBackToSettings}
+          >
+            {t("Back")}
+          </Button>
+        ) : null}
+
         <div className="flex items-center gap-2">
           {navItems.map((item) => {
             const isActive = item.key === currentSection;
@@ -140,44 +160,16 @@ const Nav = ({ current }: NavProps) => {
           })}
         </div>
 
-        <Dropdown
-          placement="bottom-end"
-          shouldBlockScroll={false}
-          classNames={{
-            content: "bg-content1 border border-divider text-foreground min-w-[200px]"
-          }}
+        <Button
+          size="sm"
+          radius="full"
+          color="danger"
+          variant="flat"
+          className="font-medium"
+          onPress={handleExit}
         >
-          <DropdownTrigger>
-            <Button
-              variant="flat"
-              className="bg-content1/50 border border-divider hover:bg-content2 h-10 px-2 pl-1 shadow-sm transition-all rounded-full"
-            >
-              <Avatar
-                isBordered
-                color="success"
-                name={'Geocld'}
-                size="sm"
-                src={'https://i.pravatar.cc/150?u=a042581f4e29026024d'}
-                className="w-7 h-7"
-              />
-            </Button>
-          </DropdownTrigger>
-          <DropdownMenu
-            aria-label="Profile Actions"
-            variant="flat"
-            itemClasses={{
-              base: [
-                "data-[hover=true]:bg-content2",
-                "data-[hover=true]:text-foreground",
-                "text-default-700 font-medium py-2"
-              ]
-            }}
-          >
-            <DropdownItem key="exit" className="text-danger" color="danger" onPress={handleExit}>
-              {t('Exit')}
-            </DropdownItem>
-          </DropdownMenu>
-        </Dropdown>
+          {t("Exit")}
+        </Button>
       </NavbarContent>
 
     </Navbar >

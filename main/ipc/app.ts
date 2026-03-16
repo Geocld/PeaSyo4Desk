@@ -1,8 +1,11 @@
 import IpcBase from "./base";
-import { session } from "electron";
+import { app as ElectronApp, dialog, session } from "electron";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
+import path from "node:path";
 import chiaki from "../chiaki";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { StreamSessionService } from "../stream/session";
@@ -21,6 +24,9 @@ const CHIAKI_PS5_TARGET = 1000100;
 const PSN_LOGIN_USERS_STORE_KEY = "psn-login-users";
 const PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY = "psn-login-current-user-key";
 const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
+const TRANSFER_SECRET_KEY = "pEa3yo";
+const TRANSFER_FILE_PREFIX = "peasyo_export_";
+const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
 
 let chiakiInitialized = false;
 
@@ -40,6 +46,7 @@ type PsnLoginInfo = {
   account_id?: string;
   online_id?: string;
   user_id?: string;
+  is_default?: boolean;
 };
 
 const isPersistableLoginInfo = (value: unknown): value is PsnLoginInfo => {
@@ -54,6 +61,30 @@ const getPsnLoginUserKey = (loginInfo: PsnLoginInfo | null | undefined) => {
     loginInfo?.user_id ||
     loginInfo?.userInfo?.online_id ||
     loginInfo?.online_id ||
+    ""
+  ).trim();
+};
+
+const getPsnAccountId = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return String(
+    loginInfo?.userInfo?.account_id ||
+    loginInfo?.account_id ||
+    ""
+  ).trim();
+};
+
+const getPsnOnlineId = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return String(
+    loginInfo?.userInfo?.online_id ||
+    loginInfo?.online_id ||
+    ""
+  ).trim();
+};
+
+const getPsnUserId = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return String(
+    loginInfo?.userInfo?.user_id ||
+    loginInfo?.user_id ||
     ""
   ).trim();
 };
@@ -99,6 +130,84 @@ const parseStoredLoginUsers = (value: unknown) => {
   }
 
   return users;
+};
+
+const parseTransferConsoles = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return [value];
+  }
+
+  return [] as Record<string, any>[];
+};
+
+const deriveOpenSslKeyAndIv = (
+  passphrase: string,
+  salt: Buffer,
+  keyLength = 32,
+  ivLength = 16
+) => {
+  const passphraseBuffer = Buffer.from(passphrase, "utf8");
+  let derived = Buffer.alloc(0);
+  let block = Buffer.alloc(0);
+
+  while (derived.length < keyLength + ivLength) {
+    const hash = createHash("md5");
+    if (block.length > 0) {
+      hash.update(block);
+    }
+    hash.update(passphraseBuffer);
+    hash.update(salt);
+    block = hash.digest();
+    derived = Buffer.concat([derived, block]);
+  }
+
+  return {
+    key: derived.subarray(0, keyLength),
+    iv: derived.subarray(keyLength, keyLength + ivLength),
+  };
+};
+
+const encryptTransferText = (plainText: string) => {
+  const salt = randomBytes(8);
+  const { key, iv } = deriveOpenSslKeyAndIv(TRANSFER_SECRET_KEY, salt);
+  const cipher = createCipheriv("aes-256-cbc", key, iv);
+  const encrypted = Buffer.concat([
+    cipher.update(Buffer.from(plainText, "utf8")),
+    cipher.final(),
+  ]);
+
+  return Buffer.concat([OPENSSL_SALTED_PREFIX, salt, encrypted]).toString("base64");
+};
+
+const decryptTransferText = (cipherText: string) => {
+  const normalizedCipherText = String(cipherText || "").replace(/\s+/g, "");
+  if (!normalizedCipherText) {
+    throw new Error("Encrypted config content is empty.");
+  }
+
+  const encryptedBuffer = Buffer.from(normalizedCipherText, "base64");
+  if (
+    encryptedBuffer.length <= 16 ||
+    !encryptedBuffer.subarray(0, OPENSSL_SALTED_PREFIX.length).equals(OPENSSL_SALTED_PREFIX)
+  ) {
+    throw new Error("Invalid encrypted config file.");
+  }
+
+  const salt = encryptedBuffer.subarray(OPENSSL_SALTED_PREFIX.length, OPENSSL_SALTED_PREFIX.length + 8);
+  const payload = encryptedBuffer.subarray(OPENSSL_SALTED_PREFIX.length + 8);
+  const { key, iv } = deriveOpenSslKeyAndIv(TRANSFER_SECRET_KEY, salt);
+  const decipher = createDecipheriv("aes-256-cbc", key, iv);
+  const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]).toString("utf8");
+
+  if (!decrypted) {
+    throw new Error("Failed to decrypt config file.");
+  }
+
+  return decrypted;
 };
 
 const persistStoredLoginUsers = (
@@ -148,6 +257,56 @@ const readStoredLoginUsersState = (store: any) => {
     parseStoredLoginUsers(store.get(PSN_LOGIN_USERS_STORE_KEY, [])),
     String(store.get(PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY, "") || "").trim()
   );
+};
+
+const buildTransferTokens = (users: PsnLoginInfo[], currentUserKey: string) => {
+  return users.map((item) => ({
+    ...item,
+    account_id: getPsnAccountId(item),
+    online_id: getPsnOnlineId(item),
+    user_id: getPsnUserId(item),
+    is_default: getPsnLoginUserKey(item) === currentUserKey,
+  }));
+};
+
+const resolveTransferCurrentUserKey = (users: PsnLoginInfo[]) => {
+  const defaultUser = users.find((item) => item?.is_default);
+  return getPsnLoginUserKey(defaultUser || users[0]);
+};
+
+const buildTransferConfigPayload = (store: any) => {
+  const { users, currentUserKey } = readStoredLoginUsersState(store);
+  const consoles = parseTransferConsoles(store.get(LOCAL_CONSOLES_STORE_KEY, []));
+
+  return {
+    tokens: buildTransferTokens(users, currentUserKey),
+    consoles,
+  };
+};
+
+const importTransferConfigPayload = (store: any, payload: unknown) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Imported config is invalid.");
+  }
+
+  const hasTokens = Object.prototype.hasOwnProperty.call(payload, "tokens");
+  const hasConsoles = Object.prototype.hasOwnProperty.call(payload, "consoles");
+  if (!hasTokens && !hasConsoles) {
+    throw new Error("Imported config does not contain tokens or consoles.");
+  }
+
+  const rawTokens = parseStoredLoginUsers((payload as any).tokens);
+  const currentUserKey = resolveTransferCurrentUserKey(rawTokens);
+  const consoles = parseTransferConsoles((payload as any).consoles);
+
+  persistStoredLoginUsers(store, rawTokens, currentUserKey);
+  store.set(LOCAL_CONSOLES_STORE_KEY, consoles);
+
+  return {
+    tokensCount: rawTokens.length,
+    consolesCount: consoles.length,
+    currentUserKey,
+  };
 };
 
 const getCurrentStoredLoginInfo = (store: any) => {
@@ -895,6 +1054,76 @@ export default class IpcApp extends IpcBase {
       this._application._store.delete(LOCAL_CONSOLES_STORE_KEY);
       resolve(true);
     });
+  }
+
+  async exportTransferConfig() {
+    const payload = buildTransferConfigPayload(this._application._store);
+    const saveResult = await dialog.showSaveDialog(this._application._mainWindow, {
+      title: "Export PeaSyo Config",
+      defaultPath: path.join(
+        ElectronApp.getPath("downloads"),
+        `${TRANSFER_FILE_PREFIX}${Date.now()}.json`
+      ),
+      filters: [
+        {
+          name: "JSON",
+          extensions: ["json"],
+        },
+      ],
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return {
+        canceled: true,
+      };
+    }
+
+    const encrypted = encryptTransferText(JSON.stringify(payload, null, 2));
+    await writeFile(saveResult.filePath, encrypted, "utf8");
+
+    return {
+      canceled: false,
+      filePath: saveResult.filePath,
+      tokensCount: payload.tokens.length,
+      consolesCount: payload.consoles.length,
+    };
+  }
+
+  async importTransferConfig() {
+    const openResult = await dialog.showOpenDialog(this._application._mainWindow, {
+      title: "Import PeaSyo Config",
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "JSON",
+          extensions: ["json"],
+        },
+      ],
+    });
+
+    if (openResult.canceled || openResult.filePaths.length < 1) {
+      return {
+        canceled: true,
+      };
+    }
+
+    const filePath = openResult.filePaths[0];
+    const encryptedContent = await readFile(filePath, "utf8");
+    const decryptedContent = decryptTransferText(encryptedContent);
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(decryptedContent);
+    } catch (error) {
+      throw new Error(`Imported config is not valid JSON: ${String(error)}`);
+    }
+
+    const result = importTransferConfigPayload(this._application._store, payload);
+    return {
+      canceled: false,
+      filePath,
+      ...result,
+    };
   }
 
   discoverConsoles(data: DiscoverConsolesArgs = {}) {

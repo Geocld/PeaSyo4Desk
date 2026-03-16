@@ -445,6 +445,11 @@ function SettingsPage() {
           pathname: `/${locale}/test`,
         });
         return;
+      case "open-transfer":
+        router.push({
+          pathname: `/${locale}/transfer`,
+        });
+        return;
       case "reset-settings":
         handleResetAppSettings();
         return;
