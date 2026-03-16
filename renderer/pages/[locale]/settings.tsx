@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   CardBody,
+  Chip,
   Radio,
   RadioGroup,
   Slider,
@@ -16,6 +17,7 @@ import Ipc from "../../lib/ipc";
 import Layout from "../../components/Layout";
 import SettingItem from "../../components/SettingItem";
 import KeyboardMap from "../../components/KeyboardMap";
+import PsnLoginModals from "../../components/PsnLoginModals";
 import Alert from "../../components/Alert";
 import ConfirmModal from "../../components/ConfirmModal";
 import Nav from "../../components/Nav";
@@ -23,7 +25,14 @@ import updater from "../../lib/updater";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import getSettingsMetas from "../../common/settings";
-import { PENDING_STREAM_STORAGE_KEY } from "../../common/remotePlay";
+import {
+  getPsnAccountId,
+  getPsnLoginDisplayName,
+  getPsnLoginUserKey,
+  PENDING_STREAM_STORAGE_KEY,
+  parseCachedPsnLoginUsers,
+  type PsnLoginInfo,
+} from "../../common/remotePlay";
 import pkg from "../../../package.json";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
@@ -119,10 +128,18 @@ function SettingsPage() {
   const [showAlert, setShowAlert] = useState(false);
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   const [updateText, setUpdateText] = useState("");
   const [updateUrl, setUpdateUrl] = useState("");
   const [isChecking, setIsChecking] = useState(false);
+  const [psnUsers, setPsnUsers] = useState<PsnLoginInfo[]>([]);
+  const [currentPsnUserKey, setCurrentPsnUserKey] = useState("");
+  const [selectedPsnUserKey, setSelectedPsnUserKey] = useState("");
+  const [accountActionLoading, setAccountActionLoading] = useState<
+    "switch" | "delete" | null
+  >(null);
 
   useEffect(() => {
     const localFontSize = localStorage.getItem("fontSize");
@@ -135,6 +152,38 @@ function SettingsPage() {
     const nextDraft = createDraftFromSettings(settings);
     setDraft(nextDraft);
   }, [settings]);
+
+  const loadPsnUsers = async () => {
+    const [storedUsers, currentLoginInfo] = await Promise.all([
+      Ipc.send("app", "getCachedPsnLoginUsers").catch(() => []),
+      Ipc.send("app", "getCachedPsnLoginInfo").catch(() => null),
+    ]);
+
+    const nextUsers = parseCachedPsnLoginUsers(storedUsers);
+    const nextCurrentUserKey = getPsnLoginUserKey(
+      currentLoginInfo as PsnLoginInfo | null
+    );
+    const fallbackSelectedUserKey =
+      nextCurrentUserKey || getPsnLoginUserKey(nextUsers[0]);
+
+    setPsnUsers(nextUsers);
+    setCurrentPsnUserKey(nextCurrentUserKey);
+    setSelectedPsnUserKey((prev) => {
+      if (nextUsers.some((item) => getPsnLoginUserKey(item) === prev)) {
+        return prev;
+      }
+      return fallbackSelectedUserKey;
+    });
+
+    return {
+      users: nextUsers,
+      currentUserKey: nextCurrentUserKey,
+    };
+  };
+
+  useEffect(() => {
+    void loadPsnUsers();
+  }, []);
 
   const settingsMetas = useMemo(() => getSettingsMetas(t), [t]);
   const baseMetas = settingsMetas.base || [];
@@ -308,6 +357,82 @@ function SettingsPage() {
     Ipc.send("app", "restart");
   };
 
+  const handleAccountLoginSuccess = async () => {
+    setShowLoginModal(false);
+    window.sessionStorage.setItem("isLogined", "1");
+    const nextState = await loadPsnUsers();
+    setSelectedPsnUserKey(
+      nextState.currentUserKey || getPsnLoginUserKey(nextState.users[0]) || ""
+    );
+    addToast({
+      title: t("Account added"),
+      color: "success",
+    });
+  };
+
+  const handleSwitchAccount = async () => {
+    if (!selectedPsnUserKey || selectedPsnUserKey === currentPsnUserKey) {
+      return;
+    }
+
+    setAccountActionLoading("switch");
+    try {
+      await Ipc.send("app", "setCurrentPsnLoginUser", {
+        userKey: selectedPsnUserKey,
+      });
+      window.sessionStorage.setItem("isLogined", "1");
+      await loadPsnUsers();
+      addToast({
+        title: t("Account switched"),
+        color: "success",
+      });
+    } catch (error: any) {
+      addToast({
+        title: t("Failed to switch account"),
+        description: String(error?.message || error || ""),
+        color: "danger",
+      });
+    } finally {
+      setAccountActionLoading(null);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!selectedPsnUserKey) {
+      return;
+    }
+
+    setAccountActionLoading("delete");
+    try {
+      const nextState: any = await Ipc.send("app", "deletePsnLoginUser", {
+        userKey: selectedPsnUserKey,
+      });
+      const nextUsers = parseCachedPsnLoginUsers(nextState?.users || []);
+      const nextCurrentUserKey = String(nextState?.currentUserKey || "").trim();
+
+      setPsnUsers(nextUsers);
+      setCurrentPsnUserKey(nextCurrentUserKey);
+      setSelectedPsnUserKey(
+        nextCurrentUserKey || getPsnLoginUserKey(nextUsers[0]) || ""
+      );
+      window.sessionStorage.setItem("isLogined", nextUsers.length > 0 ? "1" : "0");
+
+      addToast({
+        title: t("Account deleted"),
+        color: "success",
+      });
+    } catch (error: any) {
+      addToast({
+        title: t("Failed to delete account"),
+        description: String(error?.message || error || ""),
+        color: "danger",
+      });
+    } finally {
+      setAccountActionLoading(null);
+      setShowDeleteAccountModal(false);
+    }
+  };
+
   const handleOtherAction = (item: any) => {
     switch (item.action) {
       case "open-map":
@@ -351,6 +476,88 @@ function SettingsPage() {
             <div className="setting-description text-default-500">{description}</div>
             {tips ? <div className="setting-description text-warning">{tips}</div> : null}
             {children}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
+  const renderAccountManagerCard = () => {
+    return (
+      <div className="setting-item">
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div className="setting-title text-foreground">{t("PSN accounts")}</div>
+            <div className="setting-description text-default-500">
+              {t(
+                "Manage signed in PSN accounts here. Newly added accounts become the current account immediately. Registered hosts are kept when deleting accounts."
+              )}
+            </div>
+
+            {psnUsers.length > 0 ? (
+              <RadioGroup
+                value={selectedPsnUserKey}
+                onValueChange={setSelectedPsnUserKey}
+              >
+                {psnUsers.map((user) => {
+                  const userKey = getPsnLoginUserKey(user);
+                  const isCurrent = userKey === currentPsnUserKey;
+                  const onlineId = getPsnLoginDisplayName(user);
+                  const accountId = getPsnAccountId(user) || userKey;
+
+                  return (
+                    <Radio key={userKey} value={userKey}>
+                      <div className="flex flex-col gap-1 py-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{onlineId || userKey}</span>
+                          {isCurrent ? (
+                            <Chip size="sm" color="success" variant="flat">
+                              {t("Current")}
+                            </Chip>
+                          ) : null}
+                        </div>
+                        <p className="text-xs text-default-500 break-all">
+                          {accountId}
+                        </p>
+                      </div>
+                    </Radio>
+                  );
+                })}
+              </RadioGroup>
+            ) : (
+              <div className="rounded-large border border-dashed border-divider px-4 py-6">
+                <p className="text-sm text-default-600">
+                  {t("No signed in accounts yet.")}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-3">
+              <Button variant="flat" onPress={() => setShowLoginModal(true)}>
+                {t("Add account")}
+              </Button>
+              <Button
+                variant="flat"
+                onPress={() => void handleSwitchAccount()}
+                isDisabled={
+                  !selectedPsnUserKey ||
+                  selectedPsnUserKey === currentPsnUserKey ||
+                  psnUsers.length < 1
+                }
+                isLoading={accountActionLoading === "switch"}
+              >
+                {t("Switch account")}
+              </Button>
+              <Button
+                color="danger"
+                variant="flat"
+                onPress={() => setShowDeleteAccountModal(true)}
+                isDisabled={!selectedPsnUserKey || psnUsers.length < 1}
+                isLoading={accountActionLoading === "delete"}
+              >
+                {t("Delete account")}
+              </Button>
+            </div>
           </CardBody>
         </Card>
       </div>
@@ -561,9 +768,22 @@ function SettingsPage() {
         }}
       />
 
+      <ConfirmModal
+        show={showDeleteAccountModal}
+        content={t(
+          "Delete the selected account? Registered hosts will be kept on this device."
+        )}
+        confirmText={t("Delete account")}
+        onConfirm={() => {
+          void handleDeleteAccount();
+        }}
+        onCancel={() => setShowDeleteAccountModal(false)}
+      />
+
       <Layout>
         <Tabs aria-label="Options">
           <Tab key="Base" title={t("Base")}>
+            {renderAccountManagerCard()}
             {baseMetas.map((item) => (
               <SettingItem
                 key={item.name}
@@ -591,6 +811,15 @@ function SettingsPage() {
           </Tab>
         </Tabs>
       </Layout>
+
+      <PsnLoginModals
+        show={showLoginModal}
+        allowClose
+        onClose={() => setShowLoginModal(false)}
+        onLoginSuccess={() => {
+          void handleAccountLoginSuccess();
+        }}
+      />
     </>
   );
 }
@@ -598,7 +827,7 @@ function SettingsPage() {
 export default SettingsPage;
 
 // eslint-disable-next-line react-refresh/only-export-components
-export const getStaticProps = makeStaticProperties(["common", "settings"]);
+export const getStaticProps = makeStaticProperties(["common", "home", "settings"]);
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { getStaticPaths };

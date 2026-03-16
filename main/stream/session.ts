@@ -89,6 +89,7 @@ type StartStreamSessionArgs = {
   streamHost?: string;
   host?: string;
   isRemote?: boolean;
+  loginInfo?: Record<string, any>;
   settings?: StreamSessionSettings;
   ps5?: boolean;
   enableDualsense?: boolean;
@@ -235,6 +236,14 @@ const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+const resolvePsnAccountId = (loginInfo: Record<string, any> | undefined) => {
+  return String(
+    loginInfo?.userInfo?.account_id ||
+    loginInfo?.account_id ||
+    ""
+  ).trim();
+};
 
 const serializeSessionEventValue = (value: any, depth = 0): any => {
   if (depth > 3) {
@@ -1191,6 +1200,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     profileResolution.width,
     profileResolution.height
   );
+  const psnAccountId = resolvePsnAccountId(args.loginInfo);
   const ps5 = typeof args.ps5 === "boolean"
     ? args.ps5
     : !String(consoleInfo.apName || "").toUpperCase().includes("PS4");
@@ -1216,6 +1226,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     enableKeyboard: false,
     registKey,
     morning,
+    ...(psnAccountId ? { psnAccountId } : {}),
     videoProfile: {
       width: streamVideoConfig.width,
       height: streamVideoConfig.height,

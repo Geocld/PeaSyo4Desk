@@ -18,7 +18,8 @@ const CHIAKI_DISCOVERY_TIMEOUT_MS = 3000;
 const CHIAKI_REGIST_TIMEOUT_MS = 90000;
 const CHIAKI_PS4_TARGET = 1000;
 const CHIAKI_PS5_TARGET = 1000100;
-const PSN_LOGIN_INFO_STORE_KEY = "psn-login-info";
+const PSN_LOGIN_USERS_STORE_KEY = "psn-login-users";
+const PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY = "psn-login-current-user-key";
 const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
 
 let chiakiInitialized = false;
@@ -28,6 +29,175 @@ const isPersistableConsoleCache = (value: unknown) => {
     Array.isArray(value) &&
     value.every((item) => item && typeof item === "object" && !Array.isArray(item))
   );
+};
+
+type PsnLoginInfo = {
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiry?: number;
+  loginAt?: number;
+  userInfo?: Record<string, any>;
+  account_id?: string;
+  online_id?: string;
+  user_id?: string;
+};
+
+const isPersistableLoginInfo = (value: unknown): value is PsnLoginInfo => {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+};
+
+const getPsnLoginUserKey = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return String(
+    loginInfo?.userInfo?.account_id ||
+    loginInfo?.account_id ||
+    loginInfo?.userInfo?.user_id ||
+    loginInfo?.user_id ||
+    loginInfo?.userInfo?.online_id ||
+    loginInfo?.online_id ||
+    ""
+  ).trim();
+};
+
+const hasPersistableLoginCredential = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return Boolean(
+    getPsnLoginUserKey(loginInfo) &&
+    (
+      loginInfo?.accessToken ||
+      loginInfo?.userInfo?.account_id ||
+      loginInfo?.account_id ||
+      loginInfo?.userInfo?.user_id ||
+      loginInfo?.user_id
+    )
+  );
+};
+
+const normalizeStoredLoginInfo = (value: unknown) => {
+  if (!isPersistableLoginInfo(value)) {
+    return null;
+  }
+
+  return hasPersistableLoginCredential(value) ? value : null;
+};
+
+const parseStoredLoginUsers = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return [] as PsnLoginInfo[];
+  }
+
+  const seen = new Set<string>();
+  const users: PsnLoginInfo[] = [];
+
+  for (const item of value) {
+    const normalized = normalizeStoredLoginInfo(item);
+    const userKey = getPsnLoginUserKey(normalized);
+    if (!normalized || !userKey || seen.has(userKey)) {
+      continue;
+    }
+
+    seen.add(userKey);
+    users.push(normalized);
+  }
+
+  return users;
+};
+
+const persistStoredLoginUsers = (
+  store: any,
+  users: PsnLoginInfo[],
+  currentUserKey?: string
+) => {
+  if (users.length < 1) {
+    store.delete(PSN_LOGIN_USERS_STORE_KEY);
+    store.delete(PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY);
+    return {
+      users: [] as PsnLoginInfo[],
+      currentUserKey: "",
+    };
+  }
+
+  const normalizedUsers = parseStoredLoginUsers(users);
+  if (normalizedUsers.length < 1) {
+    store.delete(PSN_LOGIN_USERS_STORE_KEY);
+    store.delete(PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY);
+    return {
+      users: [] as PsnLoginInfo[],
+      currentUserKey: "",
+    };
+  }
+
+  const normalizedCurrentUserKey = String(currentUserKey || "").trim();
+  const fallbackUserKey = getPsnLoginUserKey(normalizedUsers[0]);
+  const nextCurrentUserKey = normalizedUsers.some(
+    (item) => getPsnLoginUserKey(item) === normalizedCurrentUserKey
+  )
+    ? normalizedCurrentUserKey
+    : fallbackUserKey;
+
+  store.set(PSN_LOGIN_USERS_STORE_KEY, normalizedUsers);
+  store.set(PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY, nextCurrentUserKey);
+
+  return {
+    users: normalizedUsers,
+    currentUserKey: nextCurrentUserKey,
+  };
+};
+
+const readStoredLoginUsersState = (store: any) => {
+  return persistStoredLoginUsers(
+    store,
+    parseStoredLoginUsers(store.get(PSN_LOGIN_USERS_STORE_KEY, [])),
+    String(store.get(PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY, "") || "").trim()
+  );
+};
+
+const getCurrentStoredLoginInfo = (store: any) => {
+  const { users, currentUserKey } = readStoredLoginUsersState(store);
+  return (
+    users.find((item) => getPsnLoginUserKey(item) === currentUserKey) || null
+  );
+};
+
+const upsertStoredLoginInfo = (store: any, loginInfo: unknown) => {
+  const normalizedLoginInfo = normalizeStoredLoginInfo(loginInfo);
+  if (!normalizedLoginInfo) {
+    throw new Error("Valid loginInfo is required.");
+  }
+
+  const { users } = readStoredLoginUsersState(store);
+  const userKey = getPsnLoginUserKey(normalizedLoginInfo);
+  const existingIndex = users.findIndex(
+    (item) => getPsnLoginUserKey(item) === userKey
+  );
+  const nextUsers = [...users];
+
+  if (existingIndex >= 0) {
+    nextUsers[existingIndex] = normalizedLoginInfo;
+  } else {
+    nextUsers.push(normalizedLoginInfo);
+  }
+
+  persistStoredLoginUsers(store, nextUsers, userKey);
+  return normalizedLoginInfo;
+};
+
+const removeStoredLoginInfo = (store: any, userKey: string) => {
+  const normalizedUserKey = String(userKey || "").trim();
+  if (!normalizedUserKey) {
+    throw new Error("Valid userKey is required.");
+  }
+
+  const { users, currentUserKey } = readStoredLoginUsersState(store);
+  if (!users.some((item) => getPsnLoginUserKey(item) === normalizedUserKey)) {
+    throw new Error("User does not exist.");
+  }
+
+  const nextUsers = users.filter(
+    (item) => getPsnLoginUserKey(item) !== normalizedUserKey
+  );
+  const nextCurrentUserKey =
+    currentUserKey === normalizedUserKey ? getPsnLoginUserKey(nextUsers[0]) : currentUserKey;
+
+  return persistStoredLoginUsers(store, nextUsers, nextCurrentUserKey);
 };
 
 type DiscoveryHost = {
@@ -619,8 +789,7 @@ export default class IpcApp extends IpcBase {
 
   login() {
     return this._application._authentication.startAuthflow().then((loginInfo) => {
-      this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
-      return loginInfo;
+      return upsertStoredLoginInfo(this._application._store, loginInfo);
     });
   }
 
@@ -632,15 +801,13 @@ export default class IpcApp extends IpcBase {
     return this._application._authentication
       .manualLoginByRedirect(data.redirectUrl)
       .then((loginInfo) => {
-        this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
-        return loginInfo;
+        return upsertStoredLoginInfo(this._application._store, loginInfo);
       });
   }
 
   loginWithUsername(data: { username: string }) {
     return this._application._authentication.loginWithUsername(data.username).then((loginInfo) => {
-      this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
-      return loginInfo;
+      return upsertStoredLoginInfo(this._application._store, loginInfo);
     });
   }
 
@@ -648,20 +815,58 @@ export default class IpcApp extends IpcBase {
     return this._application._authentication
       .loginWithAccountId(data.accountId)
       .then((loginInfo) => {
-        this._application._store.set(PSN_LOGIN_INFO_STORE_KEY, loginInfo);
-        return loginInfo;
+        return upsertStoredLoginInfo(this._application._store, loginInfo);
       });
   }
 
   getCachedPsnLoginInfo() {
+    return Promise.resolve(getCurrentStoredLoginInfo(this._application._store));
+  }
+
+  getCachedPsnLoginUsers() {
     return Promise.resolve(
-      this._application._store.get(PSN_LOGIN_INFO_STORE_KEY, null)
+      readStoredLoginUsersState(this._application._store).users
     );
+  }
+
+  setCurrentPsnLoginUser(data: { userKey?: string }) {
+    return new Promise((resolve, reject) => {
+      const normalizedUserKey = String(data?.userKey || "").trim();
+      if (!normalizedUserKey) {
+        reject(new Error("Valid userKey is required."));
+        return;
+      }
+
+      const { users } = readStoredLoginUsersState(this._application._store);
+      if (!users.some((item) => getPsnLoginUserKey(item) === normalizedUserKey)) {
+        reject(new Error("User does not exist."));
+        return;
+      }
+
+      persistStoredLoginUsers(this._application._store, users, normalizedUserKey);
+      resolve(
+        users.find((item) => getPsnLoginUserKey(item) === normalizedUserKey) || null
+      );
+    });
+  }
+
+  deletePsnLoginUser(data: { userKey?: string }) {
+    return new Promise((resolve, reject) => {
+      try {
+        const nextState = removeStoredLoginInfo(
+          this._application._store,
+          String(data?.userKey || "")
+        );
+        resolve(nextState);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   clearCachedPsnLoginInfo() {
     return new Promise<boolean>((resolve) => {
-      this._application._store.delete(PSN_LOGIN_INFO_STORE_KEY);
+      persistStoredLoginUsers(this._application._store, []);
       resolve(true);
     });
   }

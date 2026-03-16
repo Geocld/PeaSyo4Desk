@@ -325,11 +325,9 @@ function StreamPage() {
 
   const [status, setStatus] = useState("");
   const [connectState, setConnectState] = useState("initializing");
-  const [wsUrl, setWsUrl] = useState("");
   const [audioAvailable, setAudioAvailable] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
-  const [statsText, setStatsText] = useState("");
   const [videoReady, setVideoReady] = useState(false);
   const [videoFormat, setVideoFormat] = useState<VideoFrameFormat>("I420");
   const [sessionAlert, setSessionAlert] = useState<{
@@ -342,6 +340,8 @@ function StreamPage() {
   const socketRef = useRef<WebSocket | null>(null);
   const rafRef = useRef<number | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsUrlRef = useRef("");
+  const statsTextRef = useRef("");
 
   const widthRef = useRef(1280);
   const heightRef = useRef(720);
@@ -1209,9 +1209,8 @@ function StreamPage() {
       ? Math.max(0, (nextAudioTimeRef.current - audioContextRef.current.currentTime) * 1000).toFixed(0)
       : "0";
 
-    setStatsText(
-      `连接=${wsText} | 视频=${widthRef.current}x${heightRef.current}@${fpsRef.current} | 收=${receivedFramesRef.current} 渲=${renderedFramesRef.current} 丢=${droppedFramesRef.current} FPS=${renderFps} | 音频块 收=${audioReceivedChunksRef.current} 播=${audioPlayedChunksRef.current} 丢=${audioDroppedChunksRef.current} 缓冲=${audioBufferedMs}ms | 手柄=${validGamepadCountRef.current} 发送=${controlSendCountRef.current} 失败=${controlSendErrorCountRef.current}`
-    );
+    statsTextRef.current =
+      `连接=${wsText} | 视频=${widthRef.current}x${heightRef.current}@${fpsRef.current} | 收=${receivedFramesRef.current} 渲=${renderedFramesRef.current} 丢=${droppedFramesRef.current} FPS=${renderFps} | 音频块 收=${audioReceivedChunksRef.current} 播=${audioPlayedChunksRef.current} 丢=${audioDroppedChunksRef.current} 缓冲=${audioBufferedMs}ms | 手柄=${validGamepadCountRef.current} 发送=${controlSendCountRef.current} 失败=${controlSendErrorCountRef.current}`;
   };
 
   const renderLoop = () => {
@@ -1298,15 +1297,19 @@ function StreamPage() {
 
         setStatus(t("Connecting..."));
         setConnectState("starting");
+        const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
+          () => null
+        );
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,
           isRemote: !!pendingConfig?.isRemote,
           consoleInfo: pendingConfig?.consoleInfo || {},
+          loginInfo: currentLoginInfo || undefined,
         });
         if (!active) return;
 
         const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
-        setWsUrl(url);
+        wsUrlRef.current = url;
         setStatus(t("Connecting..."));
 
         const socket = new WebSocket(url);

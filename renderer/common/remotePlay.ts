@@ -112,12 +112,67 @@ export const hasLoginCredential = (loginInfo: PsnLoginInfo | null | undefined) =
   );
 };
 
+export const getPsnLoginUserKey = (loginInfo: PsnLoginInfo | null | undefined) => {
+  return String(
+    loginInfo?.userInfo?.account_id ||
+    loginInfo?.account_id ||
+    loginInfo?.userInfo?.user_id ||
+    loginInfo?.user_id ||
+    loginInfo?.userInfo?.online_id ||
+    loginInfo?.online_id ||
+    ""
+  ).trim();
+};
+
 export const getPsnAccountId = (loginInfo: PsnLoginInfo | null | undefined) => {
   return String(loginInfo?.userInfo?.account_id || loginInfo?.account_id || "").trim();
 };
 
 export const getPsnOnlineId = (loginInfo: PsnLoginInfo | null | undefined) => {
   return String(loginInfo?.userInfo?.online_id || loginInfo?.online_id || "").trim();
+};
+
+export const getPsnLoginDisplayName = (
+  loginInfo: PsnLoginInfo | null | undefined
+) => {
+  return String(
+    getPsnOnlineId(loginInfo) ||
+    getPsnAccountId(loginInfo) ||
+    getPsnLoginUserKey(loginInfo)
+  ).trim();
+};
+
+export const parseCachedPsnLoginUsers = (raw: unknown) => {
+  if (!raw) {
+    return [] as PsnLoginInfo[];
+  }
+
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const values = Array.isArray(parsed) ? parsed : [parsed];
+    const seen = new Set<string>();
+    const users: PsnLoginInfo[] = [];
+
+    for (const item of values) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue;
+      }
+
+      const loginInfo = item as PsnLoginInfo;
+      const userKey = getPsnLoginUserKey(loginInfo);
+      if (!hasLoginCredential(loginInfo) || !userKey || seen.has(userKey)) {
+        continue;
+      }
+
+      seen.add(userKey);
+      users.push(loginInfo);
+    }
+
+    return users;
+  } catch (error) {
+    console.error("Invalid PSN login users cache:", error);
+    return [] as PsnLoginInfo[];
+  }
 };
 
 export const parseCachedConsoles = (raw: unknown): ConsoleCacheItem[] => {

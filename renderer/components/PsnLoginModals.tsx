@@ -17,6 +17,8 @@ type LoginMethod = "oauth" | "username" | "accountId" | "manual";
 type PsnLoginModalsProps = {
   show: boolean;
   onLoginSuccess: (loginInfo: any) => void;
+  allowClose?: boolean;
+  onClose?: () => void;
 };
 
 const getErrorMessage = (error: any, fallback: string) => {
@@ -199,8 +201,9 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
     <>
       <Modal
         isOpen={props.show && activeMethod === "oauth"}
-        isDismissable={false}
-        hideCloseButton
+        isDismissable={!!props.allowClose}
+        hideCloseButton={!props.allowClose}
+        onClose={props.allowClose ? props.onClose : undefined}
         size="lg"
       >
         <ModalContent>
@@ -243,8 +246,9 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
 
       <Modal
         isOpen={props.show && activeMethod === "username"}
-        isDismissable={false}
-        hideCloseButton
+        isDismissable={!!props.allowClose}
+        hideCloseButton={!props.allowClose}
+        onClose={props.allowClose ? props.onClose : undefined}
         size="lg"
       >
         <ModalContent>
@@ -280,8 +284,9 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
 
       <Modal
         isOpen={props.show && activeMethod === "accountId"}
-        isDismissable={false}
-        hideCloseButton
+        isDismissable={!!props.allowClose}
+        hideCloseButton={!props.allowClose}
+        onClose={props.allowClose ? props.onClose : undefined}
         size="lg"
       >
         <ModalContent>
@@ -317,8 +322,9 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
 
       <Modal
         isOpen={props.show && activeMethod === "manual"}
-        isDismissable={false}
-        hideCloseButton
+        isDismissable={!!props.allowClose}
+        hideCloseButton={!props.allowClose}
+        onClose={props.allowClose ? props.onClose : undefined}
         size="2xl"
         scrollBehavior="inside"
       >

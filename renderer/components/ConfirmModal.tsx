@@ -20,7 +20,7 @@ function ConfirmModal(props) {
   };
 
   return (
-    <Modal isOpen={props.show} scrollBehavior="inside" onClose={handleConfirm}>
+    <Modal isOpen={props.show} scrollBehavior="inside" onClose={handleCancel}>
       <ModalContent>
         <>
           <ModalHeader className="flex flex-col gap-1">
