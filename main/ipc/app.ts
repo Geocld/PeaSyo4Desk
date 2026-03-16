@@ -3,7 +3,7 @@ import { session } from "electron";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
 import net from "node:net";
-import chiaki from "../chiaki/chiaki.node";
+import chiaki from "../chiaki";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { StreamSessionService } from "../stream/session";
 

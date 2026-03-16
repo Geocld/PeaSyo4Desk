@@ -236,6 +236,7 @@ function RegistryPage() {
   };
 
   const handleRegisterHost = async () => {
+
     const host = hostInput.trim();
     if (!host) {
       setErrorText(t("Host cannot be empty."));

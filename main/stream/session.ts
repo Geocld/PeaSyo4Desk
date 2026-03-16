@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import WS from "ws";
-import chiaki from "../chiaki/chiaki.node";
+import chiaki from "../chiaki";
 
 const STREAM_WS_HOST = "127.0.0.1";
 const STREAM_WS_PATH = "/stream";
