@@ -5,6 +5,7 @@ import { addToast } from "@heroui/react";
 import ActionBar from "../../components/ActionBar";
 import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
+import Perform from "../../components/Perform";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
@@ -1657,13 +1658,7 @@ function StreamPage() {
         onTogglePerformance={() => setShowPerformance((prev) => !prev)}
       />
 
-      {showPerformance ? (
-        <div className="absolute left-4 top-4 z-[100] max-w-[calc(100%-120px)] rounded bg-black/55 px-3 py-2 text-xs text-white backdrop-blur-sm">
-          <div>{status || "-"}</div>
-          <div>{wsUrl || "-"}</div>
-          <div>{statsText || "-"}</div>
-        </div>
-      ) : null}
+      {showPerformance && <Perform connectState={connectState} />}
 
       <div className="absolute inset-0 flex items-center justify-center bg-black">
         <canvas

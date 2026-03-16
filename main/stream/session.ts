@@ -1,5 +1,6 @@
 import http from "node:http";
 import crypto from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -130,6 +131,26 @@ type VideoOutputFormat = {
   frameSize: number;
 };
 
+type StreamPerformanceStats = {
+  resolution: string;
+  rtt: string;
+  fps: string;
+  fl: string;
+  pl: string;
+  br: string;
+  decode: string;
+  decodeFrames: number;
+  raw: {
+    rttMs: number;
+    measuredBitrateMbps: number;
+    packetLossRatio: number;
+    decodedFps: number;
+    framesLost: number;
+    decodeAvgMs: number;
+    decodeFrames: number;
+  };
+};
+
 const wsClients = new Set<any>();
 const wsClientPressedButtons = new Map<any, Set<string>>();
 
@@ -148,6 +169,14 @@ let ffmpegOutput: any = null;
 let ffmpegInputBlocked = false;
 const pendingChunks: Buffer[] = [];
 let pendingBytes = 0;
+let decodedFrameCount = 0;
+let framesLostCount = 0;
+const decodeFrameCostWindowMs: number[] = [];
+let decodeFrameCostWindowTotalMs = 0;
+let decodedFrameIntervalTotalMs = 0;
+let decodedFrameIntervalCount = 0;
+let lastDecodedFrameAtMs = 0;
+const MAX_DECODE_COST_WINDOW = 240;
 
 let audioHeaderInfo: null | {
   channels: number;
@@ -721,6 +750,13 @@ const destroyVideoPipeline = () => {
   pendingChunks.length = 0;
   pendingBytes = 0;
   ffmpegInputBlocked = false;
+  decodedFrameCount = 0;
+  framesLostCount = 0;
+  decodeFrameCostWindowMs.length = 0;
+  decodeFrameCostWindowTotalMs = 0;
+  decodedFrameIntervalTotalMs = 0;
+  decodedFrameIntervalCount = 0;
+  lastDecodedFrameAtMs = 0;
 
   if (ffmpegInput) {
     try {
@@ -753,6 +789,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
   pendingBytes += chunk.length;
 
   while (pendingBytes >= frameSize) {
+    const decodeFrameStart = performance.now();
     const frame = Buffer.allocUnsafe(frameSize);
     let copied = 0;
     while (copied < frameSize && pendingChunks.length > 0) {
@@ -770,6 +807,22 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
     }
 
     pendingBytes -= frameSize;
+    const now = Date.now();
+    if (lastDecodedFrameAtMs > 0) {
+      decodedFrameIntervalTotalMs += Math.max(0, now - lastDecodedFrameAtMs);
+      decodedFrameIntervalCount += 1;
+    }
+    lastDecodedFrameAtMs = now;
+    decodedFrameCount += 1;
+
+    const decodeCostMs = Math.max(0, performance.now() - decodeFrameStart);
+    decodeFrameCostWindowMs.push(decodeCostMs);
+    decodeFrameCostWindowTotalMs += decodeCostMs;
+    if (decodeFrameCostWindowMs.length > MAX_DECODE_COST_WINDOW) {
+      const removed = decodeFrameCostWindowMs.shift() || 0;
+      decodeFrameCostWindowTotalMs -= removed;
+    }
+
     broadcastTypedBinary(WS_BINARY_VIDEO, frame);
   }
 
@@ -1160,6 +1213,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     host,
     ps5,
     enableDualsense: args.enableDualsense !== false,
+    enableKeyboard: false,
     registKey,
     morning,
     videoProfile: {
@@ -1195,6 +1249,10 @@ const createSession = (sessionOptions: any) => {
       console.log(`[chiaki:${event.levelChar}]`, event.message);
     },
     onVideoSample: (sample) => {
+      const sampleFramesLost = Number(sample?.framesLost);
+      if (Number.isFinite(sampleFramesLost) && sampleFramesLost > 0) {
+        framesLostCount += Math.trunc(sampleFramesLost);
+      }
       dispatchVideoSample(sample.data);
     },
     onAudioHeader: (header) => {
@@ -1204,6 +1262,54 @@ const createSession = (sessionOptions: any) => {
       dispatchAudioFrame(frame.data);
     },
   });
+};
+
+const getPerformanceStats = (): StreamPerformanceStats => {
+  let rttMs = 0;
+  let measuredBitrateMbps = 0;
+  let packetLossRatio = 0;
+
+  if (streamSession && typeof streamSession.getPerformanceStats === "function") {
+    try {
+      const stats = streamSession.getPerformanceStats() || {};
+      rttMs = Number(stats.rtt) || 0;
+      measuredBitrateMbps = Number(stats.measuredBitrate) || 0;
+      packetLossRatio = Number(stats.packetLoss) || 0;
+    } catch (error) {
+      log("getPerformanceStats failed:", (error as any)?.message || String(error));
+    }
+  }
+
+  const decodeAvgMs =
+    decodeFrameCostWindowMs.length > 0
+      ? decodeFrameCostWindowTotalMs / decodeFrameCostWindowMs.length
+      : 0;
+  const decodedFrameIntervalAvgMs =
+    decodedFrameIntervalCount > 0 ? decodedFrameIntervalTotalMs / decodedFrameIntervalCount : 0;
+  const decodedFps = decodedFrameIntervalAvgMs > 0 ? 1000 / decodedFrameIntervalAvgMs : 0;
+  const resolution = streamVideoConfig
+    ? `${streamVideoConfig.width}x${streamVideoConfig.height}`
+    : "--";
+
+  return {
+    resolution,
+    rtt: rttMs > 0 ? `${rttMs.toFixed(2)} ms` : "--",
+    fps: decodedFps > 0 ? `${decodedFps.toFixed(2)}` : "--",
+    fl: `${framesLostCount}`,
+    pl: packetLossRatio > 0 ? `${(packetLossRatio * 100).toFixed(2)} %` : "0.00 %",
+    br: measuredBitrateMbps > 0 ? `${measuredBitrateMbps.toFixed(2)} Mbps` : "0.00 Mbps",
+    decode: decodeAvgMs > 0 ? `${decodeAvgMs.toFixed(2)} ms` : "--",
+    decodeFrames: decodedFrameCount,
+    raw: {
+      rttMs,
+      measuredBitrateMbps,
+      packetLossRatio,
+      decodedFps,
+      framesLost: framesLostCount,
+      decodeAvgMs,
+      decodeFrames: decodedFrameCount,
+    },
+  };
 };
 
 const stopSession = async (closeSocketServer = true) => {
@@ -1289,4 +1395,5 @@ export const StreamSessionService = {
   startSession,
   stopSession,
   gotoBedAndStop,
+  getPerformanceStats,
 };

@@ -829,6 +829,10 @@ export default class IpcApp extends IpcBase {
     return StreamSessionService.stopSession(true);
   }
 
+  getStreamPerformanceStats() {
+    return Promise.resolve(StreamSessionService.getPerformanceStats());
+  }
+
   gotoBedAndStopStreamSession() {
     return StreamSessionService.gotoBedAndStop(true);
   }

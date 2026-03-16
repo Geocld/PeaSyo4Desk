@@ -46,6 +46,16 @@ const getSettingsMetas = (t) => {
           { value: "xbox-light", label: t("Light") },
         ],
       },
+      {
+        name: 'performance_style',
+        type: 'radio',
+        title: t('Performance show style'),
+        description: t('Setting performance show style'),
+        data: [
+          { value: false, label: t('Vertical') },
+          { value: true, label: t('Horizon') },
+        ],
+      },
     ],
     local: [
       {

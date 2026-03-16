@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "next-i18next";
 import { useSettings } from "../context/userContext";
+import Ipc from "../lib/ipc";
 
-function Perform({ xPlayer, connectState }) {
+type PerformProps = {
+  connectState?: string;
+};
+
+function Perform({ connectState }: PerformProps) {
   const { t } = useTranslation('cloud');
   const { settings } = useSettings();
   const [performance, setPerformance] = useState<any>({});
@@ -13,31 +18,41 @@ function Perform({ xPlayer, connectState }) {
     if (localTheme === 'xbox-light') {
       setIslight(true)
     }
+  }, []);
 
-    let perfInterval;
-    if (!perfInterval) {
-      perfInterval = setInterval(() => {
-        if (xPlayer && connectState === "connected")
-          xPlayer.getStreamState &&
-            xPlayer.getStreamState().then((perf) => {
-              setPerformance(perf);
-            });
-      }, 2000);
+  useEffect(() => {
+    let alive = true;
+
+    if (connectState !== "connected") {
+      setPerformance({});
+      return undefined;
     }
 
-    return () => {
-      if (perfInterval) {
-        clearInterval(perfInterval);
-      }
+    const fetchPerformance = () => {
+      Ipc.send("app", "getStreamPerformanceStats")
+        .then((perf: any) => {
+          if (!alive) {
+            return;
+          }
+          setPerformance(perf || {});
+        })
+        .catch(() => undefined);
     };
-  }, [xPlayer, connectState]);
+
+    fetchPerformance();
+    const perfInterval = setInterval(() => {
+      fetchPerformance();
+    }, 2000);
+
+    return () => {
+      alive = false;
+      clearInterval(perfInterval);
+    };
+  }, [connectState]);
 
   let resolutionText = '';
   if (performance.resolution) {
     resolutionText = performance.resolution;
-    if (settings.resolution === 1081) {
-      resolutionText = resolutionText + '(HQ)';
-    }
   }
 
   return (
@@ -51,15 +66,6 @@ function Perform({ xPlayer, connectState }) {
               </span>
               <span className="text-xs">
                 {t("RTT")}: {performance.rtt || "--"} | &nbsp;
-              </span>
-              <span className="text-xs">
-                {t("JIT")}: {performance.jit || "--"} | &nbsp;
-              </span>
-              <span className="text-xs">
-                {t("FPS")}: {performance.fps || "--"} | &nbsp;
-              </span>
-              <span className="text-xs">
-                {t("FD")}: {performance.fl || "--"} | &nbsp;
               </span>
               <span className="text-xs">
                 {t("PL")}: {performance.pl || "--"} | &nbsp;
@@ -79,15 +85,6 @@ function Perform({ xPlayer, connectState }) {
             </div>
             <div className="px-1 text-sm">
               {t("RTT")}: {performance.rtt || "--"}
-            </div>
-            <div className="px-1 text-sm">
-              {t("JIT")}: {performance.jit || "--"}
-            </div>
-            <div className="px-1 text-sm">
-              {t("FPS")}: {performance.fps || "--"}
-            </div>
-            <div className="px-1 text-sm">
-              {t("FD")}: {performance.fl || "--"}
             </div>
             <div className="px-1 text-sm">
               {t("PL")}: {performance.pl || "--"}
