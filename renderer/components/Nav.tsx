@@ -28,6 +28,15 @@ const CloseIcon = () => {
   );
 };
 
+const AddIcon = () => {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+    </svg>
+
+  )
+}
+
 const getCurrentSection = (
   pathname: string,
   current?: NavSection
@@ -80,6 +89,10 @@ const Nav = ({ current }: NavProps) => {
       href: `/${locale}/settings`,
     },
   ];
+
+  const handleRegist = () => {
+    router.push(`/${locale}/registry`);
+  }
 
   const handleExit = () => {
     void Ipc.send("app", "quit");
@@ -169,21 +182,13 @@ const Nav = ({ current }: NavProps) => {
           })}
         </div>
 
+        <Button size="sm" isIconOnly aria-label="add" color="success" onPress={handleRegist}>
+          <AddIcon />
+        </Button>
+
         <Button size="sm" isIconOnly aria-label="close" color="danger" onPress={handleExit}>
           <CloseIcon />
         </Button>
-
-        {/* <Button
-          size="sm"
-          radius="full"
-          color="danger"
-          variant="flat"
-          className="min-w-0 px-3 font-semibold"
-          aria-label={t("Exit")}
-          onPress={handleExit}
-        >
-          x
-        </Button> */}
       </NavbarContent>
 
     </Navbar >

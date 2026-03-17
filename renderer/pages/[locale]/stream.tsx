@@ -209,41 +209,47 @@ const NON_ERROR_SESSION_EVENT_NAMES = new Set([
   "haptic_audio",
 ]);
 
-const buildSessionEventErrorMessage = (event: any) => {
+const buildSessionEventErrorMessage = (
+  event: any,
+  t: (key: string, options?: Record<string, any>) => string
+) => {
   const sessionEvent =
     event && typeof event === "object" ? event : { name: String(event || "unknown") };
   const name = String(sessionEvent.name || "unknown");
 
   if (name === "quit") {
     const lines = [
-      `event: ${name}`,
-      `reason: ${String(sessionEvent.reasonName || sessionEvent.reason || "-")}`,
+      `${t("EventLabel")}: ${name}`,
+      `${t("ReasonLabel")}: ${String(sessionEvent.reasonName || sessionEvent.reason || "-")}`,
     ];
     if (sessionEvent.reasonText) {
-      lines.push(`detail: ${String(sessionEvent.reasonText)}`);
+      lines.push(`${t("DetailLabel")}: ${String(sessionEvent.reasonText)}`);
     }
     return lines.join("\n");
   }
 
   if (name === "login_pin_request") {
     return [
-      `event: ${name}`,
-      `pinIncorrect: ${String(!!sessionEvent.pinIncorrect)}`,
-      "The current session requested a login PIN, which is not handled in this page.",
+      `${t("EventLabel")}: ${name}`,
+      `${t("PinIncorrectLabel")}: ${String(!!sessionEvent.pinIncorrect)}`,
+      t("LoginPinRequestNotHandled"),
     ].join("\n");
   }
 
   return JSON.stringify(sessionEvent, null, 2);
 };
 
-const buildSocketCloseMessage = (event: CloseEvent) => {
-  const lines = [`event: websocket_close`, `code: ${event.code}`];
+const buildSocketCloseMessage = (
+  event: CloseEvent,
+  t: (key: string, options?: Record<string, any>) => string
+) => {
+  const lines = [t("WebSocketCloseEvent"), `${t("CodeLabel")}: ${event.code}`];
 
   if (event.reason) {
-    lines.push(`reason: ${event.reason}`);
+    lines.push(`${t("ReasonLabel")}: ${event.reason}`);
   }
 
-  lines.push(`wasClean: ${String(event.wasClean)}`);
+  lines.push(`${t("WasCleanLabel")}: ${String(event.wasClean)}`);
   return lines.join("\n");
 };
 
@@ -322,7 +328,7 @@ const isEditableKeyboardTarget = (target: EventTarget | null) => {
 };
 
 function StreamPage() {
-  const { t } = useTranslation("cloud");
+  const { t } = useTranslation("stream");
   const router = useRouter();
   const { settings } = useSettings();
 
@@ -453,9 +459,7 @@ function StreamPage() {
     }
 
     if (format === "I010" && !window.WebGL2RenderingContext) {
-      openSessionAlert(
-        "H265-HDR requires WebGL2 support to render the HDR video correctly. Please switch the codec to H265 on devices without WebGL2."
-      );
+      openSessionAlert(t("HdrWebgl2Required"));
     }
   };
 
@@ -932,7 +936,7 @@ function StreamPage() {
     if (!audioContextRef.current) {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (!Ctx) {
-        setStatus("Audio context is not supported.");
+        setStatus(t("AudioContextNotSupported"));
         return;
       }
       audioContextRef.current = new Ctx({ latencyHint: "interactive" });
@@ -1213,7 +1217,23 @@ function StreamPage() {
       : "0";
 
     statsTextRef.current =
-      `连接=${wsText} | 视频=${widthRef.current}x${heightRef.current}@${fpsRef.current} | 收=${receivedFramesRef.current} 渲=${renderedFramesRef.current} 丢=${droppedFramesRef.current} FPS=${renderFps} | 音频块 收=${audioReceivedChunksRef.current} 播=${audioPlayedChunksRef.current} 丢=${audioDroppedChunksRef.current} 缓冲=${audioBufferedMs}ms | 手柄=${validGamepadCountRef.current} 发送=${controlSendCountRef.current} 失败=${controlSendErrorCountRef.current}`;
+      t("StatsTemplate", {
+        wsText,
+        width: widthRef.current,
+        height: heightRef.current,
+        fps: fpsRef.current,
+        received: receivedFramesRef.current,
+        rendered: renderedFramesRef.current,
+        dropped: droppedFramesRef.current,
+        renderFps,
+        audioReceived: audioReceivedChunksRef.current,
+        audioPlayed: audioPlayedChunksRef.current,
+        audioDropped: audioDroppedChunksRef.current,
+        audioBufferedMs,
+        gamepads: validGamepadCountRef.current,
+        controlSent: controlSendCountRef.current,
+        controlFailed: controlSendErrorCountRef.current,
+      });
   };
 
   const renderLoop = () => {
@@ -1239,13 +1259,13 @@ function StreamPage() {
       } catch (error) {
         openSessionAlert(
           [
-            "HDR renderer initialization failed.",
+            t("HdrRendererInitializationFailed"),
             getErrorMessage(
               error,
-              "Please try switching the codec back to H265 if the current device cannot render H265-HDR."
+              t("HdrRendererSwitchCodecHint")
             ),
           ].join("\n"),
-          "HDR renderer error"
+          t("HdrRendererErrorStatus")
         );
       }
     }
@@ -1273,7 +1293,7 @@ function StreamPage() {
 
         const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
         if (!raw) {
-          setStatus("缺少 pending-stream-config，请从 Home 页面重新进入。");
+          setStatus(t("PendingConfigMissing"));
           return;
         }
 
@@ -1281,7 +1301,11 @@ function StreamPage() {
         try {
           pendingConfig = JSON.parse(raw);
         } catch (error) {
-          setStatus(`pending-stream-config 解析失败: ${String(error)}`);
+          setStatus(
+            t("PendingConfigParseFailed", {
+              error: String(error),
+            })
+          );
           return;
         }
 
@@ -1293,7 +1317,7 @@ function StreamPage() {
           "";
 
         if (!streamHost) {
-          setStatus("streamHost 为空，无法启动串流。");
+          setStatus(t("StreamHostMissing"));
           setConnectState("error");
           return;
         }
@@ -1355,11 +1379,11 @@ function StreamPage() {
                   showConnectedToastThenEnableAudio();
                 } else if (!NON_ERROR_SESSION_EVENT_NAMES.has(eventName)) {
                   openSessionAlert(
-                    buildSessionEventErrorMessage(sessionEvent),
+                    buildSessionEventErrorMessage(sessionEvent, t),
                     `session: ${eventName}`
                   );
                 } else if (typeof eventName === "string") {
-                  setStatus(`session: ${eventName}`);
+                  setStatus(t("Session_activity"));
                 }
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
@@ -1376,7 +1400,7 @@ function StreamPage() {
                     `session: ${String(msg.status)}`
                   );
                 } else {
-                  setStatus(`session: ${msg.status}`);
+                  setStatus(t("Session_activity"));
                 }
               } else if (msg?.type === "connected") {
                 setStatus(t("Connecting..."));
@@ -1405,16 +1429,19 @@ function StreamPage() {
 
         socket.onerror = () => {
           if (!active) return;
-          openSessionAlert("event: websocket_error", "WebSocket error");
+          openSessionAlert(t("WebSocketErrorEvent"), t("WebSocketErrorStatus"));
         };
 
         socket.onclose = (closeEvent) => {
           if (!active) return;
           if (!disconnectingRef.current) {
             if (sessionErrorHandledRef.current) {
-              setStatus("WebSocket closed");
+              setStatus(t("WebSocketClosedStatus"));
             } else {
-              openSessionAlert(buildSocketCloseMessage(closeEvent), "WebSocket closed");
+              openSessionAlert(
+                buildSocketCloseMessage(closeEvent, t),
+                t("WebSocketClosedStatus")
+              );
             }
           }
           if (socketRef.current === socket) {
@@ -1422,7 +1449,11 @@ function StreamPage() {
           }
         };
       } catch (error: any) {
-        setStatus(`启动失败: ${error?.message || String(error)}`);
+        setStatus(
+          t("StartSessionFailedWithReason", {
+            reason: error?.message || String(error),
+          })
+        );
         setConnectState("error");
       }
     };
@@ -1701,7 +1732,7 @@ function StreamPage() {
 export default StreamPage;
 
 // eslint-disable-next-line react-refresh/only-export-components
-export const getStaticProps = makeStaticProperties(["common", "home", "cloud"]);
+export const getStaticProps = makeStaticProperties(["common", "home", "stream"]);
 
 // eslint-disable-next-line react-refresh/only-export-components
 export { getStaticPaths };

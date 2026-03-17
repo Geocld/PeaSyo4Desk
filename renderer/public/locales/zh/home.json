@@ -29,7 +29,7 @@
   "Host name": "主机名称",
   "Host ID": "主机 ID",
   "Host IP": "主机 IP",
-  "Registered at": "注册时间",
+  "Registered": "注册",
   "Register a PS host with the 8-digit PIN shown on your console.": "使用主机上显示的 8 位 PIN 注册 PS 主机。",
   "Select console type": "选择主机类型",
   "Discovered via LAN": "局域网发现",

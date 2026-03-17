@@ -1,9 +1,9 @@
+import {Spinner} from "@heroui/react";
+
 const Loading = ({ loadingText }) => {
   return (
     <div className="loading user-select-none">
-      <div>
-        <img src='/images/loading.svg' alt="" draggable="false" />
-      </div>
+      <Spinner color="danger"/>
       <div className="loadingText">{loadingText}</div>
     </div>
   );

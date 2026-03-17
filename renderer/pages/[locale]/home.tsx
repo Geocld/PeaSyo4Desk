@@ -3,13 +3,13 @@ import {
   Card,
   CardBody,
   CardFooter,
-  Chip,
   Divider,
 } from "@heroui/react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
+import ConsoleHostCard from "../../components/ConsoleHostCard";
 import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
@@ -23,24 +23,6 @@ import {
   parseCachedConsoles,
   upsertConsoleCache,
 } from "../../common/remotePlay";
-
-const formatConsoleType = (item: ConsoleCacheItem) => {
-  if (item.apName) return item.apName;
-  return "PS";
-};
-
-const formatRegisteredTime = (value: number | undefined) => {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleString();
-};
 
 function Home() {
   const { t, i18n: { language: locale } } = useTranslation("home");
@@ -180,73 +162,16 @@ function Home() {
       <Layout>
         {isLogined && consoles.length > 0 ? (
           <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-2xl font-semibold">{t("Consoles")}</p>
-                <p className="text-sm text-gray-500">
-                  {t("Registered consoles are stored locally on this device.")}
-                </p>
-              </div>
-              <Button color="primary" onPress={handleAddHostClick}>
-                {t("Add host")}
-              </Button>
-            </div>
 
-            <div className="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-              {consoles.map((item, index) => {
-                const nickname =
-                  item.serverNickname || `${t("Consoles")} ${index + 1}`;
-                const type = formatConsoleType(item);
-                const hostText = item.host || "-";
-                const consoleId = item.consoleId || "-";
-                const registeredTimeText = formatRegisteredTime(item.registedTime);
-
-                return (
-                  <Card key={`${item.consoleId || "console"}-${index}`}>
-                    <CardBody>
-                      <p className="text-center">{nickname}</p>
-                      <p className="text-center text-sm text-gray-400">{type}</p>
-                      <p className="text-center text-xs text-gray-500">
-                        ({consoleId})
-                      </p>
-                      <div className="flex justify-center py-2">
-                        <Chip size="sm" radius="none" color="success">
-                          {t("Cached host")}
-                        </Chip>
-                      </div>
-                      <div className="flex flex-col gap-2 text-sm">
-                        <div className="flex items-start justify-between gap-3">
-                          <span className="text-gray-500">{t("Host name")}</span>
-                          <span className="text-right break-all">{nickname}</span>
-                        </div>
-                        <div className="flex items-start justify-between gap-3">
-                          <span className="text-gray-500">{t("Host ID")}</span>
-                          <span className="text-right break-all">{consoleId}</span>
-                        </div>
-                        <div className="flex items-start justify-between gap-3">
-                          <span className="text-gray-500">{t("Host IP")}</span>
-                          <span className="text-right break-all">{hostText}</span>
-                        </div>
-                        <div className="flex items-start justify-between gap-3">
-                          <span className="text-gray-500">{t("Registered at")}</span>
-                          <span className="text-right break-all">{registeredTimeText}</span>
-                        </div>
-                      </div>
-                    </CardBody>
-                    <Divider />
-                    <CardFooter>
-                      <Button
-                        color="primary"
-                        size="sm"
-                        className="w-full"
-                        onPress={() => handleStartStreamClick(item)}
-                      >
-                        {t("Start stream")}
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                );
-              })}
+            <div className="gap-4 grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4">
+              {consoles.map((item, index) => (
+                <ConsoleHostCard
+                  key={`${item.consoleId || item.host || "console"}-${index}`}
+                  item={item}
+                  index={index}
+                  onStartStream={handleStartStreamClick}
+                />
+              ))}
             </div>
           </div>
         ) : isLogined ? (

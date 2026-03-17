@@ -292,6 +292,7 @@ function RegistryPage() {
         hostType: selectedConsole?.type,
         hostId: selectedConsole?.hostId || selectedConsole?.id,
         isPs5: selectedConsole?.isPs5 ?? consoleType === "ps5",
+        // @ts-ignore
         target: registeredConsole.target || selectedConsole?.target,
         stateName: selectedConsole?.stateName,
         registedTime: Date.now(),
@@ -440,13 +441,7 @@ function RegistryPage() {
                 />
               </CardBody>
               <Divider />
-              <CardFooter className="flex items-center justify-between gap-3">
-                <Button
-                  variant="light"
-                  onPress={() => router.push(`/${locale}/home`)}
-                >
-                  {tCommon("Cancel")}
-                </Button>
+              <CardFooter className="flex items-center justify-end gap-3">
                 <Button
                   color="primary"
                   isLoading={isRegistering}
