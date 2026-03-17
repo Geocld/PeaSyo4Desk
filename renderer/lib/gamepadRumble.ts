@@ -20,9 +20,15 @@ type GamepadHapticActuatorLike = {
   pulse?: (value: number, duration: number) => Promise<unknown> | unknown;
 };
 
-const MIN_RUMBLE_INTERVAL_MS = 16;
-const MIN_RUMBLE_DURATION_MS = 45;
-const MAX_RUMBLE_DURATION_MS = 140;
+export const GAMEPAD_RUMBLE_CONFIG = {
+  minIntervalMs: 28,
+  minDurationMs: 25,
+  maxDurationMs: 80,
+  masterGain: 0.48,
+  strongScale: 0.55,
+  weakScale: 0.45,
+  gamma: 1.6,
+} as const;
 
 let lastRumbleAtMs = 0;
 
@@ -30,6 +36,13 @@ const clamp01 = (value: number) => {
   if (value <= 0) return 0;
   if (value >= 1) return 1;
   return value;
+};
+
+const tuneRumbleMagnitude = (rawMagnitude: number, channelScale: number) => {
+  const compressed = Math.pow(clamp01(rawMagnitude), GAMEPAD_RUMBLE_CONFIG.gamma);
+  return clamp01(
+    compressed * GAMEPAD_RUMBLE_CONFIG.masterGain * channelScale
+  );
 };
 
 const toRumbleMagnitude = (rawValue: unknown, rawPeak: unknown) => {
@@ -119,21 +132,30 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
   }
 
   const now = Date.now();
-  if (now - lastRumbleAtMs < MIN_RUMBLE_INTERVAL_MS) {
+  if (now - lastRumbleAtMs < GAMEPAD_RUMBLE_CONFIG.minIntervalMs) {
     return false;
   }
 
   const rumble = (event || {}) as ChiakiRumbleEvent;
-  const strongMagnitude = toRumbleMagnitude(rumble.left, rumble.peakLeft);
-  const weakMagnitude = toRumbleMagnitude(rumble.right, rumble.peakRight);
+  const strongMagnitude = tuneRumbleMagnitude(
+    toRumbleMagnitude(rumble.left, rumble.peakLeft),
+    GAMEPAD_RUMBLE_CONFIG.strongScale
+  );
+  const weakMagnitude = tuneRumbleMagnitude(
+    toRumbleMagnitude(rumble.right, rumble.peakRight),
+    GAMEPAD_RUMBLE_CONFIG.weakScale
+  );
   const maxMagnitude = Math.max(strongMagnitude, weakMagnitude);
   if (maxMagnitude <= 0) {
     return false;
   }
 
   const duration =
-    MIN_RUMBLE_DURATION_MS +
-    Math.round((MAX_RUMBLE_DURATION_MS - MIN_RUMBLE_DURATION_MS) * maxMagnitude);
+    GAMEPAD_RUMBLE_CONFIG.minDurationMs +
+    Math.round(
+      (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
+        maxMagnitude
+    );
 
   const gamepads = navigator.getGamepads();
   let played = false;
@@ -166,4 +188,3 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
 
   return played;
 };
-

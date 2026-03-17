@@ -1114,6 +1114,89 @@ const dispatchAudioFrame = (opusPacket: Buffer) => {
   writeOggPage(opusPacket, 0x00, oggGranule);
 };
 
+const hapticLevelFromPeak = (peak: number) => {
+  if (peak <= 0) {
+    return 0;
+  }
+
+  const db = 20 * Math.log10(peak / 0.6);
+  if (!Number.isFinite(db) || db <= 0) {
+    return 0;
+  }
+
+  let level = Math.trunc(db);
+  if (level <= 0x50) {
+    return 0;
+  }
+  if (level > 0xff) {
+    level = 0xff;
+  }
+  return level;
+};
+
+const formatHapticPeak = (peak: number) => {
+  if (peak <= 0) {
+    return 0;
+  }
+
+  const db = 20 * Math.log10(peak / 0.6);
+  if (!Number.isFinite(db) || db <= 0) {
+    return 0;
+  }
+
+  let level = Math.trunc(db);
+  if (level > 0xff) {
+    level = 0xff;
+  }
+  return level;
+};
+
+const dispatchHapticsFrameAsRumble = (frame: any) => {
+  const frameData = frame?.data;
+  const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
+  if (buffer.length < 4) {
+    return;
+  }
+
+  const sampleSize = 2 * 2;
+  const sampleCount = Math.floor(buffer.length / sampleSize);
+  if (sampleCount < 1) {
+    return;
+  }
+
+  let peakLeft = 0;
+  let peakRight = 0;
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const offset = i * sampleSize;
+    const amplitudeLeft = buffer.readInt16LE(offset);
+    const amplitudeRight = buffer.readInt16LE(offset + 2);
+
+    if (amplitudeLeft > peakLeft) {
+      peakLeft = amplitudeLeft;
+    }
+    if (amplitudeRight > peakRight) {
+      peakRight = amplitudeRight;
+    }
+  }
+
+  const left = hapticLevelFromPeak(peakLeft);
+  const right = hapticLevelFromPeak(peakRight);
+
+  broadcastText({
+    type: "session_event",
+    name: "rumble",
+    event: {
+      name: "rumble",
+      unknown: buffer[0],
+      left,
+      right,
+      peakLeft: formatHapticPeak(peakLeft),
+      peakRight: formatHapticPeak(peakRight),
+    },
+  });
+};
+
 const cleanupSessionOnly = () => {
   for (const socket of wsClients) {
     releaseClientPressedButtons(socket, "session-stop");
@@ -1256,7 +1339,7 @@ const createSession = (sessionOptions: any) => {
         broadcastText({ type: "session_status", status: event?.name || "unknown" });
       }
     },
-    onLog: (event) => {
+    onLog: () => {
       // console.log(`[chiaki:${event.levelChar}]`, event.message);
     },
     onVideoSample: (sample) => {
@@ -1273,8 +1356,8 @@ const createSession = (sessionOptions: any) => {
       dispatchAudioFrame(frame.data);
     },
     onHapticsFrame: (frame) => {
-      console.log("Received haptics frame:", frame);
-    }
+      dispatchHapticsFrameAsRumble(frame);
+    },
   });
 };
 
