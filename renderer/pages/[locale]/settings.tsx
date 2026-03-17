@@ -207,7 +207,7 @@ function SettingsPage() {
     const autoBitrate = getAutoBitrateForResolution(resolution);
 
     if (type === "local") {
-      const nextDraft = {
+      const nextDraft: BasicStreamDraft = {
         ...draft,
         resolution,
         bitrate_mode: "auto",
@@ -217,7 +217,7 @@ function SettingsPage() {
       return;
     }
 
-    const nextDraft = {
+    const nextDraft: BasicStreamDraft = {
       ...draft,
       remote_resolution: resolution,
       remote_bitrate_mode: "auto",
@@ -235,7 +235,7 @@ function SettingsPage() {
         mode === "auto"
           ? getAutoBitrateForResolution(draft.resolution)
           : clampStreamBitrate(draft.bitrate, draft.resolution);
-      const nextDraft = {
+      const nextDraft: BasicStreamDraft = {
         ...draft,
         bitrate_mode: mode,
         bitrate: nextBitrate,
@@ -248,7 +248,7 @@ function SettingsPage() {
       mode === "auto"
         ? getAutoBitrateForResolution(draft.remote_resolution)
         : clampStreamBitrate(draft.remote_bitrate, draft.remote_resolution);
-    const nextDraft = {
+    const nextDraft: BasicStreamDraft = {
       ...draft,
       remote_bitrate_mode: mode,
       remote_bitrate: nextBitrate,
@@ -258,23 +258,23 @@ function SettingsPage() {
 
   const handleCodecChange = (type: "local" | "remote", codec: string) => {
     if (type === "local") {
-      const nextDraft = { ...draft, codec };
+      const nextDraft: BasicStreamDraft = { ...draft, codec };
       persistStreamDraft(nextDraft);
       return;
     }
 
-    const nextDraft = { ...draft, remote_codec: codec };
+    const nextDraft: BasicStreamDraft = { ...draft, remote_codec: codec };
     persistStreamDraft(nextDraft);
   };
 
   const handleFpsChange = (type: "local" | "remote", fps: number) => {
     if (type === "local") {
-      const nextDraft = { ...draft, fps };
+      const nextDraft: BasicStreamDraft = { ...draft, fps };
       persistStreamDraft(nextDraft);
       return;
     }
 
-    const nextDraft = { ...draft, remote_fps: fps };
+    const nextDraft: BasicStreamDraft = { ...draft, remote_fps: fps };
     persistStreamDraft(nextDraft);
   };
 
@@ -285,12 +285,12 @@ function SettingsPage() {
     const bitrate = Math.min(100000, Math.max(1000, getSliderValue(value) * 1000));
 
     if (type === "local") {
-      const nextDraft = { ...draft, bitrate };
+      const nextDraft: BasicStreamDraft = { ...draft, bitrate };
       persistStreamDraft(nextDraft);
       return;
     }
 
-    const nextDraft = { ...draft, remote_bitrate: bitrate };
+    const nextDraft: BasicStreamDraft = { ...draft, remote_bitrate: bitrate };
     persistStreamDraft(nextDraft);
   };
 

@@ -7,7 +7,7 @@ import React from "react";
 import { UserProvider } from "../context/userContext";
 import "../styles.css";
 
-const  App = ({ Component, pageProps }) => {
+function App({ Component, pageProps }) {
   React.useEffect(() => {
     const errorHandler = function (event) {
       console.error(
@@ -51,4 +51,6 @@ const  App = ({ Component, pageProps }) => {
   );
 }
 
-export default appWithTranslation(App)
+const AppWithTranslation = appWithTranslation(App);
+
+export default AppWithTranslation;
