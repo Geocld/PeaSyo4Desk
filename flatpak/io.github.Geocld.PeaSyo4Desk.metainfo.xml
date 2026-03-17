@@ -11,7 +11,8 @@
   <url type="help">https://github.com/Geocld/PeaSyo4Desk/issues</url>
   <url type="bugtracker">https://github.com/Geocld/PeaSyo4Desk/issues</url>
   <description>
-    <p></p>
+    <p>PeaSyo, also known as Pixiu, is a PS4/5 streaming application for Windows/MacOS/Linux(steamOS).</p>
+    <p>It helps you connect to your console from Linux, macOS, and Windows with a simple setup experience.</p>
   </description>
   <screenshots>
     <screenshot type="default">
@@ -22,7 +23,7 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.0.0" date="2026-03-31">
+    <release version="1.0.0" date="2026-03-17">
      <description>
         <ul>
           <li>First full release</li>
