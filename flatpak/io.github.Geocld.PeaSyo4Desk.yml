@@ -5,7 +5,7 @@ sdk: org.freedesktop.Sdk
 base: org.electronjs.Electron2.BaseApp
 base-version: '25.08'
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.node20
+  - org.freedesktop.Sdk.Extension.node22
 command: run.sh
 separate-locales: false
 finish-args:
@@ -17,7 +17,7 @@ finish-args:
   - --device=all
   - --filesystem=/run/udev:ro
 build-options:
-  append-path: /usr/lib/sdk/node20/bin
+  append-path: /usr/lib/sdk/node22/bin
   env:
     NPM_CONFIG_LOGLEVEL: info
 modules:
@@ -33,7 +33,7 @@ modules:
       - yarn --offline
       - yarn run flatpak-build --offline -- --linux
       # Add icon, metadata and desktop file
-      - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+      - install -Dm 644 resources/PeaSyo.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
       - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.appdata.xml
       # Bundle app and dependencies

@@ -18,7 +18,7 @@ publish:
 # Mac OS configuration
 mac:
   category: public.app-category.games
-  # icon: "src/app/assets/images/icon.icns"
+  icon: resources/icon.icns
   target: 
   - target: dmg
     arch: 
@@ -36,7 +36,7 @@ dmg:
 
 # Windows configuration
 win:
-  # icon: "src/app/assets/images/icon.ico"
+  icon: resources/icon.ico
   target:
     - "zip"
     - "nsis"
@@ -49,6 +49,7 @@ nsis:
 # Linux configuration
 linux:
   category: Game
+  icon: resources/PeaSyo.png
   target:
     - "AppImage"
     - "deb"

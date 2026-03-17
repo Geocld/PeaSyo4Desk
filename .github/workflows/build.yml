@@ -18,7 +18,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v4.0.2
         with:
-          node-version: 18
+          node-version: 22
       
       - name: Set up node_modules cache
         uses: actions/cache@v4
@@ -90,7 +90,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v4.0.2
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Set up flatpak build cache
         uses: actions/cache@v4
@@ -105,15 +105,15 @@ jobs:
 
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: XStreamingDesktop.flatpak
-          manifest-path: flatpak/io.github.Geocld.XStreamingDesktop.yml
+          bundle: PeaSyo4Desk.flatpak
+          manifest-path: flatpak/io.github.Geocld.PeaSyo4Desk.yml
           cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Release flatpak
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: XStreamingDesktop.flatpak
+          files: PeaSyo4Desk.flatpak
           draft: true
 
   release:
@@ -134,7 +134,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v4.0.2
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Set up node_modules cache
         uses: actions/cache@v4
@@ -163,7 +163,7 @@ jobs:
       - name: Publish Linux AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: XStreaming-linux.AppImage
+          name: PeaSyo4Desk-linux.AppImage
           path: |
             dist/*.AppImage
         if: matrix.os == 'ubuntu-latest' && contains(github.event.head_commit.message, '[build]')
@@ -171,7 +171,7 @@ jobs:
       - name: Publish Linux DEB
         uses: actions/upload-artifact@v4
         with:
-          name: XStreaming-linux.deb
+          name: PeaSyo4Desk-linux.deb
           path: |
             dist/*.deb
         if: matrix.os == 'ubuntu-latest' && contains(github.event.head_commit.message, '[build]')
@@ -179,7 +179,7 @@ jobs:
       - name: Publish Mac DMG
         uses: actions/upload-artifact@v4
         with:
-          name: XStreaming-macos.dmg
+          name: PeaSyo4Desk-macos.dmg
           path: |
             dist/*.dmg
         if: matrix.os == 'macos-latest' && contains(github.event.head_commit.message, '[build]')
@@ -187,7 +187,7 @@ jobs:
       - name: Publish Windows EXE
         uses: actions/upload-artifact@v4
         with:
-          name: XStreaming-win.zip
+          name: PeaSyo4Desk-win.zip
           path: |
             dist/*.exe
         if: matrix.os == 'windows-latest' && contains(github.event.head_commit.message, '[build]')

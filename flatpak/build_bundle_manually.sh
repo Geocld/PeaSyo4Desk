@@ -13,8 +13,8 @@ export PATH=${PATH}:${HOME}/.local/bin
 cd ..
 
 flatpak-node-generator yarn ../yarn.lock -o ./yarn-sources.json
-flatpak-builder --force-clean build-dir ./dev.Geocld.PeaSyo4Desk.yml
+flatpak-builder --force-clean build-dir ./io.github.Geocld.PeaSyo4Desk.yml
 flatpak build-export export-dir build-dir
-flatpak build-bundle export-dir PeaSyo4Desk.flatpak dev.Geocld.PeaSyo4Desk --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+flatpak build-bundle export-dir PeaSyo4Desk.flatpak io.github.Geocld.PeaSyo4Desk --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
 
 echo done
