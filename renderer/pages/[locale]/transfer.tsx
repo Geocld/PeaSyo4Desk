@@ -111,7 +111,6 @@ function TransferPage() {
                 <div className="mt-4 flex justify-end">
                   <Button
                     color="primary"
-                    variant="flat"
                     onPress={() => void handleImport()}
                     isLoading={actionLoading === "import"}
                     isDisabled={actionLoading !== null}

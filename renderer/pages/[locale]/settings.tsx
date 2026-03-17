@@ -191,32 +191,39 @@ function SettingsPage() {
   const remoteMetas = settingsMetas.remote || [];
   const otherMetas = settingsMetas.others || [];
 
-  const persistedDraft = useMemo(() => createDraftFromSettings(settings), [settings]);
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(persistedDraft);
-
   const syncDraft = (nextDraft: BasicStreamDraft) => {
     setDraft(nextDraft);
+  };
+
+  const persistStreamDraft = (nextDraft: BasicStreamDraft) => {
+    syncDraft(nextDraft);
+    setSettings({
+      ...settings,
+      ...nextDraft,
+    });
   };
 
   const handleResolutionChange = (type: "local" | "remote", resolution: number) => {
     const autoBitrate = getAutoBitrateForResolution(resolution);
 
     if (type === "local") {
-      setDraft((prev) => ({
-        ...prev,
+      const nextDraft = {
+        ...draft,
         resolution,
         bitrate_mode: "auto",
         bitrate: autoBitrate,
-      }));
+      };
+      persistStreamDraft(nextDraft);
       return;
     }
 
-    setDraft((prev) => ({
-      ...prev,
+    const nextDraft = {
+      ...draft,
       remote_resolution: resolution,
       remote_bitrate_mode: "auto",
       remote_bitrate: autoBitrate,
-    }));
+    };
+    persistStreamDraft(nextDraft);
   };
 
   const handleBitrateModeChange = (
@@ -228,11 +235,12 @@ function SettingsPage() {
         mode === "auto"
           ? getAutoBitrateForResolution(draft.resolution)
           : clampStreamBitrate(draft.bitrate, draft.resolution);
-      setDraft((prev) => ({
-        ...prev,
+      const nextDraft = {
+        ...draft,
         bitrate_mode: mode,
         bitrate: nextBitrate,
-      }));
+      };
+      persistStreamDraft(nextDraft);
       return;
     }
 
@@ -240,29 +248,34 @@ function SettingsPage() {
       mode === "auto"
         ? getAutoBitrateForResolution(draft.remote_resolution)
         : clampStreamBitrate(draft.remote_bitrate, draft.remote_resolution);
-    setDraft((prev) => ({
-      ...prev,
+    const nextDraft = {
+      ...draft,
       remote_bitrate_mode: mode,
       remote_bitrate: nextBitrate,
-    }));
+    };
+    persistStreamDraft(nextDraft);
   };
 
   const handleCodecChange = (type: "local" | "remote", codec: string) => {
     if (type === "local") {
-      setDraft((prev) => ({ ...prev, codec }));
+      const nextDraft = { ...draft, codec };
+      persistStreamDraft(nextDraft);
       return;
     }
 
-    setDraft((prev) => ({ ...prev, remote_codec: codec }));
+    const nextDraft = { ...draft, remote_codec: codec };
+    persistStreamDraft(nextDraft);
   };
 
   const handleFpsChange = (type: "local" | "remote", fps: number) => {
     if (type === "local") {
-      setDraft((prev) => ({ ...prev, fps }));
+      const nextDraft = { ...draft, fps };
+      persistStreamDraft(nextDraft);
       return;
     }
 
-    setDraft((prev) => ({ ...prev, remote_fps: fps }));
+    const nextDraft = { ...draft, remote_fps: fps };
+    persistStreamDraft(nextDraft);
   };
 
   const handleBitrateSliderChange = (
@@ -272,38 +285,17 @@ function SettingsPage() {
     const bitrate = Math.min(100000, Math.max(1000, getSliderValue(value) * 1000));
 
     if (type === "local") {
-      setDraft((prev) => ({ ...prev, bitrate }));
+      const nextDraft = { ...draft, bitrate };
+      persistStreamDraft(nextDraft);
       return;
     }
 
-    setDraft((prev) => ({ ...prev, remote_bitrate: bitrate }));
+    const nextDraft = { ...draft, remote_bitrate: bitrate };
+    persistStreamDraft(nextDraft);
   };
 
   const handleResetStreamSettings = () => {
-    syncDraft(defaultDraft);
-  };
-
-  const handleSaveStreamSettings = () => {
-    const nextDraft: BasicStreamDraft = {
-      ...draft,
-      bitrate: ensureBitrateForMode(draft.resolution, draft.bitrate_mode, draft.bitrate),
-      remote_bitrate: ensureBitrateForMode(
-        draft.remote_resolution,
-        draft.remote_bitrate_mode,
-        draft.remote_bitrate
-      ),
-    };
-
-    syncDraft(nextDraft);
-    setSettings({
-      ...settings,
-      ...nextDraft,
-    });
-
-    addToast({
-      title: t("Saved"),
-      color: "success",
-    });
+    persistStreamDraft(defaultDraft);
   };
 
   const handleResetAppSettings = () => {
@@ -704,13 +696,6 @@ function SettingsPage() {
               <Button variant="flat" onPress={handleResetStreamSettings}>
                 {t("Reset stream settings")}
               </Button>
-              <Button
-                color="primary"
-                onPress={handleSaveStreamSettings}
-                isDisabled={!isDirty}
-              >
-                {t("Save changes")}
-              </Button>
             </CardBody>
           </Card>
         </div>
@@ -718,20 +703,28 @@ function SettingsPage() {
     );
   };
 
-  const renderOtherActionCard = (item: any) => {
+  const renderOtherActionCard = (item: any, compact = false) => {
     const description =
       item.action === "check-update"
         ? `${item.description} ${pkg.version}`
         : item.description;
 
     return (
-      <Card className="setting-item" key={item.name}>
-        <CardBody>
-          <div className="setting-title">{item.title}</div>
-          {description ? (
-            <div className="setting-description">{description}</div>
-          ) : null}
+      <Card
+        className={compact ? "h-full" : "setting-item"}
+        key={item.name}
+      >
+        <CardBody className={compact ? "flex flex-col gap-3 md:flex-row md:items-center md:justify-between" : ""}>
+          <div className={compact ? "min-w-0 flex-1" : ""}>
+            <div className="setting-title">{item.title}</div>
+            {description ? (
+              <div className="setting-description">{description}</div>
+            ) : null}
+          </div>
           <Button
+            size={compact ? "sm" : "md"}
+            radius={compact ? "full" : "md"}
+            className={compact ? "self-start md:self-center md:min-w-[112px]" : ""}
             color={item.color || "primary"}
             isLoading={item.action === "check-update" && isChecking}
             onPress={() => handleOtherAction(item)}
@@ -807,12 +800,11 @@ function SettingsPage() {
           </Tab>
 
           <Tab key="Others" title={t("Others")}>
-            {otherMetas.map((item) => (
-              <div key={item.name}>
-                {renderOtherActionCard(item)}
-                {item.name === "gamepad_tester" ? <KeyboardMap /> : null}
-              </div>
-            ))}
+            <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {otherMetas.map((item) => renderOtherActionCard(item, true))}
+            </div>
+
+            {otherMetas.some((item) => item.name === "gamepad_tester") ? <KeyboardMap /> : null}
           </Tab>
         </Tabs>
       </Layout>

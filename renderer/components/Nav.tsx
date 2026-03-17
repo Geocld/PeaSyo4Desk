@@ -19,6 +19,15 @@ type NavProps = {
   isLogined?: boolean;
 };
 
+
+const CloseIcon = () => {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+    </svg>
+  );
+};
+
 const getCurrentSection = (
   pathname: string,
   current?: NavSection
@@ -128,7 +137,7 @@ const Nav = ({ current }: NavProps) => {
         {renderBrandInfo()}
       </NavbarBrand>
 
-      <NavbarContent as="div" justify="end" className="flex-1 basis-0 gap-2">
+      <NavbarContent as="div" justify="end" className="flex-1 basis-0 gap-5">
         {showBackToSettings ? (
           <Button
             size="sm"
@@ -140,7 +149,7 @@ const Nav = ({ current }: NavProps) => {
           </Button>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-5">
           {navItems.map((item) => {
             const isActive = item.key === currentSection;
 
@@ -160,16 +169,21 @@ const Nav = ({ current }: NavProps) => {
           })}
         </div>
 
-        <Button
+        <Button size="sm" isIconOnly aria-label="close" color="danger" onPress={handleExit}>
+          <CloseIcon />
+        </Button>
+
+        {/* <Button
           size="sm"
           radius="full"
           color="danger"
           variant="flat"
-          className="font-medium"
+          className="min-w-0 px-3 font-semibold"
+          aria-label={t("Exit")}
           onPress={handleExit}
         >
-          {t("Exit")}
-        </Button>
+          x
+        </Button> */}
       </NavbarContent>
 
     </Navbar >
