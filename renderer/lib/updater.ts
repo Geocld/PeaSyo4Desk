@@ -7,6 +7,8 @@ const CHECK_URL = 'https://api.github.com/repos/Geocld/PeaSyo4Desk/releases';
 const updater = () => {
   const {version} = pkg;
   return new Promise(resolve => {
+    resolve(false); // Disable update check for now
+    return;
     axios
       .get(CHECK_URL, {timeout: 30 * 1000})
       .then(res => {
