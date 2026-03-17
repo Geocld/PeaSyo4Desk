@@ -1257,7 +1257,7 @@ const createSession = (sessionOptions: any) => {
       }
     },
     onLog: (event) => {
-      console.log(`[chiaki:${event.levelChar}]`, event.message);
+      // console.log(`[chiaki:${event.levelChar}]`, event.message);
     },
     onVideoSample: (sample) => {
       const sampleFramesLost = Number(sample?.framesLost);
@@ -1272,6 +1272,9 @@ const createSession = (sessionOptions: any) => {
     onAudioFrame: (frame) => {
       dispatchAudioFrame(frame.data);
     },
+    onHapticsFrame: (frame) => {
+      console.log("Received haptics frame:", frame);
+    }
   });
 };
 
