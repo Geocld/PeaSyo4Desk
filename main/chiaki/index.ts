@@ -28,6 +28,19 @@ const runtimeRequire =
 let loadError: unknown = null;
 const attemptedLocalPaths: string[] = [];
 
+const pushCandidateDir = (
+  dirs: string[],
+  seen: Set<string>,
+  value: string | null | undefined
+) => {
+  const normalized = String(value || "").trim();
+  if (!normalized || seen.has(normalized)) {
+    return;
+  }
+  seen.add(normalized);
+  dirs.push(normalized);
+};
+
 const isMusl = () => {
   if (!process.report || typeof process.report.getReport !== "function") {
     try {
@@ -78,25 +91,43 @@ const tryLoad = (specifier: string) => {
   }
 };
 
+const getCandidateDirs = () => {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  const resourcesPath = String(process.resourcesPath || "").trim();
+
+  // Production builds load native addons from Electron's resources directory.
+  pushCandidateDir(dirs, seen, resourcesPath && path.resolve(resourcesPath, "chiaki"));
+  pushCandidateDir(
+    dirs,
+    seen,
+    resourcesPath && path.resolve(resourcesPath, "app.asar.unpacked", "main", "chiaki")
+  );
+  pushCandidateDir(
+    dirs,
+    seen,
+    resourcesPath && path.resolve(resourcesPath, "app", "main", "chiaki")
+  );
+
+  // Development and unpacked builds may resolve relative to the compiled main bundle.
+  pushCandidateDir(dirs, seen, __dirname);
+  pushCandidateDir(dirs, seen, path.resolve(__dirname, "..", "main", "chiaki"));
+  pushCandidateDir(dirs, seen, path.resolve(__dirname, "..", "..", "main", "chiaki"));
+
+  // Fallbacks when launched from the repository root.
+  pushCandidateDir(dirs, seen, path.resolve(process.cwd(), "main", "chiaki"));
+  pushCandidateDir(dirs, seen, path.resolve(process.cwd(), "app", "main", "chiaki"));
+
+  return dirs;
+};
+
 const loadBinding = () => {
   const target = resolveDesktopTarget();
   const localFile = LOCAL_ADDON_FILE_BY_TARGET[target];
+  const candidateDirs = getCandidateDirs();
 
-  const candidateDirs = [
-    __dirname,
-    path.resolve(__dirname, "..", "main", "chiaki"),
-    path.resolve(__dirname, "..", "..", "main", "chiaki"),
-    path.resolve(process.cwd(), "main", "chiaki"),
-    path.resolve(process.cwd(), "app", "main", "chiaki"),
-  ];
-
-  const seen = new Set<string>();
   for (const dir of candidateDirs) {
     const localBindingPath = path.resolve(dir, localFile);
-    if (seen.has(localBindingPath)) {
-      continue;
-    }
-    seen.add(localBindingPath);
     attemptedLocalPaths.push(localBindingPath);
 
     if (existsSync(localBindingPath)) {
@@ -122,7 +153,10 @@ const loadBinding = () => {
       ? `\nTried local paths:\n- ${attemptedLocalPaths.join("\n- ")}`
       : "";
   throw new Error(
-    `Failed to load native addon '${ADDON_BASE_NAME}' for target '${target}'.${cause}${localPathInfo}`
+    `Failed to load native addon '${ADDON_BASE_NAME}' for target '${target}'.` +
+      `\nresourcesPath: ${String(process.resourcesPath || "-")}` +
+      `\ncwd: ${process.cwd()}` +
+      `${cause}${localPathInfo}`
   );
 };
 
