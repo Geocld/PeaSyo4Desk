@@ -6,6 +6,19 @@ module.exports = {
   
     // main process' webpack config
     webpack: (config, env) => {
+        const optionalWsNativeDeps = {
+            bufferutil: "commonjs bufferutil",
+            "utf-8-validate": "commonjs utf-8-validate",
+        }
+
+        if (Array.isArray(config.externals)) {
+            config.externals.push(optionalWsNativeDeps)
+        } else if (config.externals) {
+            config.externals = [config.externals, optionalWsNativeDeps]
+        } else {
+            config.externals = [optionalWsNativeDeps]
+        }
+
         config.entry.background = './main/application.ts'
         config.entry.preload = './main/preload.ts'
         config.module.rules.push({
