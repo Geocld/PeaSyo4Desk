@@ -8,7 +8,10 @@ import Loading from "../../components/Loading";
 import Perform from "../../components/Perform";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
+import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
+import { triggerGamepadRumbleFromChiaki } from "../../lib/gamepadRumble";
+import { handleGamepadTriggerEffectsFromChiaki } from "../../lib/gamepadTriggerEffects";
 import Ipc from "../../lib/ipc";
 
 const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
@@ -1339,7 +1342,13 @@ function StreamPage() {
                     : { name: msg?.name || "unknown" };
                 const eventName = String(sessionEvent.name || msg?.name || "unknown");
 
-                if (eventName === "connected") {
+                if (eventName === "rumble") {
+                  triggerGamepadRumbleFromChiaki(sessionEvent);
+                } else if (eventName === "trigger_effects") {
+                  handleGamepadTriggerEffectsFromChiaki(sessionEvent);
+                } else if (eventName === "led_color") {
+                  handleGamepadLedColorFromChiaki(sessionEvent);
+                } else if (eventName === "connected") {
                   sessionConnectedRef.current = true;
                   setConnectState("connected");
                   setStatus(t("Connected"));
