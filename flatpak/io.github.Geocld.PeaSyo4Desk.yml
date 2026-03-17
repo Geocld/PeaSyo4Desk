@@ -33,7 +33,7 @@ modules:
       - yarn --offline
       - yarn run flatpak-build --offline -- --linux
       # Add icon, metadata and desktop file
-      - install -Dm 644 resources/PeaSyo.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
+      - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/${FLATPAK_ID}.png
       - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm 644 flatpak/io.github.Geocld.PeaSyo4Desk.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.appdata.xml
       # Bundle app and dependencies
