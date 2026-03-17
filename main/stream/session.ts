@@ -1,9 +1,10 @@
 import http from "node:http";
 import crypto from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
 import ffmpeg from "fluent-ffmpeg";
-import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import WS from "ws";
 import chiaki from "../chiaki";
 
@@ -68,7 +69,29 @@ const BUTTON_NAME_TO_MASK = {
 };
 
 const WebSocketServerCtor = (WS as any).WebSocketServer || (WS as any).Server;
-const ffmpegPath = (ffmpegInstaller as any).path;
+
+type FfmpegDesktopTarget =
+  | "darwin-arm64"
+  | "darwin-x64"
+  | "linux-arm64"
+  | "linux-x64"
+  | "win32-x64";
+
+const FFMPEG_BINARY_NAME = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+const FFMPEG_PACKAGE_DIR_BY_TARGET: Record<FfmpegDesktopTarget, string> = {
+  "darwin-arm64": "darwin-arm64",
+  "darwin-x64": "darwin-x64",
+  "linux-arm64": "linux-arm64",
+  "linux-x64": "linux-x64",
+  "win32-x64": "win32-x64",
+};
+
+declare const __non_webpack_require__: undefined | ((id: string) => any);
+const runtimeRequire =
+  typeof __non_webpack_require__ === "function"
+    ? __non_webpack_require__
+    : // eslint-disable-next-line no-eval
+      (0, eval)("require");
 
 type StreamSessionSettings = {
   resolution?: number;
@@ -156,6 +179,7 @@ const wsClients = new Set<any>();
 const wsClientPressedButtons = new Map<any, Set<string>>();
 
 let initialized = false;
+let resolvedFfmpegPath: string | null = null;
 let streamHttpServer: http.Server | null = null;
 let streamWebSocketServer: any = null;
 let streamWebSocketPort = 0;
@@ -232,6 +256,112 @@ const log = (...args) => {
   console.log("[stream-service]", ...args);
 };
 
+const isExistingFile = (filePath: string) => {
+  try {
+    return existsSync(filePath) && statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const pushUniqueCandidatePath = (
+  paths: string[],
+  seen: Set<string>,
+  value: string | null | undefined
+) => {
+  const nextValue = String(value || "").trim();
+  if (!nextValue || seen.has(nextValue)) {
+    return;
+  }
+
+  seen.add(nextValue);
+  paths.push(nextValue);
+};
+
+const resolveFfmpegDesktopTarget = (): FfmpegDesktopTarget => {
+  const target = `${process.platform}-${process.arch}`;
+  if (target === "darwin-arm64") return "darwin-arm64";
+  if (target === "darwin-x64") return "darwin-x64";
+  if (target === "linux-arm64") return "linux-arm64";
+  if (target === "linux-x64") return "linux-x64";
+  if (target === "win32-x64") return "win32-x64";
+  throw new Error(`Unsupported FFmpeg target: ${target}`);
+};
+
+const resolvePackagedFfmpegPath = () => {
+  const target = resolveFfmpegDesktopTarget();
+  const packageDir = FFMPEG_PACKAGE_DIR_BY_TARGET[target];
+  return path.resolve(
+    String(process.resourcesPath || ""),
+    "ffmpeg-installer",
+    packageDir,
+    FFMPEG_BINARY_NAME
+  );
+};
+
+const resolveFfmpegPath = () => {
+  if (resolvedFfmpegPath && isExistingFile(resolvedFfmpegPath)) {
+    return resolvedFfmpegPath;
+  }
+
+  const target = resolveFfmpegDesktopTarget();
+  const packageDir = FFMPEG_PACKAGE_DIR_BY_TARGET[target];
+  const candidatePaths: string[] = [];
+  const seen = new Set<string>();
+
+  pushUniqueCandidatePath(candidatePaths, seen, resolvePackagedFfmpegPath());
+  pushUniqueCandidatePath(
+    candidatePaths,
+    seen,
+    path.resolve(
+      String(process.resourcesPath || ""),
+      "app.asar.unpacked",
+      "node_modules",
+      "@ffmpeg-installer",
+      packageDir,
+      FFMPEG_BINARY_NAME
+    )
+  );
+  pushUniqueCandidatePath(
+    candidatePaths,
+    seen,
+    path.resolve(process.cwd(), "node_modules", "@ffmpeg-installer", packageDir, FFMPEG_BINARY_NAME)
+  );
+  pushUniqueCandidatePath(
+    candidatePaths,
+    seen,
+    path.resolve(__dirname, "..", "..", "node_modules", "@ffmpeg-installer", packageDir, FFMPEG_BINARY_NAME)
+  );
+
+  try {
+    const installer = runtimeRequire("@ffmpeg-installer/ffmpeg");
+    const installerPath = String(installer?.path || "").trim();
+    pushUniqueCandidatePath(candidatePaths, seen, installerPath);
+    if (installerPath.includes("app.asar")) {
+      pushUniqueCandidatePath(
+        candidatePaths,
+        seen,
+        installerPath.replace("app.asar", "app.asar.unpacked")
+      );
+    }
+  } catch {
+    // Ignore lookup failures here and continue with explicit path probing.
+  }
+
+  for (const candidatePath of candidatePaths) {
+    if (!isExistingFile(candidatePath)) {
+      continue;
+    }
+
+    resolvedFfmpegPath = candidatePath;
+    return candidatePath;
+  }
+
+  throw new Error(
+    `FFmpeg executable was not found for target '${target}'. Tried:\n- ${candidatePaths.join("\n- ")}`
+  );
+};
+
 const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -282,14 +412,16 @@ const serializeSessionEvent = (event: any) => {
 
 const ensureInitialized = () => {
   if (initialized) return;
-  initialized = true;
 
-  if (ffmpegPath) {
-    ffmpeg.setFfmpegPath(ffmpegPath);
-  }
+  const nextFfmpegPath = resolveFfmpegPath();
+  ffmpeg.setFfmpegPath(nextFfmpegPath);
+  log("using ffmpeg binary:", nextFfmpegPath);
+
   if (typeof (chiaki as any).init === "function") {
     (chiaki as any).init();
   }
+
+  initialized = true;
 };
 
 const resolveResolution = (resolution: number) => {

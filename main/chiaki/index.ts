@@ -160,6 +160,43 @@ const loadBinding = () => {
   );
 };
 
-const binding = loadBinding();
+let bindingCache: any = null;
+
+const getBinding = () => {
+  if (!bindingCache) {
+    bindingCache = loadBinding();
+  }
+
+  return bindingCache;
+};
+
+const binding = new Proxy(
+  {},
+  {
+    get(_target, prop, receiver) {
+      return Reflect.get(getBinding(), prop, receiver);
+    },
+    set(_target, prop, value, receiver) {
+      return Reflect.set(getBinding(), prop, value, receiver);
+    },
+    has(_target, prop) {
+      return prop in getBinding();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(getBinding());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const descriptor = Object.getOwnPropertyDescriptor(getBinding(), prop);
+      if (!descriptor) {
+        return undefined;
+      }
+
+      return {
+        ...descriptor,
+        configurable: true,
+      };
+    },
+  }
+);
 
 export default binding;
