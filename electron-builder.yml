@@ -48,6 +48,7 @@ dmg:
 # Windows configuration
 win:
   icon: resources/icon.ico
+  signAndEditExecutable: false
   target:
     - "zip"
     - "nsis"
