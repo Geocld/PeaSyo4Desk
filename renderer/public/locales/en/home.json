@@ -66,6 +66,8 @@
   "Local console is powered on, starting stream...": "Local console is powered on, starting stream...",
   "Local console is in standby, sending wakeup packet...": "Local console is in standby, sending wakeup packet...",
   "Waiting for local console to wake up...": "Waiting for local console to wake up...",
+  "Local console was not discovered, sending wakeup packets...": "Local console was not discovered, sending wakeup packets...",
+  "Wakeup packets sent, waiting for local console to wake up...": "Wakeup packets sent, waiting for local console to wake up...",
   "Local console was not discovered, trying direct connect...": "Local console was not discovered, trying direct connect...",
   "Failed to prepare local stream.": "Failed to prepare local stream.",
   "Local wakeup packet sent.": "Local wakeup packet sent.",
