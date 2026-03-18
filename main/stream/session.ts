@@ -12,7 +12,9 @@ const STREAM_WS_HOST = "127.0.0.1";
 const STREAM_WS_PATH = "/stream";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
-const MAX_CLIENT_BACKLOG_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
+const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
+const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const SDR_STREAM_FORMAT = "I420";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "yuv420p";
@@ -213,6 +215,8 @@ let audioHeaderInfo: null | {
 let audioDecoderInput: PassThrough | null = null;
 let audioDecoderCommand: any = null;
 let audioDecoderOutput: any = null;
+const audioInputQueue: Buffer[] = [];
+let audioInputQueuedBytes = 0;
 const audioPendingChunks: Buffer[] = [];
 let audioPendingBytes = 0;
 let audioInputBlocked = false;
@@ -679,17 +683,22 @@ const broadcastTypedBinary = (kind: number, payload: Buffer) => {
     return;
   }
 
-  const packet = Buffer.concat([Buffer.from([kind]), payload]);
+  const packet = Buffer.allocUnsafe(1 + payload.length);
+  packet[0] = kind & 0xff;
+  payload.copy(packet, 1);
+  const backlogLimit =
+    kind === WS_BINARY_AUDIO ? MAX_AUDIO_CLIENT_BACKLOG_BYTES : MAX_VIDEO_CLIENT_BACKLOG_BYTES;
+
   for (const client of wsClients) {
     if (!client || client.readyState !== 1) {
       continue;
     }
-    if ((client as any).bufferedAmount > MAX_CLIENT_BACKLOG_BYTES) {
+    if ((client as any).bufferedAmount > backlogLimit) {
       continue;
     }
 
     try {
-      client.send(packet, { binary: true });
+      client.send(packet, { binary: true, compress: false });
     } catch {
       // ignore send failures, socket lifecycle handlers will clean it up
     }
@@ -793,6 +802,12 @@ const startSocketServer = async () => {
   websocketServer.on("connection", (socket) => {
     wsClients.add(socket);
     wsClientPressedButtons.set(socket, new Set());
+
+    try {
+      socket?._socket?.setNoDelay?.(true);
+    } catch {
+      // ignore socket tuning failures
+    }
 
     sendWsText(socket, { type: "connected", ts: Date.now() });
     sendVideoConfigToClient(socket);
@@ -1052,9 +1067,62 @@ const buildOpusTagsPacket = () => {
   return packet;
 };
 
-const writeAudioInput = (data: Buffer) => {
+const resetAudioInputQueue = () => {
+  audioInputQueue.length = 0;
+  audioInputQueuedBytes = 0;
+};
+
+const trimAudioInputQueue = () => {
+  while (audioInputQueuedBytes > MAX_PENDING_AUDIO_INPUT_BYTES && audioInputQueue.length > 0) {
+    const dropped = audioInputQueue.shift();
+    if (!dropped) {
+      continue;
+    }
+    audioInputQueuedBytes -= dropped.length;
+  }
+
+  if (audioInputQueuedBytes < 0) {
+    audioInputQueuedBytes = 0;
+  }
+};
+
+const flushQueuedAudioInput = () => {
   if (!audioDecoderInput || !audioDecoderInput.writable || audioInputBlocked) {
+    return;
+  }
+
+  while (audioInputQueue.length > 0 && audioDecoderInput && audioDecoderInput.writable && !audioInputBlocked) {
+    const nextPage = audioInputQueue.shift();
+    if (!nextPage) {
+      continue;
+    }
+
+    audioInputQueuedBytes -= nextPage.length;
+    const ok = audioDecoderInput.write(nextPage);
+    if (!ok) {
+      audioInputBlocked = true;
+      audioDecoderInput.once("drain", () => {
+        audioInputBlocked = false;
+        flushQueuedAudioInput();
+      });
+    }
+  }
+
+  if (audioInputQueuedBytes < 0) {
+    audioInputQueuedBytes = 0;
+  }
+};
+
+const writeAudioInput = (data: Buffer) => {
+  if (!audioDecoderInput || !audioDecoderInput.writable) {
     return false;
+  }
+
+  if (audioInputBlocked) {
+    audioInputQueue.push(data);
+    audioInputQueuedBytes += data.length;
+    trimAudioInputQueue();
+    return true;
   }
 
   const ok = audioDecoderInput.write(data);
@@ -1062,6 +1130,7 @@ const writeAudioInput = (data: Buffer) => {
     audioInputBlocked = true;
     audioDecoderInput.once("drain", () => {
       audioInputBlocked = false;
+      flushQueuedAudioInput();
     });
   }
   return true;
@@ -1110,6 +1179,7 @@ const resetAudioPending = () => {
 
 const destroyAudioPipeline = () => {
   resetAudioPending();
+  resetAudioInputQueue();
   audioInputBlocked = false;
 
   if (audioDecoderInput) {

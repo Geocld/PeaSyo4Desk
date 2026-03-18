@@ -18,6 +18,10 @@ const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
+const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
+const AUDIO_SCHEDULE_LEAD_SEC = 0.12;
+const AUDIO_MAX_BUFFER_SEC = 0.3;
+const AUDIO_EDGE_FADE_SEC = 0.002;
 const SHORT_PS_PRESS_MS = 150;
 const LONG_PS_PRESS_MS = 1000;
 
@@ -115,6 +119,52 @@ type HdrWebglRenderer = {
   width: number;
   height: number;
 };
+
+type SdrWebglRenderer = {
+  gl: WebGL2RenderingContext;
+  program: WebGLProgram;
+  vertexArray: WebGLVertexArrayObject;
+  vertexBuffer: WebGLBuffer;
+  yTexture: WebGLTexture;
+  uTexture: WebGLTexture;
+  vTexture: WebGLTexture;
+  width: number;
+  height: number;
+};
+
+const SDR_VERTEX_SHADER_SOURCE = `#version 300 es
+in vec2 a_position;
+in vec2 a_texCoord;
+out vec2 v_texCoord;
+
+void main() {
+  v_texCoord = a_texCoord;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+const SDR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+in vec2 v_texCoord;
+uniform sampler2D u_texY;
+uniform sampler2D u_texU;
+uniform sampler2D u_texV;
+out vec4 outColor;
+
+void main() {
+  float y = texture(u_texY, v_texCoord).r;
+  float u = texture(u_texU, v_texCoord).r - 0.5;
+  float v = texture(u_texV, v_texCoord).r - 0.5;
+
+  float c = max(y - 0.062745098, 0.0) * 1.16438356;
+  float r = c + 1.59602678 * v;
+  float g = c - 0.39176229 * u - 0.81296764 * v;
+  float b = c + 2.01723214 * u;
+
+  outColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), 1.0);
+}
+`;
 
 const HDR_VERTEX_SHADER_SOURCE = `#version 300 es
 in vec2 a_position;
@@ -360,6 +410,8 @@ function StreamPage() {
   const latestFrameRef = useRef<Uint8Array | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
+  const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
+  const sdrGpuRenderingDisabledRef = useRef(false);
   const hdrRendererRef = useRef<HdrWebglRenderer | null>(null);
 
   const receivedFramesRef = useRef(0);
@@ -477,6 +529,9 @@ function StreamPage() {
     audioAvailableRef.current = available;
     setAudioAvailable(available);
     if (!available) {
+      nextAudioTimeRef.current = 0;
+      pendingAudioQueueRef.current = [];
+      pendingAudioBytesRef.current = 0;
       setAudioMutedState(false);
       return;
     }
@@ -560,6 +615,22 @@ function StreamPage() {
     renderingContext.ctx.putImageData(renderingContext.imageData, 0, 0);
   };
 
+  const destroySdrRenderer = () => {
+    const renderer = sdrRendererRef.current;
+    if (!renderer) {
+      return;
+    }
+
+    const { gl } = renderer;
+    gl.deleteTexture(renderer.yTexture);
+    gl.deleteTexture(renderer.uTexture);
+    gl.deleteTexture(renderer.vTexture);
+    gl.deleteBuffer(renderer.vertexBuffer);
+    gl.deleteVertexArray(renderer.vertexArray);
+    gl.deleteProgram(renderer.program);
+    sdrRendererRef.current = null;
+  };
+
   const destroyHdrRenderer = () => {
     const renderer = hdrRendererRef.current;
     if (!renderer) {
@@ -576,7 +647,7 @@ function StreamPage() {
     hdrRendererRef.current = null;
   };
 
-  const compileHdrShader = (
+  const compileWebglShader = (
     gl: WebGL2RenderingContext,
     type: number,
     source: string
@@ -595,6 +666,38 @@ function StreamPage() {
     }
 
     return shader;
+  };
+
+  const createSdrTexture = (
+    gl: WebGL2RenderingContext,
+    textureUnit: number,
+    width: number,
+    height: number
+  ) => {
+    const texture = gl.createTexture();
+    if (!texture) {
+      throw new Error("Failed to create SDR texture.");
+    }
+
+    gl.activeTexture(textureUnit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.R8,
+      width,
+      height,
+      0,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      null
+    );
+
+    return texture;
   };
 
   const createHdrTexture = (
@@ -629,6 +732,100 @@ function StreamPage() {
     return texture;
   };
 
+  const createSdrRenderer = (width: number, height: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return null;
+    }
+
+    const gl = canvas.getContext("webgl2", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+      desynchronized: true,
+    });
+    if (!gl) {
+      return null;
+    }
+
+    const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, SDR_VERTEX_SHADER_SOURCE);
+    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, SDR_FRAGMENT_SHADER_SOURCE);
+    const program = gl.createProgram();
+    if (!program) {
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      throw new Error("Failed to create SDR program.");
+    }
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const error = gl.getProgramInfoLog(program) || "Unknown SDR shader link error.";
+      gl.deleteProgram(program);
+      throw new Error(error);
+    }
+
+    const vertexArray = gl.createVertexArray();
+    const vertexBuffer = gl.createBuffer();
+    if (!vertexArray || !vertexBuffer) {
+      if (vertexArray) gl.deleteVertexArray(vertexArray);
+      if (vertexBuffer) gl.deleteBuffer(vertexBuffer);
+      gl.deleteProgram(program);
+      throw new Error("Failed to create SDR vertex buffers.");
+    }
+
+    gl.bindVertexArray(vertexArray);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        -1, -1, 0, 1,
+        1, -1, 1, 1,
+        -1, 1, 0, 0,
+        -1, 1, 0, 0,
+        1, -1, 1, 1,
+        1, 1, 1, 0,
+      ]),
+      gl.STATIC_DRAW
+    );
+
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
+
+    const yTexture = createSdrTexture(gl, gl.TEXTURE0, width, height);
+    const uTexture = createSdrTexture(gl, gl.TEXTURE1, width >> 1, height >> 1);
+    const vTexture = createSdrTexture(gl, gl.TEXTURE2, width >> 1, height >> 1);
+
+    gl.useProgram(program);
+    gl.uniform1i(gl.getUniformLocation(program, "u_texY"), 0);
+    gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
+    gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.viewport(0, 0, width, height);
+
+    return {
+      gl,
+      program,
+      vertexArray,
+      vertexBuffer,
+      yTexture,
+      uTexture,
+      vTexture,
+      width,
+      height,
+    };
+  };
+
   const createHdrRenderer = (width: number, height: number) => {
     const canvas = hdrCanvasRef.current;
     if (!canvas) {
@@ -646,8 +843,8 @@ function StreamPage() {
       throw new Error("WebGL2 is unavailable.");
     }
 
-    const vertexShader = compileHdrShader(gl, gl.VERTEX_SHADER, HDR_VERTEX_SHADER_SOURCE);
-    const fragmentShader = compileHdrShader(gl, gl.FRAGMENT_SHADER, HDR_FRAGMENT_SHADER_SOURCE);
+    const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, HDR_VERTEX_SHADER_SOURCE);
+    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, HDR_FRAGMENT_SHADER_SOURCE);
     const program = gl.createProgram();
     if (!program) {
       gl.deleteShader(vertexShader);
@@ -735,6 +932,99 @@ function StreamPage() {
     const nextRenderer = createHdrRenderer(width, height);
     hdrRendererRef.current = nextRenderer;
     return nextRenderer;
+  };
+
+  const ensureSdrRenderer = () => {
+    if (sdrGpuRenderingDisabledRef.current) {
+      return null;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const renderer = sdrRendererRef.current;
+
+    if (renderer && renderer.width === width && renderer.height === height) {
+      return renderer;
+    }
+
+    destroySdrRenderer();
+
+    try {
+      const nextRenderer = createSdrRenderer(width, height);
+      if (!nextRenderer) {
+        sdrGpuRenderingDisabledRef.current = true;
+        return null;
+      }
+      sdrRendererRef.current = nextRenderer;
+      return nextRenderer;
+    } catch (error) {
+      destroySdrRenderer();
+      sdrGpuRenderingDisabledRef.current = true;
+      console.warn("[stream] Failed to initialize SDR WebGL renderer, fallback to CPU:", error);
+      return null;
+    }
+  };
+
+  const drawI420Gpu = (frameBytes: Uint8Array) => {
+    const renderer = ensureSdrRenderer();
+    if (!renderer) {
+      return false;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const yPlaneSize = width * height;
+    const uvWidth = width >> 1;
+    const uvHeight = height >> 1;
+    const uvPlaneSize = uvWidth * uvHeight;
+
+    if (frameBytes.byteLength < yPlaneSize + uvPlaneSize * 2) {
+      return false;
+    }
+
+    const yPlane = frameBytes.subarray(0, yPlaneSize);
+    const uPlane = frameBytes.subarray(yPlaneSize, yPlaneSize + uvPlaneSize);
+    const vPlane = frameBytes.subarray(yPlaneSize + uvPlaneSize, yPlaneSize + uvPlaneSize * 2);
+
+    const { gl } = renderer;
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(renderer.program);
+    gl.bindVertexArray(renderer.vertexArray);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.yTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RED, gl.UNSIGNED_BYTE, yPlane);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.uTexture);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      uvWidth,
+      uvHeight,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      uPlane
+    );
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.vTexture);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      uvWidth,
+      uvHeight,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      vPlane
+    );
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    return true;
   };
 
   const drawI010HdrFrame = (frameBytes: Uint8Array) => {
@@ -843,18 +1133,38 @@ function StreamPage() {
     }
 
     const now = audioContext.currentTime;
-    if (nextAudioTimeRef.current < now + 0.04) {
-      nextAudioTimeRef.current = now + 0.04;
+    const targetStartTime = now + AUDIO_SCHEDULE_LEAD_SEC;
+    if (nextAudioTimeRef.current < targetStartTime) {
+      nextAudioTimeRef.current = targetStartTime;
     }
-    if (nextAudioTimeRef.current - now > 0.8) {
-      nextAudioTimeRef.current = now + 0.04;
+    if (nextAudioTimeRef.current - now > AUDIO_MAX_BUFFER_SEC) {
+      nextAudioTimeRef.current = targetStartTime;
       audioDroppedChunksRef.current += 1;
     }
 
     const source = audioContext.createBufferSource();
+    const chunkGain = audioContext.createGain();
+    const chunkStartTime = nextAudioTimeRef.current;
+    const chunkEndTime = chunkStartTime + audioBuffer.duration;
+    const fadeDuration = Math.min(
+      AUDIO_EDGE_FADE_SEC,
+      Math.max(audioBuffer.duration / 4, 0)
+    );
+
     source.buffer = audioBuffer;
-    source.connect(audioGainNodeRef.current || audioContext.destination);
-    source.start(nextAudioTimeRef.current);
+    source.connect(chunkGain);
+    chunkGain.connect(audioGainNodeRef.current || audioContext.destination);
+
+    if (fadeDuration > 0) {
+      chunkGain.gain.setValueAtTime(0, chunkStartTime);
+      chunkGain.gain.linearRampToValueAtTime(1, chunkStartTime + fadeDuration);
+      chunkGain.gain.setValueAtTime(1, Math.max(chunkStartTime, chunkEndTime - fadeDuration));
+      chunkGain.gain.linearRampToValueAtTime(0, chunkEndTime);
+    } else {
+      chunkGain.gain.setValueAtTime(1, chunkStartTime);
+    }
+
+    source.start(chunkStartTime);
     nextAudioTimeRef.current += audioBuffer.duration;
     audioPlayedChunksRef.current += 1;
 
@@ -866,7 +1176,9 @@ function StreamPage() {
       const buf = pendingAudioQueueRef.current.shift();
       if (!buf) continue;
       pendingAudioBytesRef.current -= buf.byteLength;
-      playAudioChunk(buf);
+      if (!playAudioChunk(buf)) {
+        audioDroppedChunksRef.current += 1;
+      }
     }
     if (pendingAudioBytesRef.current < 0) {
       pendingAudioBytesRef.current = 0;
@@ -939,7 +1251,7 @@ function StreamPage() {
         setStatus(t("AudioContextNotSupported"));
         return;
       }
-      audioContextRef.current = new Ctx({ latencyHint: "interactive" });
+      audioContextRef.current = new Ctx({ latencyHint: AUDIO_CONTEXT_LATENCY_SEC });
     }
 
     if (!audioGainNodeRef.current && audioContextRef.current) {
@@ -1246,7 +1558,10 @@ function StreamPage() {
         if (videoFormatRef.current === "I010") {
           drawI010HdrFrame(frame);
         } else {
-          drawI420Cpu(frame);
+          const renderedWithGpu = drawI420Gpu(frame);
+          if (!renderedWithGpu) {
+            drawI420Cpu(frame);
+          }
         }
 
         renderedFramesRef.current += 1;
@@ -1284,6 +1599,10 @@ function StreamPage() {
         videoReadyRef.current = false;
         sessionErrorHandledRef.current = false;
         audioPlaybackEnabledRef.current = false;
+        nextAudioTimeRef.current = 0;
+        pendingAudioQueueRef.current = [];
+        pendingAudioBytesRef.current = 0;
+        sdrGpuRenderingDisabledRef.current = false;
         clearConnectedFeedbackTimers();
         setVideoReady(false);
         setAudioMutedState(false);
@@ -1489,6 +1808,10 @@ function StreamPage() {
       audioUnlockedRef.current = false;
       audioAvailableRef.current = false;
       audioPlaybackEnabledRef.current = false;
+      nextAudioTimeRef.current = 0;
+      pendingAudioQueueRef.current = [];
+      pendingAudioBytesRef.current = 0;
+      sdrGpuRenderingDisabledRef.current = false;
       clearPressedKeyboardKeys();
       sessionConnectedRef.current = false;
       videoReadyRef.current = false;
@@ -1496,6 +1819,7 @@ function StreamPage() {
       latestFrameRef.current = null;
       videoFormatRef.current = "I420";
       setVideoFormat("I420");
+      destroySdrRenderer();
       destroyHdrRenderer();
       setVideoReady(false);
 
