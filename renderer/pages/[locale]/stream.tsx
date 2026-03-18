@@ -448,6 +448,7 @@ function StreamPage() {
   const audioStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
   const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
+  const nativeBinaryTransportRef = useRef(false);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -1219,9 +1220,7 @@ function StreamPage() {
       droppedFramesRef.current += 1;
     }
 
-    const frame = new Uint8Array(frameBytes.byteLength);
-    frame.set(frameBytes);
-    latestFrameRef.current = frame;
+    latestFrameRef.current = frameBytes;
   };
 
   const handleBinaryPacket = (packetBytes: Uint8Array) => {
@@ -1603,6 +1602,7 @@ function StreamPage() {
         pendingAudioQueueRef.current = [];
         pendingAudioBytesRef.current = 0;
         sdrGpuRenderingDisabledRef.current = false;
+        nativeBinaryTransportRef.current = false;
         clearConnectedFeedbackTimers();
         setVideoReady(false);
         setAudioMutedState(false);
@@ -1654,9 +1654,37 @@ function StreamPage() {
         });
         if (!active) return;
 
+        const prefersNativeBinary = serverInfo?.binaryTransport === "electron-ipc";
+        nativeBinaryTransportRef.current = false;
+
         const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
         wsUrlRef.current = url;
         setStatus(t("Connecting..."));
+
+        const rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
+          if (!active || !prefersNativeBinary) {
+            return;
+          }
+
+          nativeBinaryTransportRef.current = true;
+
+          const kind = Number(message?.kind || 0);
+          const buffer = message?.buffer;
+          const byteOffset = Number(message?.byteOffset || 0);
+          const byteLength = Number(message?.byteLength || 0);
+          if (!(buffer instanceof ArrayBuffer) || byteLength < 1) {
+            return;
+          }
+
+          const packet = new Uint8Array(buffer, byteOffset, byteLength);
+          if (kind === WS_BINARY_VIDEO) {
+            handleVideoFrameBytes(packet);
+            return;
+          }
+          if (kind === WS_BINARY_AUDIO) {
+            handleAudioFrameBytes(packet);
+          }
+        });
 
         const socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
@@ -1731,11 +1759,17 @@ function StreamPage() {
           }
 
           if (event.data instanceof ArrayBuffer) {
+            if (nativeBinaryTransportRef.current) {
+              return;
+            }
             handleBinaryPacket(new Uint8Array(event.data));
             return;
           }
 
           if (event.data instanceof Blob) {
+            if (nativeBinaryTransportRef.current) {
+              return;
+            }
             event.data
               .arrayBuffer()
               .then((ab) => {
@@ -1767,6 +1801,12 @@ function StreamPage() {
             socketRef.current = null;
           }
         };
+
+        return () => {
+          if (rawStreamListener) {
+            Ipc.removeListener("stream-binary", rawStreamListener);
+          }
+        };
       } catch (error: any) {
         setStatus(
           t("StartSessionFailedWithReason", {
@@ -1777,7 +1817,16 @@ function StreamPage() {
       }
     };
 
-    start();
+    let cleanupRawListener: null | (() => void) = null;
+    start().then((cleanup) => {
+      if (typeof cleanup === "function") {
+        if (!active) {
+          cleanup();
+        } else {
+          cleanupRawListener = cleanup;
+        }
+      }
+    });
     rafRef.current = requestAnimationFrame(renderLoop);
     statsTimerRef.current = setInterval(updateStats, 1000);
 
@@ -1799,6 +1848,11 @@ function StreamPage() {
       socketRef.current = null;
       lastControlStateKeyRef.current = "";
       clearConnectedFeedbackTimers();
+      nativeBinaryTransportRef.current = false;
+      if (cleanupRawListener) {
+        cleanupRawListener();
+        cleanupRawListener = null;
+      }
 
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => undefined);

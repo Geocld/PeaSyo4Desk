@@ -36,6 +36,18 @@ export default {
     return window.PeaSyo.onAction(channel, action, listener);
   },
 
+  onRaw(channel: string, listener) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.onRaw === "function") {
+      return window.PeaSyo.onRaw(channel, listener);
+    }
+
+    return null;
+  },
+
   removeListener(channel: string, listener) {
     if (window.PeaSyo === undefined) {
       // Electron API Not available. Lets mock!
@@ -67,6 +79,9 @@ export default {
       onAction(channel, action, listener) {
         // console.log('PeaSyoAPI onAction()', channel, action, listener)
         return this._websocket.onAction(channel, action, listener);
+      },
+      onRaw() {
+        return null;
       },
       removeListener(channel, listener) {
         // console.log('PeaSyoAPI removeListener()', channel, listener)

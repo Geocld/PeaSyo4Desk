@@ -1245,6 +1245,7 @@ export default class IpcApp extends IpcBase {
     return StreamSessionService.startSession({
       ...data,
       settings,
+      targetWebContents: this._application._mainWindow?.webContents || null,
     });
   }
 

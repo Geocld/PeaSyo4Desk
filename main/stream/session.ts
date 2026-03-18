@@ -4,6 +4,7 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
+import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
 import chiaki from "../chiaki";
@@ -127,6 +128,7 @@ type StartStreamSessionArgs = {
     bitrate?: number;
     codec?: string | number;
   };
+  targetWebContents?: WebContents | null;
   consoleInfo?: {
     rpRegistKey?: string;
     rpKey?: string;
@@ -185,6 +187,7 @@ let resolvedFfmpegPath: string | null = null;
 let streamHttpServer: http.Server | null = null;
 let streamWebSocketServer: any = null;
 let streamWebSocketPort = 0;
+let streamWebContents: WebContents | null = null;
 
 let streamSession: any = null;
 let streamSessionStarted = false;
@@ -678,8 +681,37 @@ const broadcastAudioConfig = () => {
   }
 };
 
+const canUseNativeStreamBinary = () => {
+  return !!streamWebContents && !streamWebContents.isDestroyed();
+};
+
 const broadcastTypedBinary = (kind: number, payload: Buffer) => {
-  if (wsClients.size < 1 || !payload || payload.length < 1) {
+  if (!payload || payload.length < 1) {
+    return;
+  }
+
+  if (canUseNativeStreamBinary()) {
+    try {
+      const webContents = streamWebContents as WebContents;
+      const transferBuffer = payload.buffer as ArrayBuffer;
+      webContents.postMessage(
+        "stream-binary",
+        {
+          kind,
+          buffer: transferBuffer,
+          byteOffset: payload.byteOffset,
+          byteLength: payload.byteLength,
+        },
+        [transferBuffer]
+      );
+      return;
+    } catch (error) {
+      log("native stream binary postMessage failed:", (error as any)?.message || String(error));
+      streamWebContents = null;
+    }
+  }
+
+  if (wsClients.size < 1) {
     return;
   }
 
@@ -902,6 +934,10 @@ const stopSocketServer = async () => {
   return { stopped: true };
 };
 
+const attachStreamWebContents = (webContents: WebContents | null | undefined) => {
+  streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
+};
+
 const destroyVideoPipeline = () => {
   pendingChunks.length = 0;
   pendingBytes = 0;
@@ -946,7 +982,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
 
   while (pendingBytes >= frameSize) {
     const decodeFrameStart = performance.now();
-    const frame = Buffer.allocUnsafe(frameSize);
+    const frame = Buffer.allocUnsafeSlow(frameSize);
     let copied = 0;
     while (copied < frameSize && pendingChunks.length > 0) {
       const head = pendingChunks[0];
@@ -1212,7 +1248,7 @@ const handleAudioDecodedChunk = (chunk: Buffer) => {
   audioPendingBytes += chunk.length;
 
   while (audioPendingBytes >= audioChunkBytes) {
-    const pcm = Buffer.allocUnsafe(audioChunkBytes);
+    const pcm = Buffer.allocUnsafeSlow(audioChunkBytes);
     let copied = 0;
     while (copied < audioChunkBytes && audioPendingChunks.length > 0) {
       const head = audioPendingChunks[0];
@@ -1434,6 +1470,7 @@ const cleanupSessionOnly = () => {
 
   streamSession = null;
   streamSessionStarted = false;
+  streamWebContents = null;
   streamVideoConfig = null;
 
   destroyVideoPipeline();
@@ -1650,6 +1687,7 @@ const gotoBedAndStop = async (closeSocketServer = true) => {
 
 const startSession = async (args: StartStreamSessionArgs) => {
   ensureInitialized();
+  attachStreamWebContents(args.targetWebContents);
   const wsInfo = await startSocketServer();
 
   if (streamSession || streamSessionStarted) {
@@ -1685,10 +1723,12 @@ const startSession = async (args: StartStreamSessionArgs) => {
     ...wsInfo,
     video: streamVideoConfig,
     audioEnabled: !!audioHeaderInfo,
+    binaryTransport: canUseNativeStreamBinary() ? "electron-ipc" : "websocket",
   };
 };
 
 export const StreamSessionService = {
+  attachStreamWebContents,
   startSocketServer,
   stopSocketServer,
   startSession,

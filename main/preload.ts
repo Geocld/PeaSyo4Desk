@@ -60,6 +60,11 @@ export const Preload = {
         return wrapEvent
     },
 
+    onRaw(channel:string, listener){
+        ipcRenderer.on(channel, listener)
+        return listener
+    },
+
     removeListener(channel:string, listener){
         ipcRenderer.removeListener(channel, listener)
     },
