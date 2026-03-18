@@ -1191,17 +1191,6 @@ export default class IpcApp extends IpcBase {
     });
   }
 
-  getOnlineFriends() {
-    return new Promise((resolve) => {
-      if (this._application._xboxWorker === undefined) {
-        // Worker is not loaded yet..
-        resolve([]);
-      } else {
-        resolve(this._application._xboxWorker._onlineFriends);
-      }
-    });
-  }
-
   onUiShown() {
     return new Promise((resolve) => {
       resolve({});

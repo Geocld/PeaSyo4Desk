@@ -7,7 +7,7 @@ export default function Document() {
       <Head></Head>
       <body>
         <Main />
-        <NextScript />
+        <NextScript/>
       </body>
     </Html>
   );
