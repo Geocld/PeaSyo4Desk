@@ -95,10 +95,10 @@ const mapDiscoveredConsole = (item: any): DiscoveredConsole => {
 };
 
 const LOCAL_WAKEUP_RETRY_INTERVAL_MS = 2000;
-const LOCAL_WAKEUP_FALLBACK_WAIT_MS = 20000;
+const LOCAL_WAKEUP_FALLBACK_WAIT_MS = 5000;
 const LOCAL_AWAKE_CONFIRM_DELAY_MS = 5000;
 const LOCAL_WAKEUP_POLL_INTERVAL_MS = 2000;
-const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 30000;
+const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 10000;
 
 export default function StartStreamModals(props: StartStreamModalsProps) {
   const { t } = useTranslation("home");
@@ -266,6 +266,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       const nextConsoleInfo = syncMatchedLocalConsole(nextHost, matchedConsole);
       const stateName = normalizeStateName(matchedConsole?.stateName);
 
+      console.log('stateName:', stateName)
       if (stateName === "AWAKE") {
         console.log("[home] Local console already awake:", {
           localHost,

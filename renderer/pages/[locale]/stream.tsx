@@ -106,7 +106,7 @@ type ControllerStatePayload = {
   rightY: number;
 };
 
-type VideoFrameFormat = "I420" | "I010";
+type VideoFrameFormat = "I420" | "NV12" | "I010";
 
 type HdrWebglRenderer = {
   gl: WebGL2RenderingContext;
@@ -125,9 +125,11 @@ type SdrWebglRenderer = {
   program: WebGLProgram;
   vertexArray: WebGLVertexArrayObject;
   vertexBuffer: WebGLBuffer;
+  format: "I420" | "NV12";
   yTexture: WebGLTexture;
-  uTexture: WebGLTexture;
-  vTexture: WebGLTexture;
+  uTexture: WebGLTexture | null;
+  vTexture: WebGLTexture | null;
+  uvTexture: WebGLTexture | null;
   width: number;
   height: number;
 };
@@ -161,6 +163,27 @@ void main() {
   float r = c + 1.59602678 * v;
   float g = c - 0.39176229 * u - 0.81296764 * v;
   float b = c + 2.01723214 * u;
+
+  outColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), 1.0);
+}
+`;
+
+const SDR_NV12_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+in vec2 v_texCoord;
+uniform sampler2D u_texY;
+uniform sampler2D u_texUV;
+out vec4 outColor;
+
+void main() {
+  float y = texture(u_texY, v_texCoord).r;
+  vec2 uv = texture(u_texUV, v_texCoord).rg - vec2(0.5, 0.5);
+
+  float c = max(y - 0.062745098, 0.0) * 1.16438356;
+  float r = c + 1.59602678 * uv.y;
+  float g = c - 0.39176229 * uv.x - 0.81296764 * uv.y;
+  float b = c + 2.01723214 * uv.x;
 
   outColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), 1.0);
 }
@@ -388,7 +411,7 @@ function StreamPage() {
   const [audioMuted, setAudioMuted] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
-  const [videoFormat, setVideoFormat] = useState<VideoFrameFormat>("I420");
+  const [videoFormat, setVideoFormat] = useState<VideoFrameFormat>("NV12");
   const [sessionAlert, setSessionAlert] = useState<{
     title: string;
     content: string;
@@ -406,7 +429,7 @@ function StreamPage() {
   const heightRef = useRef(720);
   const fpsRef = useRef(60);
   const frameSizeRef = useRef(Math.floor((1280 * 720 * 3) / 2));
-  const videoFormatRef = useRef<VideoFrameFormat>("I420");
+  const videoFormatRef = useRef<VideoFrameFormat>("NV12");
   const latestFrameRef = useRef<Uint8Array | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
@@ -481,7 +504,8 @@ function StreamPage() {
     const width = Number(config?.width || widthRef.current);
     const height = Number(config?.height || heightRef.current);
     const fps = Number(config?.fps || fpsRef.current);
-    const format = config?.format === "I010" ? "I010" : "I420";
+    const format =
+      config?.format === "I010" ? "I010" : config?.format === "NV12" ? "NV12" : "I420";
     const frameSize =
       Number(config?.frameSize) ||
       (format === "I010" ? width * height * 3 : Math.floor((width * height * 3) / 2));
@@ -509,6 +533,8 @@ function StreamPage() {
 
     if (format !== "I010") {
       destroyHdrRenderer();
+    } else {
+      destroySdrRenderer();
     }
 
     if (format === "I010" && !window.WebGL2RenderingContext) {
@@ -616,6 +642,44 @@ function StreamPage() {
     renderingContext.ctx.putImageData(renderingContext.imageData, 0, 0);
   };
 
+  const drawNv12Cpu = (frameBytes: Uint8Array) => {
+    const renderingContext = ensure2dContext();
+    if (!renderingContext) {
+      return;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const yPlaneSize = width * height;
+    const output = renderingContext.imageData.data;
+
+    let outIndex = 0;
+    for (let y = 0; y < height; y += 1) {
+      const yRow = y * width;
+      const uvRow = yPlaneSize + (y >> 1) * width;
+      for (let x = 0; x < width; x += 1) {
+        const yVal = frameBytes[yRow + x];
+        const uvIndex = uvRow + (x & ~1);
+        const uVal = frameBytes[uvIndex];
+        const vVal = frameBytes[uvIndex + 1];
+
+        const c = yVal - 16;
+        const d = uVal - 128;
+        const e = vVal - 128;
+        const r = (298 * c + 409 * e + 128) >> 8;
+        const g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+        const b = (298 * c + 516 * d + 128) >> 8;
+
+        output[outIndex++] = clamp(r);
+        output[outIndex++] = clamp(g);
+        output[outIndex++] = clamp(b);
+        output[outIndex++] = 255;
+      }
+    }
+
+    renderingContext.ctx.putImageData(renderingContext.imageData, 0, 0);
+  };
+
   const destroySdrRenderer = () => {
     const renderer = sdrRendererRef.current;
     if (!renderer) {
@@ -624,8 +688,9 @@ function StreamPage() {
 
     const { gl } = renderer;
     gl.deleteTexture(renderer.yTexture);
-    gl.deleteTexture(renderer.uTexture);
-    gl.deleteTexture(renderer.vTexture);
+    if (renderer.uTexture) gl.deleteTexture(renderer.uTexture);
+    if (renderer.vTexture) gl.deleteTexture(renderer.vTexture);
+    if (renderer.uvTexture) gl.deleteTexture(renderer.uvTexture);
     gl.deleteBuffer(renderer.vertexBuffer);
     gl.deleteVertexArray(renderer.vertexArray);
     gl.deleteProgram(renderer.program);
@@ -669,11 +734,13 @@ function StreamPage() {
     return shader;
   };
 
-  const createSdrTexture = (
+  const createSdrPlaneTexture = (
     gl: WebGL2RenderingContext,
     textureUnit: number,
     width: number,
-    height: number
+    height: number,
+    internalFormat: number,
+    format: number
   ) => {
     const texture = gl.createTexture();
     if (!texture) {
@@ -689,11 +756,11 @@ function StreamPage() {
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
-      gl.R8,
+      internalFormat,
       width,
       height,
       0,
-      gl.RED,
+      format,
       gl.UNSIGNED_BYTE,
       null
     );
@@ -733,7 +800,11 @@ function StreamPage() {
     return texture;
   };
 
-  const createSdrRenderer = (width: number, height: number) => {
+  const createSdrRenderer = (
+    width: number,
+    height: number,
+    format: "I420" | "NV12"
+  ) => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return null;
@@ -752,7 +823,11 @@ function StreamPage() {
     }
 
     const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, SDR_VERTEX_SHADER_SOURCE);
-    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, SDR_FRAGMENT_SHADER_SOURCE);
+    const fragmentShader = compileWebglShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      format === "NV12" ? SDR_NV12_FRAGMENT_SHADER_SOURCE : SDR_FRAGMENT_SHADER_SOURCE
+    );
     const program = gl.createProgram();
     if (!program) {
       gl.deleteShader(vertexShader);
@@ -803,14 +878,28 @@ function StreamPage() {
     gl.enableVertexAttribArray(texCoordLocation);
     gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
 
-    const yTexture = createSdrTexture(gl, gl.TEXTURE0, width, height);
-    const uTexture = createSdrTexture(gl, gl.TEXTURE1, width >> 1, height >> 1);
-    const vTexture = createSdrTexture(gl, gl.TEXTURE2, width >> 1, height >> 1);
+    const yTexture = createSdrPlaneTexture(gl, gl.TEXTURE0, width, height, gl.R8, gl.RED);
+    const uTexture =
+      format === "NV12"
+        ? null
+        : createSdrPlaneTexture(gl, gl.TEXTURE1, width >> 1, height >> 1, gl.R8, gl.RED);
+    const vTexture =
+      format === "NV12"
+        ? null
+        : createSdrPlaneTexture(gl, gl.TEXTURE2, width >> 1, height >> 1, gl.R8, gl.RED);
+    const uvTexture =
+      format === "NV12"
+        ? createSdrPlaneTexture(gl, gl.TEXTURE1, width >> 1, height >> 1, gl.RG8, gl.RG)
+        : null;
 
     gl.useProgram(program);
     gl.uniform1i(gl.getUniformLocation(program, "u_texY"), 0);
-    gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
-    gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
+    if (format === "NV12") {
+      gl.uniform1i(gl.getUniformLocation(program, "u_texUV"), 1);
+    } else {
+      gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
+      gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
+    }
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.viewport(0, 0, width, height);
 
@@ -819,9 +908,11 @@ function StreamPage() {
       program,
       vertexArray,
       vertexBuffer,
+      format,
       yTexture,
       uTexture,
       vTexture,
+      uvTexture,
       width,
       height,
     };
@@ -942,16 +1033,22 @@ function StreamPage() {
 
     const width = widthRef.current;
     const height = heightRef.current;
+    const format = videoFormatRef.current === "NV12" ? "NV12" : "I420";
     const renderer = sdrRendererRef.current;
 
-    if (renderer && renderer.width === width && renderer.height === height) {
+    if (
+      renderer &&
+      renderer.width === width &&
+      renderer.height === height &&
+      renderer.format === format
+    ) {
       return renderer;
     }
 
     destroySdrRenderer();
 
     try {
-      const nextRenderer = createSdrRenderer(width, height);
+      const nextRenderer = createSdrRenderer(width, height, format);
       if (!nextRenderer) {
         sdrGpuRenderingDisabledRef.current = true;
         return null;
@@ -968,7 +1065,7 @@ function StreamPage() {
 
   const drawI420Gpu = (frameBytes: Uint8Array) => {
     const renderer = ensureSdrRenderer();
-    if (!renderer) {
+    if (!renderer || renderer.format !== "I420" || !renderer.uTexture || !renderer.vTexture) {
       return false;
     }
 
@@ -1022,6 +1119,53 @@ function StreamPage() {
       gl.RED,
       gl.UNSIGNED_BYTE,
       vPlane
+    );
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    return true;
+  };
+
+  const drawNv12Gpu = (frameBytes: Uint8Array) => {
+    const renderer = ensureSdrRenderer();
+    if (!renderer || renderer.format !== "NV12" || !renderer.uvTexture) {
+      return false;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const yPlaneSize = width * height;
+    const uvWidth = width >> 1;
+    const uvHeight = height >> 1;
+    const uvPlaneSize = width * (height >> 1);
+
+    if (frameBytes.byteLength < yPlaneSize + uvPlaneSize) {
+      return false;
+    }
+
+    const yPlane = frameBytes.subarray(0, yPlaneSize);
+    const uvPlane = frameBytes.subarray(yPlaneSize, yPlaneSize + uvPlaneSize);
+
+    const { gl } = renderer;
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(renderer.program);
+    gl.bindVertexArray(renderer.vertexArray);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.yTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RED, gl.UNSIGNED_BYTE, yPlane);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.uvTexture);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      uvWidth,
+      uvHeight,
+      gl.RG,
+      gl.UNSIGNED_BYTE,
+      uvPlane
     );
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -1556,6 +1700,11 @@ function StreamPage() {
       try {
         if (videoFormatRef.current === "I010") {
           drawI010HdrFrame(frame);
+        } else if (videoFormatRef.current === "NV12") {
+          const renderedWithGpu = drawNv12Gpu(frame);
+          if (!renderedWithGpu) {
+            drawNv12Cpu(frame);
+          }
         } else {
           const renderedWithGpu = drawI420Gpu(frame);
           if (!renderedWithGpu) {
@@ -1871,8 +2020,8 @@ function StreamPage() {
       videoReadyRef.current = false;
       sessionErrorHandledRef.current = false;
       latestFrameRef.current = null;
-      videoFormatRef.current = "I420";
-      setVideoFormat("I420");
+      videoFormatRef.current = "NV12";
+      setVideoFormat("NV12");
       destroySdrRenderer();
       destroyHdrRenderer();
       setVideoReady(false);

@@ -16,9 +16,9 @@ const WS_BINARY_AUDIO = 2;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
-const SDR_STREAM_FORMAT = "I420";
+const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
-const SDR_PIXEL_FORMAT = "yuv420p";
+const SDR_PIXEL_FORMAT = "nv12";
 const HDR_PIXEL_FORMAT = "yuv420p10le";
 
 const BUTTONS = (chiaki as any).controllerButtons || {
@@ -494,6 +494,20 @@ const resolveInputFormat = (codec: number) => {
     return "h264";
   }
   return "h264";
+};
+
+const getVideoDecoderInputOptions = () => {
+  const options: string[] = [
+    "-fflags +genpts",
+  ];
+
+  // Prefer platform hardware decoding when available. `auto` falls back to software
+  // on machines where no supported accelerator exists.
+  if (process.platform === "win32" || process.platform === "darwin") {
+    options.push("-hwaccel auto");
+  }
+
+  return options;
 };
 
 const resolveOutputFormat = (
@@ -1037,7 +1051,7 @@ const createVideoDecodePipeline = () => {
 
   ffmpegCommand = ffmpeg(ffmpegInput)
     .inputFormat(streamVideoConfig.inputFormat)
-    .inputOptions("-fflags", "+genpts")
+    .inputOptions(getVideoDecoderInputOptions())
     .outputOptions("-fflags", "nobuffer")
     .outputOptions("-flags", "low_delay")
     .outputOptions("-an")
