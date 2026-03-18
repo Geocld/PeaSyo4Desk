@@ -243,6 +243,16 @@ const controllerState = {
 };
 const controllerButtonRefCounts = new Map<string, number>();
 
+type ControllerStatePayload = {
+  buttons?: unknown;
+  l2State?: unknown;
+  r2State?: unknown;
+  leftX?: unknown;
+  leftY?: unknown;
+  rightX?: unknown;
+  rightY?: unknown;
+};
+
 const OGG_CRC_TABLE = (() => {
   const table = new Uint32Array(256);
   for (let i = 0; i < 256; i += 1) {
@@ -779,8 +789,7 @@ const handleWsControlText = (socket: any, message: any) => {
   }
 };
 
-const handleWsControlState = (message: any) => {
-  const state = message?.state;
+const applyControllerState = (state: ControllerStatePayload | null | undefined, reason: string) => {
   if (!state || typeof state !== "object") {
     return;
   }
@@ -793,7 +802,15 @@ const handleWsControlState = (message: any) => {
   controllerState.rightX = clampInt(state.rightX, -32768, 32767);
   controllerState.rightY = clampInt(state.rightY, -32768, 32767);
 
-  pushControllerState("ws:state");
+  pushControllerState(reason);
+};
+
+const handleWsControlState = (message: any) => {
+  applyControllerState(message?.state, "ws:state");
+};
+
+const setControllerStateDirect = (state: ControllerStatePayload) => {
+  applyControllerState(state, "ipc:state");
 };
 
 const onWsMessage = (socket: any, raw: Buffer) => {
@@ -1746,6 +1763,7 @@ export const StreamSessionService = {
   startSocketServer,
   stopSocketServer,
   startSession,
+  setControllerStateDirect,
   stopSession,
   gotoBedAndStop,
   getPerformanceStats,

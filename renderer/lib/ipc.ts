@@ -48,6 +48,19 @@ export default {
     return null;
   },
 
+  sendStreamControllerState(state) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamControllerState === "function") {
+      window.PeaSyo.sendStreamControllerState(state);
+      return true;
+    }
+
+    return false;
+  },
+
   removeListener(channel: string, listener) {
     if (window.PeaSyo === undefined) {
       // Electron API Not available. Lets mock!
@@ -82,6 +95,9 @@ export default {
       },
       onRaw() {
         return null;
+      },
+      sendStreamControllerState() {
+        return false;
       },
       removeListener(channel, listener) {
         // console.log('PeaSyoAPI removeListener()', channel, listener)

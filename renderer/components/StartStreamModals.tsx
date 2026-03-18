@@ -266,8 +266,8 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       const nextConsoleInfo = syncMatchedLocalConsole(nextHost, matchedConsole);
       const stateName = normalizeStateName(matchedConsole?.stateName);
 
-      console.log('stateName:', stateName)
-      if (stateName === "AWAKE") {
+      console.log('stateName11111:', stateName)
+      if (stateName === "READY") {
         console.log("[home] Local console already awake:", {
           localHost,
           matchedConsole,

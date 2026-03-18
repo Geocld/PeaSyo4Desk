@@ -65,6 +65,10 @@ export const Preload = {
         return listener
     },
 
+    sendStreamControllerState(state){
+        ipcRenderer.send("stream-control-state", state)
+    },
+
     removeListener(channel:string, listener){
         ipcRenderer.removeListener(channel, listener)
     },

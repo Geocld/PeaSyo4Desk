@@ -24,6 +24,8 @@ const AUDIO_MAX_BUFFER_SEC = 0.3;
 const AUDIO_EDGE_FADE_SEC = 0.002;
 const SHORT_PS_PRESS_MS = 150;
 const LONG_PS_PRESS_MS = 1000;
+const MIN_CONTROLLER_POLLING_RATE = 30;
+const MAX_CONTROLLER_POLLING_RATE = 1000;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -400,6 +402,20 @@ const isEditableKeyboardTarget = (target: EventTarget | null) => {
   return KEYBOARD_INPUT_TAGS.has(target.tagName) || target.isContentEditable;
 };
 
+const buildControllerStateKey = (state: ControllerStatePayload) => {
+  return `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}`;
+};
+
+const resolveControllerPollingIntervalMs = (pollingRate: unknown) => {
+  const numericRate = Number(pollingRate);
+  const rate = Number.isFinite(numericRate) ? numericRate : defaultSettings.polling_rate;
+  const clampedRate = Math.max(
+    MIN_CONTROLLER_POLLING_RATE,
+    Math.min(MAX_CONTROLLER_POLLING_RATE, rate)
+  );
+  return Math.max(1, 1000 / clampedRate);
+};
+
 function StreamPage() {
   const { t } = useTranslation("stream");
   const router = useRouter();
@@ -421,6 +437,7 @@ function StreamPage() {
   const hdrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const rafRef = useRef<number | null>(null);
+  const inputLoopTimerRef = useRef<number | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsUrlRef = useRef("");
   const statsTextRef = useRef("");
@@ -472,6 +489,11 @@ function StreamPage() {
   const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
   const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
   const nativeBinaryTransportRef = useRef(false);
+  const controlTransportReadyRef = useRef(false);
+  const controllerPollingIntervalMsRef = useRef(
+    resolveControllerPollingIntervalMs(defaultSettings.polling_rate)
+  );
+  const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -495,6 +517,12 @@ function StreamPage() {
       settings?.input_mousekeyboard_maping
     );
   }, [settings?.input_mousekeyboard_maping]);
+
+  useEffect(() => {
+    controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
+      settings?.polling_rate
+    );
+  }, [settings?.polling_rate]);
 
   const clearPressedKeyboardKeys = () => {
     keyboardPressedKeysRef.current.clear();
@@ -1490,7 +1518,12 @@ function StreamPage() {
       return 0;
     }
     const clamped = Math.max(-1, Math.min(1, value));
-    if (Math.abs(clamped) < GAMEPAD_DEADZONE) {
+    const configuredDeadZone = Number(settings?.dead_zone);
+    const deadZone =
+      Number.isFinite(configuredDeadZone) && configuredDeadZone >= 0 && configuredDeadZone < 1
+        ? configuredDeadZone
+        : GAMEPAD_DEADZONE;
+    if (Math.abs(clamped) < deadZone) {
       return 0;
     }
     return clamped;
@@ -1522,13 +1555,23 @@ function StreamPage() {
   };
 
   const sendControllerState = (state: ControllerStatePayload) => {
-    const ws = socketRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!controlTransportReadyRef.current || disconnectingRef.current) {
       return;
     }
 
-    const stateKey = `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}`;
+    const stateKey = buildControllerStateKey(state);
     if (stateKey === lastControlStateKeyRef.current) {
+      return;
+    }
+
+    if (Ipc.sendStreamControllerState(state)) {
+      lastControlStateKeyRef.current = stateKey;
+      controlSendCountRef.current += 1;
+      return;
+    }
+
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
@@ -1546,7 +1589,7 @@ function StreamPage() {
     }
   };
 
-  const pollAndSendGamepadState = () => {
+  const buildMergedControllerState = () => {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
     let validCount = 0;
 
@@ -1653,7 +1696,11 @@ function StreamPage() {
     mergedState.rightY = toSignedAxis(rightYNorm);
 
     validGamepadCountRef.current = validCount;
-    sendControllerState(mergedState);
+    return mergedState;
+  };
+
+  pollAndSendControllerStateRef.current = () => {
+    sendControllerState(buildMergedControllerState());
   };
 
   const updateStats = () => {
@@ -1692,8 +1739,6 @@ function StreamPage() {
   };
 
   const renderLoop = () => {
-    pollAndSendGamepadState();
-
     const frame = latestFrameRef.current;
     if (frame) {
       latestFrameRef.current = null;
@@ -1752,6 +1797,7 @@ function StreamPage() {
         pendingAudioBytesRef.current = 0;
         sdrGpuRenderingDisabledRef.current = false;
         nativeBinaryTransportRef.current = false;
+        controlTransportReadyRef.current = false;
         clearConnectedFeedbackTimers();
         setVideoReady(false);
         setAudioMutedState(false);
@@ -1805,6 +1851,7 @@ function StreamPage() {
 
         const prefersNativeBinary = serverInfo?.binaryTransport === "electron-ipc";
         nativeBinaryTransportRef.current = false;
+        controlTransportReadyRef.current = true;
 
         const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
         wsUrlRef.current = url;
@@ -1936,6 +1983,7 @@ function StreamPage() {
 
         socket.onclose = (closeEvent) => {
           if (!active) return;
+          controlTransportReadyRef.current = false;
           if (!disconnectingRef.current) {
             if (sessionErrorHandledRef.current) {
               setStatus(t("WebSocketClosedStatus"));
@@ -1996,6 +2044,7 @@ function StreamPage() {
       }
       socketRef.current = null;
       lastControlStateKeyRef.current = "";
+      controlTransportReadyRef.current = false;
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
       if (cleanupRawListener) {
@@ -2032,6 +2081,35 @@ function StreamPage() {
   }, [t]);
 
   useEffect(() => {
+    let active = true;
+    let nextTickAt = performance.now();
+
+    const runTick = () => {
+      if (!active) {
+        return;
+      }
+
+      pollAndSendControllerStateRef.current();
+
+      const intervalMs = controllerPollingIntervalMsRef.current;
+      const now = performance.now();
+      nextTickAt = Math.max(nextTickAt + intervalMs, now);
+      const delayMs = Math.max(0, nextTickAt - now);
+      inputLoopTimerRef.current = window.setTimeout(runTick, delayMs);
+    };
+
+    runTick();
+
+    return () => {
+      active = false;
+      if (inputLoopTimerRef.current !== null) {
+        window.clearTimeout(inputLoopTimerRef.current);
+        inputLoopTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const unlockAudio = () => {
       if (audioAvailableRef.current && !audioUnlockedRef.current) {
         void ensureAudioContext(false);
@@ -2065,6 +2143,8 @@ function StreamPage() {
       } else {
         keyboardPressedKeysRef.current.delete(event.key);
       }
+
+      pollAndSendControllerStateRef.current();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2080,6 +2160,7 @@ function StreamPage() {
 
     const clearKeyboardState = () => {
       clearPressedKeyboardKeys();
+      pollAndSendControllerStateRef.current();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -2091,6 +2172,7 @@ function StreamPage() {
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", clearKeyboardState);
       clearPressedKeyboardKeys();
+      pollAndSendControllerStateRef.current();
     };
   }, []);
 
@@ -2102,6 +2184,7 @@ function StreamPage() {
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
     clearPressedKeyboardKeys();
+    pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting..."));
@@ -2168,6 +2251,7 @@ function StreamPage() {
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
     clearPressedKeyboardKeys();
+    pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting and putting console into standby..."));
@@ -2198,7 +2282,6 @@ function StreamPage() {
   };
 
   const handleSessionAlertConfirm = async () => {
-    setSessionAlert(null);
     await handleDisconnect();
   };
 
@@ -2249,7 +2332,7 @@ function StreamPage() {
         />
       </div>
 
-      {!shouldShowVideo ? (
+      {!shouldShowVideo && !sessionAlert ? (
         <Loading loadingText={status || t("Connecting...")} />
       ) : null}
     </div>

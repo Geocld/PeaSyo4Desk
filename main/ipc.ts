@@ -1,6 +1,7 @@
 import Application from './application'
 import IpcApp from './ipc/app'
 import IpcSettings from './ipc/settings'
+import { StreamSessionService } from './stream/session'
 
 import { ipcMain } from 'electron'
 
@@ -28,6 +29,10 @@ export default class Ipc {
                 this._channels[channel].onEvent(channel, event, args) 
             })
         }
+
+        ipcMain.on("stream-control-state", (_event, state) => {
+            StreamSessionService.setControllerStateDirect(state)
+        })
         
     }
 
