@@ -331,7 +331,6 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           startPreparedLocalStream(preparedHost, preparedConsoleInfo, true);
         }
       } else {
-        setInfoText(t("Local console was not discovered, sending wakeup packets..."));
         await sendWakeup(localHost);
         await wait(LOCAL_WAKEUP_RETRY_INTERVAL_MS);
         await sendWakeup(localHost);
@@ -430,7 +429,6 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         consoleId: props.consoleItem?.consoleId,
       });
 
-      setInfoText(t("Remote wakeup sent, waiting 35 seconds..."));
       await wait(35000);
       if (props.consoleItem) {
         props.onStartPrepared({
@@ -529,7 +527,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
                 onPress={() => setStep("mode")}
                 isDisabled={loadingType !== null}
               >
-                {t("Back to mode")}
+                {t("Back")}
               </Button>
               <Button
                 variant="flat"

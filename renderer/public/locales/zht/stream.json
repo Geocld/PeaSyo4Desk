@@ -3,7 +3,7 @@
   "Session error": "串流工作階段錯誤",
   "Connected": "已連線",
   "Connecting...": "連線中...",
-  "Disconnecting...": "中斷連線中...",
+  "Disconnecting...": "正在中斷連線...",
   "Disconnecting and putting console into standby...": "正在中斷並將主機設為待機...",
   "Failed to put console into standby.": "主機待機失敗。",
   "EventLabel": "事件",
