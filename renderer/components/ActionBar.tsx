@@ -49,11 +49,6 @@ function ActionBar(props) {
     props.onAdjustFsr && props.onAdjustFsr();
   };
 
-  const disconnectPowerActionLabel =
-    props.type === "remoteplay"
-      ? t("Disconnect and standby")
-      : t("Disconnect and power off");
-
   return (
     <div id="actionBar">
       <Dropdown>
@@ -122,8 +117,8 @@ function ActionBar(props) {
                 className="text-danger"
                 color="danger"
                 onClick={handleDisconnectAndPoweroff}
-              >
-                {disconnectPowerActionLabel}
+              >"
+                {t("Disconnect and standby")}
               </DropdownItem>
             )
           }
