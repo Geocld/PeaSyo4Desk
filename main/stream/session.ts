@@ -252,6 +252,8 @@ type ControllerStatePayload = {
   rightX?: unknown;
   rightY?: unknown;
 };
+let pendingDirectControllerState: ControllerStatePayload | null = null;
+let directControllerStateFlushScheduled = false;
 
 const OGG_CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -809,8 +811,25 @@ const handleWsControlState = (message: any) => {
   applyControllerState(message?.state, "ws:state");
 };
 
-const setControllerStateDirect = (state: ControllerStatePayload) => {
+const flushPendingDirectControllerState = () => {
+  directControllerStateFlushScheduled = false;
+  const state = pendingDirectControllerState;
+  pendingDirectControllerState = null;
   applyControllerState(state, "ipc:state");
+};
+
+const setControllerStateDirect = (state: ControllerStatePayload) => {
+  if (!state || typeof state !== "object") {
+    return;
+  }
+
+  pendingDirectControllerState = { ...state };
+  if (directControllerStateFlushScheduled) {
+    return;
+  }
+
+  directControllerStateFlushScheduled = true;
+  setImmediate(flushPendingDirectControllerState);
 };
 
 const onWsMessage = (socket: any, raw: Buffer) => {
@@ -1478,6 +1497,8 @@ const cleanupSessionOnly = () => {
   controllerState.leftY = 0;
   controllerState.rightX = 0;
   controllerState.rightY = 0;
+  pendingDirectControllerState = null;
+  directControllerStateFlushScheduled = false;
 
   if (streamSession) {
     try {

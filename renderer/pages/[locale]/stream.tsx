@@ -47,6 +47,10 @@ const SHORT_PS_PRESS_MS = 150;
 const LONG_PS_PRESS_MS = 1000;
 const MIN_CONTROLLER_POLLING_RATE = 30;
 const MAX_CONTROLLER_POLLING_RATE = 1000;
+const MAX_CONTROLLER_SEND_RATE = 120;
+const GAMEPAD_AXIS_QUANTIZATION = 128;
+const GAMEPAD_TRIGGER_QUANTIZATION = 64;
+const GAMEPAD_TRIGGER_DEADZONE = 0.02;
 const BRIGHTNESS_MIN = 50;
 const BRIGHTNESS_MAX = 150;
 const BRIGHTNESS_DEFAULT = 100;
@@ -276,6 +280,76 @@ const buildControllerStateKey = (state: ControllerStatePayload) => {
   return `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}`;
 };
 
+const createIdleControllerState = (): ControllerStatePayload => ({
+  buttons: 0,
+  l2State: 0,
+  r2State: 0,
+  leftX: 0,
+  leftY: 0,
+  rightX: 0,
+  rightY: 0,
+});
+
+const cloneControllerState = (state: ControllerStatePayload): ControllerStatePayload => ({
+  buttons: state.buttons,
+  l2State: state.l2State,
+  r2State: state.r2State,
+  leftX: state.leftX,
+  leftY: state.leftY,
+  rightX: state.rightX,
+  rightY: state.rightY,
+});
+
+const resolveControllerSendIntervalMs = (pollingRate: unknown) => {
+  const numericRate = Number(pollingRate);
+  const rate = Number.isFinite(numericRate) ? numericRate : defaultSettings.polling_rate;
+  const clampedRate = Math.max(
+    MIN_CONTROLLER_POLLING_RATE,
+    Math.min(MAX_CONTROLLER_SEND_RATE, rate)
+  );
+  return Math.max(1, 1000 / clampedRate);
+};
+
+const quantizeSignedUnitValue = (value: number, steps: number) => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const clamped = Math.max(-1, Math.min(1, value));
+  if (clamped === -1 || clamped === 1 || clamped === 0) {
+    return clamped;
+  }
+
+  return Math.max(-1, Math.min(1, Math.round(clamped * steps) / steps));
+};
+
+const quantizeTriggerUnitValue = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const clamped = Math.max(0, Math.min(1, value));
+  if (clamped < GAMEPAD_TRIGGER_DEADZONE) {
+    return 0;
+  }
+  if (clamped > 1 - 0.5 / GAMEPAD_TRIGGER_QUANTIZATION) {
+    return 1;
+  }
+
+  return Math.max(0, Math.min(1, Math.round(clamped * GAMEPAD_TRIGGER_QUANTIZATION) / GAMEPAD_TRIGGER_QUANTIZATION));
+};
+
+const isPriorityControllerStateChange = (
+  nextState: ControllerStatePayload,
+  previousState: ControllerStatePayload
+) => {
+  return (
+    nextState.buttons !== previousState.buttons ||
+    nextState.l2State !== previousState.l2State ||
+    nextState.r2State !== previousState.r2State
+  );
+};
+
 const resolveControllerPollingIntervalMs = (pollingRate: unknown) => {
   const numericRate = Number(pollingRate);
   const rate = Number.isFinite(numericRate) ? numericRate : defaultSettings.polling_rate;
@@ -409,6 +483,11 @@ function StreamPage() {
   const controllerPollingIntervalMsRef = useRef(
     resolveControllerPollingIntervalMs(defaultSettings.polling_rate)
   );
+  const controllerSendIntervalMsRef = useRef(
+    resolveControllerSendIntervalMs(defaultSettings.polling_rate)
+  );
+  const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
+  const lastControllerSendAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
 
   const isSessionConnected = connectState === "connected";
@@ -444,6 +523,9 @@ function StreamPage() {
     gamepadMappingRef.current = normalizeGamepadButtonMapping(settings?.gamepad_maping);
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
+      settings?.polling_rate
+    );
+    controllerSendIntervalMsRef.current = resolveControllerSendIntervalMs(
       settings?.polling_rate
     );
 
@@ -1720,7 +1802,11 @@ function StreamPage() {
     if (Math.abs(clamped) < deadZone) {
       return 0;
     }
-    return clamped;
+    return quantizeSignedUnitValue(clamped, GAMEPAD_AXIS_QUANTIZATION);
+  };
+
+  const normalizeTriggerValue = (value: number) => {
+    return quantizeTriggerUnitValue(value);
   };
 
   const toSignedAxis = (value: number) => {
@@ -1758,8 +1844,18 @@ function StreamPage() {
       return;
     }
 
+    const now = performance.now();
+    if (
+      !isPriorityControllerStateChange(state, lastSentControllerStateRef.current) &&
+      now - lastControllerSendAtRef.current < controllerSendIntervalMsRef.current
+    ) {
+      return;
+    }
+
     if (Ipc.sendStreamControllerState(state)) {
       lastControlStateKeyRef.current = stateKey;
+      lastSentControllerStateRef.current = cloneControllerState(state);
+      lastControllerSendAtRef.current = now;
       controlSendCountRef.current += 1;
       return;
     }
@@ -1777,6 +1873,8 @@ function StreamPage() {
         })
       );
       lastControlStateKeyRef.current = stateKey;
+      lastSentControllerStateRef.current = cloneControllerState(state);
+      lastControllerSendAtRef.current = now;
       controlSendCountRef.current += 1;
     } catch {
       controlSendErrorCountRef.current += 1;
@@ -1786,31 +1884,36 @@ function StreamPage() {
   const buildMergedControllerState = () => {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
     let validCount = 0;
-
-    const mergedState: ControllerStatePayload = {
-      buttons: 0,
-      l2State: 0,
-      r2State: 0,
-      leftX: 0,
-      leftY: 0,
-      rightX: 0,
-      rightY: 0,
-    };
+    const mergedState: ControllerStatePayload = createIdleControllerState();
 
     let leftXNorm = 0;
     let leftYNorm = 0;
     let rightXNorm = 0;
     let rightYNorm = 0;
 
-    for (const gamepad of gamepads) {
-      if (!gamepad || !gamepad.connected) {
-        continue;
-      }
-      if (!gamepad.axes || gamepad.axes.length !== 4) {
-        continue;
+    const validGamepads = Array.from(gamepads).filter((gamepad): gamepad is Gamepad => {
+      return !!gamepad && gamepad.connected && Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
+    });
+    const configuredGamepadIndex = Number(settings?.gamepad_index);
+    const shouldMixGamepads = !!settings?.gamepad_mix;
+    let activeGamepads = validGamepads;
+
+    if (!shouldMixGamepads) {
+      if (Number.isInteger(configuredGamepadIndex) && configuredGamepadIndex >= 0) {
+        const specifiedGamepad = validGamepads.find(
+          (gamepad) => gamepad.index === configuredGamepadIndex
+        );
+        activeGamepads = specifiedGamepad ? [specifiedGamepad] : [];
       }
 
-      validCount += 1;
+      if (activeGamepads.length < 1 && validGamepads.length > 0) {
+        activeGamepads = [validGamepads[0]];
+      }
+    }
+
+    validCount = activeGamepads.length;
+
+    for (const gamepad of activeGamepads) {
 
       const getMappedButtonIndex = (action: GamepadMappingAction) => {
         return gamepadMappingRef.current[action];
@@ -1865,12 +1968,16 @@ function StreamPage() {
         mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
       }
 
-      const l2Value = getButtonValue(gamepad, getMappedButtonIndex("LeftTrigger"));
-      const r2Value = getButtonValue(gamepad, getMappedButtonIndex("RightTrigger"));
+      const l2Value = normalizeTriggerValue(
+        getButtonValue(gamepad, getMappedButtonIndex("LeftTrigger"))
+      );
+      const r2Value = normalizeTriggerValue(
+        getButtonValue(gamepad, getMappedButtonIndex("RightTrigger"))
+      );
       mergedState.l2State = Math.max(mergedState.l2State, Math.round(l2Value * 255));
       mergedState.r2State = Math.max(mergedState.r2State, Math.round(r2Value * 255));
-      if (l2Value >= 0.2) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
-      if (r2Value >= 0.2) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
+      if (mergedState.l2State > 0) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
+      if (mergedState.r2State > 0) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
 
       const leftX = normalizeAxis(gamepad.axes[0] || 0);
       const leftY = normalizeAxis(gamepad.axes[1] || 0);
@@ -2031,6 +2138,9 @@ function StreamPage() {
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
         controlTransportReadyRef.current = false;
+        lastSentControllerStateRef.current = createIdleControllerState();
+        lastControllerSendAtRef.current = 0;
+        lastControlStateKeyRef.current = "";
         clearConnectedFeedbackTimers();
         setFsrFrameRendered(false);
         setVideoReady(false);
@@ -2123,6 +2233,8 @@ function StreamPage() {
         socket.onopen = () => {
           if (!active) return;
           lastControlStateKeyRef.current = "";
+          lastSentControllerStateRef.current = createIdleControllerState();
+          lastControllerSendAtRef.current = 0;
           setStatus(t("Connecting..."));
         };
 
@@ -2279,6 +2391,8 @@ function StreamPage() {
       socketRef.current = null;
       lastControlStateKeyRef.current = "";
       controlTransportReadyRef.current = false;
+      lastSentControllerStateRef.current = createIdleControllerState();
+      lastControllerSendAtRef.current = 0;
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
       if (cleanupRawListener) {
