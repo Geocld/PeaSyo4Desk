@@ -27,5 +27,10 @@
   "WebSocketErrorEvent": "event: websocket_error",
   "WebSocketErrorStatus": "WebSocket error",
   "WebSocketClosedStatus": "WebSocket closed",
-  "StartSessionFailedWithReason": "Failed to start: {{reason}}"
+  "StartSessionFailedWithReason": "Failed to start: {{reason}}",
+  "Brightness": "Brightness",
+  "Brightness adjustment": "Brightness adjustment",
+  "Current brightness": "Current brightness",
+  "Reset": "Reset",
+  "Confirm": "Confirm"
 }

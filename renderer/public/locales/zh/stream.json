@@ -27,5 +27,10 @@
   "WebSocketErrorEvent": "事件: websocket_error",
   "WebSocketErrorStatus": "WebSocket 错误",
   "WebSocketClosedStatus": "WebSocket 已关闭",
-  "StartSessionFailedWithReason": "启动失败: {{reason}}"
+  "StartSessionFailedWithReason": "启动失败: {{reason}}",
+  "Brightness": "亮度",
+  "Brightness adjustment": "亮度调节",
+  "Current brightness": "当前亮度",
+  "Reset": "重置",
+  "Confirm": "确定"
 }

@@ -41,6 +41,10 @@ function ActionBar(props) {
     Ipc.send('app', 'toggleFullscreen')
   };
 
+  const handleAdjustBrightness = () => {
+    props.onAdjustBrightness && props.onAdjustBrightness();
+  };
+
   const disconnectPowerActionLabel =
     props.type === "remoteplay"
       ? t("Disconnect and standby")
@@ -83,6 +87,14 @@ function ActionBar(props) {
             props.connectState === CONNECTED && props.onAudio && (
               <DropdownItem key="audio" onClick={handleAudio}>
                 {props.audioMuted ? t("Open Audio") : t("Close Audio")}
+              </DropdownItem>
+            )
+          }
+
+          {
+            props.connectState === CONNECTED && props.onAdjustBrightness && (
+              <DropdownItem key="brightness" onClick={handleAdjustBrightness}>
+                {props.brightnessLabel || t("Brightness")}
               </DropdownItem>
             )
           }
