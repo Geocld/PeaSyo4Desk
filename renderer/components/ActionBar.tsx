@@ -11,7 +11,7 @@ import Ipc from "../lib/ipc";
 const CONNECTED = 'connected';
 
 function ActionBar(props) {
-  const { t } = useTranslation('cloud');
+  const { t } = useTranslation('stream');
 
   const handleDisconnect = () => {
     props.onDisconnect && props.onDisconnect();
@@ -116,7 +116,7 @@ function ActionBar(props) {
           </DropdownItem>
 
           {
-            props.onDisconnectPowerOff && (
+            props.connectState === CONNECTED && props.onDisconnectPowerOff && (
               <DropdownItem
                 key="disconnectPoweroff"
                 className="text-danger"

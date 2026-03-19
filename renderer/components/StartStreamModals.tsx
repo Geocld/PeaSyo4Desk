@@ -527,7 +527,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
                 onPress={() => setStep("mode")}
                 isDisabled={loadingType !== null}
               >
-                {t("Back")}
+                {tCommon("Back")}
               </Button>
               <Button
                 variant="flat"
