@@ -22,7 +22,7 @@ export const defaultSettings = {
   gamepad_maping: null,
   native_gamepad_maping: null,
   mouse_sensitive: 0.5,
-  performance_style: false,
+  performance_style: true,
   background_keepalive: false,
   input_mousekeyboard_maping: {
     ArrowLeft: 'DPadLeft',
