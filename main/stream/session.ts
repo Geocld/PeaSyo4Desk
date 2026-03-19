@@ -1053,6 +1053,9 @@ const flushPendingVideoBroadcastFrame = () => {
 
   if (canUseNativeStreamBinary()) {
     const now = Date.now();
+    const maxFramesInFlight = streamVideoConfig?.isHdr
+      ? 1
+      : MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT;
     if (
       nativeVideoFramesInFlight > 0 &&
       now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
@@ -1061,7 +1064,7 @@ const flushPendingVideoBroadcastFrame = () => {
       nativeVideoFrameInFlightAtMs = 0;
     }
 
-    if (nativeVideoFramesInFlight >= MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT) {
+    if (nativeVideoFramesInFlight >= maxFramesInFlight) {
       return;
     }
 
@@ -1119,7 +1122,9 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
 
   while (pendingBytes >= frameSize) {
     const decodeFrameStart = performance.now();
-    const frame = Buffer.allocUnsafe(frameSize);
+    const frame = streamVideoConfig.isHdr
+      ? Buffer.allocUnsafeSlow(frameSize)
+      : Buffer.allocUnsafe(frameSize);
     let copied = 0;
     while (copied < frameSize && pendingChunks.length > 0) {
       const head = pendingChunks[0];

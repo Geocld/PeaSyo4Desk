@@ -1481,11 +1481,27 @@ function StreamPage() {
       return;
     }
 
-    const yPlane = new Uint16Array(frameBytes.buffer, 0, yPlaneBytes >> 1);
-    const uPlane = new Uint16Array(frameBytes.buffer, yPlaneBytes, uvPlaneBytes >> 1);
+    let alignedFrameBytes = frameBytes;
+    if ((alignedFrameBytes.byteOffset & 1) !== 0) {
+      const copied = new Uint8Array(alignedFrameBytes.byteLength);
+      copied.set(alignedFrameBytes);
+      alignedFrameBytes = copied;
+    }
+
+    const baseOffset = alignedFrameBytes.byteOffset;
+    const yPlane = new Uint16Array(
+      alignedFrameBytes.buffer,
+      baseOffset,
+      yPlaneBytes >> 1
+    );
+    const uPlane = new Uint16Array(
+      alignedFrameBytes.buffer,
+      baseOffset + yPlaneBytes,
+      uvPlaneBytes >> 1
+    );
     const vPlane = new Uint16Array(
-      frameBytes.buffer,
-      yPlaneBytes + uvPlaneBytes,
+      alignedFrameBytes.buffer,
+      baseOffset + yPlaneBytes + uvPlaneBytes,
       uvPlaneBytes >> 1
     );
 
