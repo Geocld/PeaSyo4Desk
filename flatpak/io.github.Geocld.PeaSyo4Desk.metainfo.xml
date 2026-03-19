@@ -16,14 +16,14 @@
   </description>
   <screenshots>
     <screenshot type="default">
-      <image type="source">https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/console.jpg</image>
+      <image type="source">https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png</image>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/settings.jpg</image>
+      <image type="source">https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/stream.png</image>
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.0.0" date="2026-03-17">
+    <release version="1.0.0" date="2026-03-20">
      <description>
         <ul>
           <li>First full release</li>

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=PeaSyo4Desk
-Comment=PlayStation remote play client.
+Comment=PlayStation unofficia remote play client.
 Icon=io.github.Geocld.PeaSyo4Desk
 Exec=run.sh
 Terminal=false
