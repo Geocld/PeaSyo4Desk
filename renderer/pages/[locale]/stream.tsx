@@ -1670,6 +1670,9 @@ function StreamPage() {
     receivedFramesRef.current += 1;
     if (latestFrameRef.current) {
       droppedFramesRef.current += 1;
+      if (nativeBinaryTransportRef.current) {
+        Ipc.sendStreamVideoFrameRendered();
+      }
     }
 
     latestFrameRef.current = frameBytes;

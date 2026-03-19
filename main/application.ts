@@ -237,9 +237,7 @@ export default class Application {
 
     // this._mainWindow.openDevTools();
 
-    if (settings.background_keepalive) {
-      this._mainWindow.webContents.setBackgroundThrottling(false);
-    }
+    this._mainWindow.webContents.setBackgroundThrottling(false);
 
     this._mainWindow.on("show", () => {
       this.log(

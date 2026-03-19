@@ -16,6 +16,7 @@ const WS_BINARY_AUDIO = 2;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
+const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = 250;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
@@ -202,7 +203,7 @@ const pendingChunks: Buffer[] = [];
 let pendingBytes = 0;
 let pendingVideoBroadcastFrame: Buffer | null = null;
 let videoBroadcastFlushScheduled = false;
-let nativeVideoFrameInFlight = false;
+let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
 let decodedFrameCount = 0;
 let framesLostCount = 0;
@@ -1001,7 +1002,7 @@ const stopSocketServer = async () => {
 
 const attachStreamWebContents = (webContents: WebContents | null | undefined) => {
   streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
-  nativeVideoFrameInFlight = false;
+  nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
 };
 
@@ -1010,7 +1011,7 @@ const destroyVideoPipeline = () => {
   pendingBytes = 0;
   pendingVideoBroadcastFrame = null;
   videoBroadcastFlushScheduled = false;
-  nativeVideoFrameInFlight = false;
+  nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
   ffmpegInputBlocked = false;
   decodedFrameCount = 0;
@@ -1053,20 +1054,20 @@ const flushPendingVideoBroadcastFrame = () => {
   if (canUseNativeStreamBinary()) {
     const now = Date.now();
     if (
-      nativeVideoFrameInFlight &&
+      nativeVideoFramesInFlight > 0 &&
       now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
     ) {
-      nativeVideoFrameInFlight = false;
+      nativeVideoFramesInFlight = 0;
       nativeVideoFrameInFlightAtMs = 0;
     }
 
-    if (nativeVideoFrameInFlight) {
+    if (nativeVideoFramesInFlight >= MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT) {
       return;
     }
 
     if (postNativeTypedBinary(WS_BINARY_VIDEO, frame)) {
       pendingVideoBroadcastFrame = null;
-      nativeVideoFrameInFlight = true;
+      nativeVideoFramesInFlight += 1;
       nativeVideoFrameInFlightAtMs = now;
       return;
     }
@@ -1091,8 +1092,13 @@ const queueVideoBroadcastFrame = (frame: Buffer) => {
 };
 
 const notifyVideoFrameRendered = () => {
-  nativeVideoFrameInFlight = false;
-  nativeVideoFrameInFlightAtMs = 0;
+  if (nativeVideoFramesInFlight > 0) {
+    nativeVideoFramesInFlight -= 1;
+  }
+  if (nativeVideoFramesInFlight < 1) {
+    nativeVideoFramesInFlight = 0;
+    nativeVideoFrameInFlightAtMs = 0;
+  }
 
   if (!pendingVideoBroadcastFrame || videoBroadcastFlushScheduled) {
     return;
@@ -1648,7 +1654,16 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     Number.isFinite(requestedBitrate) && requestedBitrate > 0
       ? requestedBitrate
       : defaultBitrate;
-  const profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
+  let profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
+  const isWindowsRealtime1080p60 =
+    process.platform === "win32" &&
+    profileResolution.width >= 1920 &&
+    profileResolution.height >= 1080 &&
+    profileFps >= 60;
+  if (isWindowsRealtime1080p60 && profileCodec === (chiaki as any).codecs.H265) {
+    profileCodec = (chiaki as any).codecs.H264;
+    log("forcing H264 on Windows for 1080p60 stream to improve frame pacing");
+  }
   const outputFormat = resolveOutputFormat(
     profileCodec,
     profileResolution.width,
