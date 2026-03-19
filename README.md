@@ -34,8 +34,8 @@ PeaSyo, also known as Pixiu, is a PS4/5 streaming application for Android that s
 - Remote wakeup and standby
 - AMD FidelityFX SUPER RESOLUTION v1 [FSR 1]
 
-<img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="400" />
-<img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="400" />
+<img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="600" />
+<img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="600" />
 
 ## Local Development
 

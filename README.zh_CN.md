@@ -33,8 +33,8 @@ PeaSyo，也称貔貅（pixiu），使用中国古代神兽命名，是一款PS4
 - 远程唤醒及休眠
 - AMD FidelityFX SUPER RESOLUTION v1 [FSR 1]
 
-<img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="400" />
-<img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="400" />
+<img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="600" />
+<img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="600" />
 
 ## 本地开发
 
