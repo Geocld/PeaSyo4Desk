@@ -5,58 +5,21 @@ import { useRouter } from "next/router";
 import GamepadMapModal from "../../components/GamepadMapModal";
 import MapItem from "../../components/MapItem";
 import Nav from "../../components/Nav";
+import {
+  DEFAULT_GAMEPAD_BUTTON_MAPPING,
+  GAMEPAD_MAPPING_ACTIONS,
+  normalizeGamepadButtonMapping,
+} from "../../common/gamepadMapping";
 import { useSettings } from "../../context/userContext";
 
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
-
-const defaultMaping = {
-  A: 0,
-  B: 1,
-  X: 2,
-  Y: 3,
-  DPadUp: 12,
-  DPadDown: 13,
-  DPadLeft: 14,
-  DPadRight: 15,
-  LeftShoulder: 4,
-  RightShoulder: 5,
-  LeftThumb: 10,
-  RightThumb: 11,
-  LeftTrigger: 6,
-  RightTrigger: 7,
-  Menu: 9,
-  View: 8,
-  Nexus: 16,
-};
-
-const buttonLabels = [
-  "A",
-  "B",
-  "X",
-  "Y",
-  "DPadUp",
-  "DPadDown",
-  "DPadLeft",
-  "DPadRight",
-  "LeftShoulder",
-  "RightShoulder",
-  "LeftTrigger",
-  "RightTrigger",
-  "LeftThumb",
-  "RightThumb",
-  "View",
-  "Menu",
-  "Nexus",
-];
 
 function Map() {
   const { t, i18n: {language: locale} } = useTranslation("settings");
   const { settings, setSettings } = useSettings();
   const router = useRouter();
 
-  const [maping, setMaping] = useState(
-    JSON.parse(JSON.stringify(defaultMaping))
-  );
+  const [maping, setMaping] = useState({ ...DEFAULT_GAMEPAD_BUTTON_MAPPING });
   const [current, setCurrent] = useState("");
   const [loading, setLoading] = useState(false);
   // const [loadingText, setLoadingText] = useState("");
@@ -68,12 +31,10 @@ function Map() {
       setIsLogined(true);
     }
 
-    if (settings.gamepad_maping) {
-      setMaping(settings.gamepad_maping)
-    }
+    setMaping(normalizeGamepadButtonMapping(settings.gamepad_maping));
 
     return () => {};
-  }, [settings]);
+  }, [settings.gamepad_maping]);
 
   const [showModal, setShowModal] = useState(false);
 
@@ -104,7 +65,7 @@ function Map() {
   };
 
   const handleReset = () => {
-    setMaping(defaultMaping);
+    setMaping({ ...DEFAULT_GAMEPAD_BUTTON_MAPPING });
   };
 
   return (
@@ -121,7 +82,7 @@ function Map() {
       )}
 
       <div className="maps">
-        {buttonLabels.map((name) => {
+        {GAMEPAD_MAPPING_ACTIONS.map((name) => {
           return (
             <div className="maps-item" key={name}>
               <MapItem

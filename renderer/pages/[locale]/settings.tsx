@@ -20,6 +20,7 @@ import KeyboardMap from "../../components/KeyboardMap";
 import PsnLoginModals from "../../components/PsnLoginModals";
 import Alert from "../../components/Alert";
 import ConfirmModal from "../../components/ConfirmModal";
+import FeedbackModal from "../../components/FeedbackModal";
 import Nav from "../../components/Nav";
 import updater from "../../lib/updater";
 import { useSettings } from "../../context/userContext";
@@ -130,6 +131,7 @@ function SettingsPage() {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   const [updateText, setUpdateText] = useState("");
   const [updateUrl, setUpdateUrl] = useState("");
@@ -189,7 +191,13 @@ function SettingsPage() {
   const baseMetas = settingsMetas.base || [];
   const localMetas = settingsMetas.local || [];
   const remoteMetas = settingsMetas.remote || [];
-  const otherMetas = settingsMetas.others || [];
+  const shouldShowFeedbackEntry = settings?.locale === "zh" || settings?.locale === "zht";
+  const visibleOtherMetas = useMemo(
+    () => (settingsMetas.others || []).filter(
+      (item: any) => item.action !== "open-feedback" || shouldShowFeedbackEntry
+    ),
+    [settingsMetas, shouldShowFeedbackEntry]
+  );
 
   const syncDraft = (nextDraft: BasicStreamDraft) => {
     setDraft(nextDraft);
@@ -441,6 +449,9 @@ function SettingsPage() {
         router.push({
           pathname: `/${locale}/transfer`,
         });
+        return;
+      case "open-feedback":
+        setShowFeedbackModal(true);
         return;
       case "reset-settings":
         handleResetAppSettings();
@@ -801,10 +812,12 @@ function SettingsPage() {
 
           <Tab key="Others" title={t("Others")}>
             <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
-              {otherMetas.map((item) => renderOtherActionCard(item, true))}
+              {visibleOtherMetas.map((item) => renderOtherActionCard(item, true))}
             </div>
 
-            {otherMetas.some((item) => item.name === "gamepad_tester") ? <KeyboardMap /> : null}
+            {visibleOtherMetas.some((item) => item.name === "gamepad_tester") ? (
+              <KeyboardMap />
+            ) : null}
           </Tab>
         </Tabs>
       </Layout>
@@ -817,6 +830,8 @@ function SettingsPage() {
           void handleAccountLoginSuccess();
         }}
       />
+
+      <FeedbackModal show={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
     </>
   );
 }

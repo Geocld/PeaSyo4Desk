@@ -18,7 +18,7 @@ const FeedbackModal = ({ show, onClose }) => {
   };
   return (
     <Modal
-      size="full"
+      size="3xl"
       scrollBehavior="inside"
       isOpen={show}
       hideCloseButton={true}

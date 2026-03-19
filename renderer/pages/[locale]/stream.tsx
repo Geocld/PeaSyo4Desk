@@ -8,6 +8,11 @@ import Loading from "../../components/Loading";
 import Perform from "../../components/Perform";
 import BrightnessModal from "../../components/stream/BrightnessModal";
 import FsrModal from "../../components/stream/FsrModal";
+import {
+  DEFAULT_GAMEPAD_BUTTON_MAPPING,
+  normalizeGamepadButtonMapping,
+  type GamepadMappingAction,
+} from "../../common/gamepadMapping";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
@@ -398,6 +403,7 @@ function StreamPage() {
   const audioStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
   const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
+  const gamepadMappingRef = useRef({ ...DEFAULT_GAMEPAD_BUTTON_MAPPING });
   const nativeBinaryTransportRef = useRef(false);
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
@@ -435,6 +441,7 @@ function StreamPage() {
     keyboardMappingRef.current = normalizeKeyboardMapping(
       settings?.input_mousekeyboard_maping
     );
+    gamepadMappingRef.current = normalizeGamepadButtonMapping(settings?.gamepad_maping);
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
       settings?.polling_rate
@@ -468,7 +475,7 @@ function StreamPage() {
     return () => {
       if (mouseInterval) clearInterval(mouseInterval);
     }
-  }, [settings?.polling_rate, settings?.input_mousekeyboard_maping]);
+  }, [settings?.polling_rate, settings?.input_mousekeyboard_maping, settings?.gamepad_maping]);
 
   useEffect(() => {
     fsrEnabledRef.current = !!settings?.fsr;
@@ -1792,25 +1799,61 @@ function StreamPage() {
 
       validCount += 1;
 
-      if (isButtonPressed(gamepad, 0)) mergedState.buttons |= CONTROLLER_BUTTONS.CROSS;
-      if (isButtonPressed(gamepad, 1)) mergedState.buttons |= CONTROLLER_BUTTONS.MOON;
-      if (isButtonPressed(gamepad, 2)) mergedState.buttons |= CONTROLLER_BUTTONS.BOX;
-      if (isButtonPressed(gamepad, 3)) mergedState.buttons |= CONTROLLER_BUTTONS.PYRAMID;
-      if (isButtonPressed(gamepad, 4)) mergedState.buttons |= CONTROLLER_BUTTONS.L1;
-      if (isButtonPressed(gamepad, 5)) mergedState.buttons |= CONTROLLER_BUTTONS.R1;
-      if (isButtonPressed(gamepad, 8)) mergedState.buttons |= CONTROLLER_BUTTONS.SHARE;
-      if (isButtonPressed(gamepad, 9)) mergedState.buttons |= CONTROLLER_BUTTONS.OPTIONS;
-      if (isButtonPressed(gamepad, 10)) mergedState.buttons |= CONTROLLER_BUTTONS.L3;
-      if (isButtonPressed(gamepad, 11)) mergedState.buttons |= CONTROLLER_BUTTONS.R3;
-      if (isButtonPressed(gamepad, 12)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_UP;
-      if (isButtonPressed(gamepad, 13)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_DOWN;
-      if (isButtonPressed(gamepad, 14)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_LEFT;
-      if (isButtonPressed(gamepad, 15)) mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_RIGHT;
-      if (isButtonPressed(gamepad, 16)) mergedState.buttons |= CONTROLLER_BUTTONS.PS;
-      if (isButtonPressed(gamepad, 17)) mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
+      const getMappedButtonIndex = (action: GamepadMappingAction) => {
+        return gamepadMappingRef.current[action];
+      };
 
-      const l2Value = getButtonValue(gamepad, 6);
-      const r2Value = getButtonValue(gamepad, 7);
+      if (isButtonPressed(gamepad, getMappedButtonIndex("A"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.CROSS;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("B"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.MOON;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("X"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.BOX;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("Y"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.PYRAMID;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("LeftShoulder"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.L1;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("RightShoulder"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.R1;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("View"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.SHARE;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("Menu"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.OPTIONS;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("LeftThumb"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.L3;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("RightThumb"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.R3;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadUp"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_UP;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadDown"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_DOWN;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadLeft"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_LEFT;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadRight"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_RIGHT;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("Nexus"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.PS;
+      }
+      if (isButtonPressed(gamepad, getMappedButtonIndex("Touchpad"))) {
+        mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
+      }
+
+      const l2Value = getButtonValue(gamepad, getMappedButtonIndex("LeftTrigger"));
+      const r2Value = getButtonValue(gamepad, getMappedButtonIndex("RightTrigger"));
       mergedState.l2State = Math.max(mergedState.l2State, Math.round(l2Value * 255));
       mergedState.r2State = Math.max(mergedState.r2State, Math.round(r2Value * 255));
       if (l2Value >= 0.2) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
