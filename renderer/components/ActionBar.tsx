@@ -117,7 +117,7 @@ function ActionBar(props) {
                 className="text-danger"
                 color="danger"
                 onClick={handleDisconnectAndPoweroff}
-              >"
+              >
                 {t("Disconnect and standby")}
               </DropdownItem>
             )

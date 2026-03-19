@@ -41,9 +41,8 @@ const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
 const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
-const AUDIO_SCHEDULE_LEAD_SEC = 0.12;
-const AUDIO_MAX_BUFFER_SEC = 0.3;
-const AUDIO_EDGE_FADE_SEC = 0.002;
+const AUDIO_SCHEDULE_LEAD_SEC = 0.04;
+const AUDIO_MAX_BUFFER_SEC = 0.8;
 const SHORT_PS_PRESS_MS = 150;
 const LONG_PS_PRESS_MS = 1000;
 const MIN_CONTROLLER_POLLING_RATE = 30;
@@ -387,6 +386,7 @@ function StreamPage() {
   const nextAudioTimeRef = useRef(0);
   const pendingAudioQueueRef = useRef<ArrayBuffer[]>([]);
   const pendingAudioBytesRef = useRef(0);
+  const scheduledAudioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const audioReceivedChunksRef = useRef(0);
   const audioPlayedChunksRef = useRef(0);
   const audioDroppedChunksRef = useRef(0);
@@ -571,6 +571,7 @@ function StreamPage() {
     audioAvailableRef.current = available;
     setAudioAvailable(available);
     if (!available) {
+      clearScheduledAudioSources();
       nextAudioTimeRef.current = 0;
       pendingAudioQueueRef.current = [];
       pendingAudioBytesRef.current = 0;
@@ -1458,6 +1459,25 @@ function StreamPage() {
     }
   };
 
+  const clearScheduledAudioSources = () => {
+    const sources = Array.from(scheduledAudioSourcesRef.current);
+    scheduledAudioSourcesRef.current.clear();
+
+    for (const source of sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        // ignore stop race
+      }
+      try {
+        source.disconnect();
+      } catch {
+        // ignore disconnect race
+      }
+    }
+  };
+
   const playAudioChunk = (arrayBuffer: ArrayBuffer) => {
     const audioContext = audioContextRef.current;
     if (!audioContext || audioContext.state !== "running" || !audioAvailableRef.current) {
@@ -1491,34 +1511,27 @@ function StreamPage() {
     if (nextAudioTimeRef.current < targetStartTime) {
       nextAudioTimeRef.current = targetStartTime;
     }
+
     if (nextAudioTimeRef.current - now > AUDIO_MAX_BUFFER_SEC) {
+      clearScheduledAudioSources();
       nextAudioTimeRef.current = targetStartTime;
-      audioDroppedChunksRef.current += 1;
+      return false;
     }
 
     const source = audioContext.createBufferSource();
-    const chunkGain = audioContext.createGain();
-    const chunkStartTime = nextAudioTimeRef.current;
-    const chunkEndTime = chunkStartTime + audioBuffer.duration;
-    const fadeDuration = Math.min(
-      AUDIO_EDGE_FADE_SEC,
-      Math.max(audioBuffer.duration / 4, 0)
-    );
-
     source.buffer = audioBuffer;
-    source.connect(chunkGain);
-    chunkGain.connect(audioGainNodeRef.current || audioContext.destination);
+    scheduledAudioSourcesRef.current.add(source);
+    source.connect(audioGainNodeRef.current || audioContext.destination);
+    source.onended = () => {
+      scheduledAudioSourcesRef.current.delete(source);
+      try {
+        source.disconnect();
+      } catch {
+        // ignore disconnect race
+      }
+    };
 
-    if (fadeDuration > 0) {
-      chunkGain.gain.setValueAtTime(0, chunkStartTime);
-      chunkGain.gain.linearRampToValueAtTime(1, chunkStartTime + fadeDuration);
-      chunkGain.gain.setValueAtTime(1, Math.max(chunkStartTime, chunkEndTime - fadeDuration));
-      chunkGain.gain.linearRampToValueAtTime(0, chunkEndTime);
-    } else {
-      chunkGain.gain.setValueAtTime(1, chunkStartTime);
-    }
-
-    source.start(chunkStartTime);
+    source.start(nextAudioTimeRef.current);
     nextAudioTimeRef.current += audioBuffer.duration;
     audioPlayedChunksRef.current += 1;
 
@@ -2273,6 +2286,7 @@ function StreamPage() {
         cleanupRawListener = null;
       }
 
+      clearScheduledAudioSources();
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => undefined);
       }
@@ -2408,6 +2422,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    clearScheduledAudioSources();
     clearPressedKeyboardKeys();
     pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
@@ -2475,6 +2490,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    clearScheduledAudioSources();
     clearPressedKeyboardKeys();
     pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
