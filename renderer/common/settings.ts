@@ -36,6 +36,19 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "video_format",
+        type: "radio",
+        title: t("Video stream format"),
+        description: t(
+          "Select video stream format, if you want video fullscreen, please select Stretch or Zoom"
+        ),
+        data: [
+          { value: "default", label: t("Default (16:9)") },
+          { value: "stretch", label: t("Stretch") },
+          { value: "zoom", label: t("Zoom") },
+        ],
+      },
+      {
         name: "theme",
         type: "radio",
         title: t("Theme"),

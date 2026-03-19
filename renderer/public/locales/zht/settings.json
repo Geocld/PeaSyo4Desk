@@ -62,7 +62,7 @@
   "RemoteResolutionDesc": "設置遠程串流分辨率，支持360P/540P/720P/1080P切換",
   "Video stream format": "畫面比例",
   "Select video stream format, if you want video fullscreen, please select Stretch or Zoom": "選擇視頻流格式，如果你需要畫面全屏，請選擇拉伸或縮放，如果你的物理顯示器不是16:9，會導致畫面不協調或展示不全",
-  "Aspect ratio": "保持長寬比(16:9)",
+  "Default (16:9)": "默認（16:9）",
   "Stretch": "拉伸",
   "Zoom": "縮放",
   "Stream bitrate": "串流碼率",

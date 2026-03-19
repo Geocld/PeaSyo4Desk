@@ -109,6 +109,7 @@ type ControllerStatePayload = {
 };
 
 type VideoFrameFormat = "I420" | "NV12" | "I010";
+type VideoDisplayFormat = "default" | "stretch" | "zoom";
 
 type HdrWebglRenderer = {
   gl: WebGL2RenderingContext;
@@ -416,6 +417,23 @@ const resolveControllerPollingIntervalMs = (pollingRate: unknown) => {
   return Math.max(1, 1000 / clampedRate);
 };
 
+const normalizeVideoDisplayFormat = (value: unknown): VideoDisplayFormat => {
+  if (value === "stretch" || value === "zoom") {
+    return value;
+  }
+  return "default";
+};
+
+const getVideoCanvasSizingClass = (format: VideoDisplayFormat) => {
+  if (format === "stretch") {
+    return "h-full w-full object-fill";
+  }
+  if (format === "zoom") {
+    return "h-full w-full object-cover";
+  }
+  return "h-full w-full object-contain";
+};
+
 function StreamPage() {
   const { t } = useTranslation("stream");
   const router = useRouter();
@@ -427,6 +445,7 @@ function StreamPage() {
   const [audioMuted, setAudioMuted] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  const [showActionbar, setShowActionbar] = useState(false);
   const [videoFormat, setVideoFormat] = useState<VideoFrameFormat>("NV12");
   const [sessionAlert, setSessionAlert] = useState<{
     title: string;
@@ -497,6 +516,8 @@ function StreamPage() {
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
+  const videoDisplayFormat = normalizeVideoDisplayFormat(settings?.video_format);
+  const videoCanvasSizingClass = getVideoCanvasSizingClass(videoDisplayFormat);
 
   const openSessionAlert = (content: string, nextStatus?: string) => {
     if (sessionErrorHandledRef.current || disconnectingRef.current) {
@@ -516,13 +537,40 @@ function StreamPage() {
     keyboardMappingRef.current = normalizeKeyboardMapping(
       settings?.input_mousekeyboard_maping
     );
-  }, [settings?.input_mousekeyboard_maping]);
 
-  useEffect(() => {
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
       settings?.polling_rate
     );
-  }, [settings?.polling_rate]);
+
+    let lastMovement = 0;
+    const mouseEvent = () => {
+      lastMovement = Date.now();
+    };
+    window.addEventListener("mousemove", mouseEvent);
+    window.addEventListener("mousedown", mouseEvent);
+
+    window.addEventListener("touchstart", mouseEvent);
+    window.addEventListener("touchmove", mouseEvent);
+
+    const escEvent = (event) => {
+      if (event.key === 'Escape') {
+        Ipc.send('app', 'exitFullscreen')
+      }
+    }
+    window.addEventListener('keydown', escEvent)
+
+    const mouseInterval = setInterval(() => {
+      if (Date.now() - lastMovement >= 2000) {
+        setShowActionbar(false)
+      } else {
+        setShowActionbar(true)
+      }
+    }, 100);
+
+    return () => {
+      if (mouseInterval) clearInterval(mouseInterval);
+    }
+  }, [settings?.polling_rate, settings?.input_mousekeyboard_maping]);
 
   const clearPressedKeyboardKeys = () => {
     keyboardPressedKeysRef.current.clear();
@@ -2299,17 +2347,21 @@ function StreamPage() {
         />
       ) : null}
 
-      <ActionBar
-        type="remoteplay"
-        connectState={connectState}
-        audioMuted={audioMuted}
-        onAudio={audioAvailable ? toggleAudioMuted : undefined}
-        onPressPs={handlePressPs}
-        onLongPressPs={handleLongPressPs}
-        onDisconnect={handleDisconnect}
-        onDisconnectPowerOff={handleDisconnectAndStandby}
-        onTogglePerformance={() => setShowPerformance((prev) => !prev)}
-      />
+      {
+        showActionbar && (
+          <ActionBar
+            type="remoteplay"
+            connectState={connectState}
+            audioMuted={audioMuted}
+            onAudio={audioAvailable ? toggleAudioMuted : undefined}
+            onPressPs={handlePressPs}
+            onLongPressPs={handleLongPressPs}
+            onDisconnect={handleDisconnect}
+            onDisconnectPowerOff={handleDisconnectAndStandby}
+            onTogglePerformance={() => setShowPerformance((prev) => !prev)}
+          />
+        )
+      }
 
       {showPerformance && <Perform connectState={connectState} />}
 
@@ -2318,7 +2370,7 @@ function StreamPage() {
           ref={canvasRef}
           width={1280}
           height={720}
-          className={`block h-auto w-full max-h-full max-w-full ${
+          className={`block ${videoCanvasSizingClass} ${
             shouldShowVideo && videoFormat !== "I010" ? "opacity-100" : "opacity-0"
           }`}
         />
@@ -2326,7 +2378,7 @@ function StreamPage() {
           ref={hdrCanvasRef}
           width={1280}
           height={720}
-          className={`absolute inset-0 m-auto block h-auto w-full max-h-full max-w-full ${
+          className={`absolute inset-0 block ${videoCanvasSizingClass} ${
             shouldShowVideo && videoFormat === "I010" ? "opacity-100" : "opacity-0"
           }`}
         />

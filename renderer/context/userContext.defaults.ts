@@ -1,6 +1,7 @@
 export const defaultSettings = {
   locale: "en",
   fullscreen: false,
+  video_format: "default",
   resolution: 1080,
   bitrate_mode: 'auto',
   bitrate: 27000,
