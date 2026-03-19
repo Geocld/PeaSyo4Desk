@@ -420,6 +420,7 @@ function StreamPage() {
   const fsrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const rafRef = useRef<number | null>(null);
+  const renderLoopScheduledRef = useRef(false);
   const inputLoopTimerRef = useRef<number | null>(null);
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsUrlRef = useRef("");
@@ -928,6 +929,7 @@ function StreamPage() {
       depth: false,
       stencil: false,
       preserveDrawingBuffer: false,
+      powerPreference: "high-performance",
       desynchronized: true,
     });
     if (!gl) {
@@ -1042,6 +1044,7 @@ function StreamPage() {
       depth: false,
       stencil: false,
       preserveDrawingBuffer: false,
+      powerPreference: "high-performance",
     });
     if (!gl) {
       throw new Error("WebGL2 is unavailable.");
@@ -1135,6 +1138,7 @@ function StreamPage() {
       depth: false,
       stencil: false,
       preserveDrawingBuffer: false,
+      powerPreference: "high-performance",
       desynchronized: true,
     });
     if (!gl) {
@@ -1338,7 +1342,7 @@ function StreamPage() {
       gl.bindVertexArray(renderer.vertexArray);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, renderer.sourceTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
       if (renderer.resolutionLocation) {
         gl.uniform2f(renderer.resolutionLocation, width, height);
       }
@@ -1669,6 +1673,10 @@ function StreamPage() {
     }
 
     latestFrameRef.current = frameBytes;
+    if (!renderLoopScheduledRef.current) {
+      renderLoopScheduledRef.current = true;
+      rafRef.current = requestAnimationFrame(renderLoop);
+    }
   };
 
   const handleBinaryPacket = (packetBytes: Uint8Array) => {
@@ -2076,6 +2084,9 @@ function StreamPage() {
   };
 
   const renderLoop = () => {
+    rafRef.current = null;
+    renderLoopScheduledRef.current = false;
+
     const frame = latestFrameRef.current;
     if (frame) {
       latestFrameRef.current = null;
@@ -2094,8 +2105,13 @@ function StreamPage() {
           }
         }
 
-        drawFsrFrame();
+        if (fsrEnabledRef.current) {
+          drawFsrFrame();
+        }
         renderedFramesRef.current += 1;
+        if (nativeBinaryTransportRef.current) {
+          Ipc.sendStreamVideoFrameRendered();
+        }
 
         if (!videoReadyRef.current) {
           videoReadyRef.current = true;
@@ -2116,7 +2132,10 @@ function StreamPage() {
       }
     }
 
-    rafRef.current = requestAnimationFrame(renderLoop);
+    if (latestFrameRef.current && !renderLoopScheduledRef.current) {
+      renderLoopScheduledRef.current = true;
+      rafRef.current = requestAnimationFrame(renderLoop);
+    }
   };
 
   useEffect(() => {
@@ -2370,7 +2389,6 @@ function StreamPage() {
         }
       }
     });
-    rafRef.current = requestAnimationFrame(renderLoop);
     statsTimerRef.current = setInterval(updateStats, 1000);
 
     return () => {
@@ -2384,6 +2402,7 @@ function StreamPage() {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      renderLoopScheduledRef.current = false;
 
       if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
         socketRef.current.close();
@@ -2706,7 +2725,7 @@ function StreamPage() {
 
       <div
         className="absolute inset-0 flex items-center justify-center bg-black"
-        style={{ filter: `brightness(${brightnessRatio})` }}
+        style={brightnessRatio === 1 ? undefined : { filter: `brightness(${brightnessRatio})` }}
       >
         <canvas
           ref={canvasRef}

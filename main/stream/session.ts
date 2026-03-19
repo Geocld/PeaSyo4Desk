@@ -16,6 +16,7 @@ const WS_BINARY_AUDIO = 2;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
+const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = 250;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -199,6 +200,10 @@ let ffmpegOutput: any = null;
 let ffmpegInputBlocked = false;
 const pendingChunks: Buffer[] = [];
 let pendingBytes = 0;
+let pendingVideoBroadcastFrame: Buffer | null = null;
+let videoBroadcastFlushScheduled = false;
+let nativeVideoFrameInFlight = false;
+let nativeVideoFrameInFlightAtMs = 0;
 let decodedFrameCount = 0;
 let framesLostCount = 0;
 const decodeFrameCostWindowMs: number[] = [];
@@ -513,10 +518,11 @@ const getVideoDecoderInputOptions = () => {
     "-fflags +genpts",
   ];
 
-  // Prefer platform hardware decoding when available. `auto` falls back to software
-  // on machines where no supported accelerator exists.
-  if (process.platform === "win32" || process.platform === "darwin") {
-    options.push("-hwaccel auto");
+  // This pipeline always downloads decoded frames back to system memory for IPC transport.
+  // On macOS, videotoolbox still performs well here. On Windows, `-hwaccel auto` often
+  // selects a path that adds expensive GPU->CPU readback and hurts frame pacing.
+  if (process.platform === "darwin") {
+    options.push("-hwaccel videotoolbox");
   }
 
   return options;
@@ -711,30 +717,39 @@ const canUseNativeStreamBinary = () => {
   return !!streamWebContents && !streamWebContents.isDestroyed();
 };
 
+const postNativeTypedBinary = (kind: number, payload: Buffer) => {
+  if (!payload || payload.length < 1 || !canUseNativeStreamBinary()) {
+    return false;
+  }
+
+  try {
+    const webContents = streamWebContents as WebContents;
+    const transferBuffer = payload.buffer as ArrayBuffer;
+    webContents.postMessage(
+      "stream-binary",
+      {
+        kind,
+        buffer: transferBuffer,
+        byteOffset: payload.byteOffset,
+        byteLength: payload.byteLength,
+      },
+      [transferBuffer]
+    );
+    return true;
+  } catch (error) {
+    log("native stream binary postMessage failed:", (error as any)?.message || String(error));
+    streamWebContents = null;
+    return false;
+  }
+};
+
 const broadcastTypedBinary = (kind: number, payload: Buffer) => {
   if (!payload || payload.length < 1) {
     return;
   }
 
-  if (canUseNativeStreamBinary()) {
-    try {
-      const webContents = streamWebContents as WebContents;
-      const transferBuffer = payload.buffer as ArrayBuffer;
-      webContents.postMessage(
-        "stream-binary",
-        {
-          kind,
-          buffer: transferBuffer,
-          byteOffset: payload.byteOffset,
-          byteLength: payload.byteLength,
-        },
-        [transferBuffer]
-      );
-      return;
-    } catch (error) {
-      log("native stream binary postMessage failed:", (error as any)?.message || String(error));
-      streamWebContents = null;
-    }
+  if (postNativeTypedBinary(kind, payload)) {
+    return;
   }
 
   if (wsClients.size < 1) {
@@ -986,11 +1001,17 @@ const stopSocketServer = async () => {
 
 const attachStreamWebContents = (webContents: WebContents | null | undefined) => {
   streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
+  nativeVideoFrameInFlight = false;
+  nativeVideoFrameInFlightAtMs = 0;
 };
 
 const destroyVideoPipeline = () => {
   pendingChunks.length = 0;
   pendingBytes = 0;
+  pendingVideoBroadcastFrame = null;
+  videoBroadcastFlushScheduled = false;
+  nativeVideoFrameInFlight = false;
+  nativeVideoFrameInFlightAtMs = 0;
   ffmpegInputBlocked = false;
   decodedFrameCount = 0;
   framesLostCount = 0;
@@ -1021,6 +1042,66 @@ const destroyVideoPipeline = () => {
   ffmpegOutput = null;
 };
 
+const flushPendingVideoBroadcastFrame = () => {
+  videoBroadcastFlushScheduled = false;
+  const frame = pendingVideoBroadcastFrame;
+  if (!frame || frame.length < 1) {
+    pendingVideoBroadcastFrame = null;
+    return;
+  }
+
+  if (canUseNativeStreamBinary()) {
+    const now = Date.now();
+    if (
+      nativeVideoFrameInFlight &&
+      now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
+    ) {
+      nativeVideoFrameInFlight = false;
+      nativeVideoFrameInFlightAtMs = 0;
+    }
+
+    if (nativeVideoFrameInFlight) {
+      return;
+    }
+
+    if (postNativeTypedBinary(WS_BINARY_VIDEO, frame)) {
+      pendingVideoBroadcastFrame = null;
+      nativeVideoFrameInFlight = true;
+      nativeVideoFrameInFlightAtMs = now;
+      return;
+    }
+  }
+
+  pendingVideoBroadcastFrame = null;
+  broadcastTypedBinary(WS_BINARY_VIDEO, frame);
+};
+
+const queueVideoBroadcastFrame = (frame: Buffer) => {
+  if (!frame || frame.length < 1) {
+    return;
+  }
+
+  pendingVideoBroadcastFrame = frame;
+  if (videoBroadcastFlushScheduled) {
+    return;
+  }
+
+  videoBroadcastFlushScheduled = true;
+  setImmediate(flushPendingVideoBroadcastFrame);
+};
+
+const notifyVideoFrameRendered = () => {
+  nativeVideoFrameInFlight = false;
+  nativeVideoFrameInFlightAtMs = 0;
+
+  if (!pendingVideoBroadcastFrame || videoBroadcastFlushScheduled) {
+    return;
+  }
+
+  videoBroadcastFlushScheduled = true;
+  setImmediate(flushPendingVideoBroadcastFrame);
+};
+
 const handleDecodedVideoChunk = (chunk: Buffer) => {
   if (!chunk || chunk.length < 1 || !streamVideoConfig) {
     return;
@@ -1032,7 +1113,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
 
   while (pendingBytes >= frameSize) {
     const decodeFrameStart = performance.now();
-    const frame = Buffer.allocUnsafeSlow(frameSize);
+    const frame = Buffer.allocUnsafe(frameSize);
     let copied = 0;
     while (copied < frameSize && pendingChunks.length > 0) {
       const head = pendingChunks[0];
@@ -1065,10 +1146,10 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
       decodeFrameCostWindowTotalMs -= removed;
     }
 
-    broadcastTypedBinary(WS_BINARY_VIDEO, frame);
+    queueVideoBroadcastFrame(frame);
   }
 
-  if (pendingBytes > frameSize * 8) {
+  if (pendingBytes > frameSize * 4) {
     pendingChunks.length = 0;
     pendingBytes = 0;
   }
@@ -1093,7 +1174,6 @@ const createVideoDecodePipeline = () => {
     .outputOptions("-an")
     .outputOptions("-sn")
     .outputOptions("-dn")
-    .outputOptions("-r", String(streamVideoConfig.fps))
     .outputOptions("-pix_fmt", streamVideoConfig.outputPixelFormat)
     .outputOptions("-f", "rawvideo")
     .outputOptions("-vcodec", "rawvideo")
@@ -1785,6 +1865,7 @@ export const StreamSessionService = {
   stopSocketServer,
   startSession,
   setControllerStateDirect,
+  notifyVideoFrameRendered,
   stopSession,
   gotoBedAndStop,
   getPerformanceStats,

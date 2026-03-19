@@ -61,6 +61,19 @@ export default {
     return false;
   },
 
+  sendStreamVideoFrameRendered() {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamVideoFrameRendered === "function") {
+      window.PeaSyo.sendStreamVideoFrameRendered();
+      return true;
+    }
+
+    return false;
+  },
+
   removeListener(channel: string, listener) {
     if (window.PeaSyo === undefined) {
       // Electron API Not available. Lets mock!
@@ -97,6 +110,9 @@ export default {
         return null;
       },
       sendStreamControllerState() {
+        return false;
+      },
+      sendStreamVideoFrameRendered() {
         return false;
       },
       removeListener(channel, listener) {
