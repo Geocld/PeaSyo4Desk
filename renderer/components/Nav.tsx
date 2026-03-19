@@ -7,6 +7,7 @@ import {
   PopoverContent,
   Button,
 } from "@heroui/react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import Ipc from "../lib/ipc";
@@ -82,6 +83,7 @@ const isSettingsSubpage = (pathname: string) => {
 
 const Nav = ({ current }: NavProps) => {
   const router = useRouter();
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const { t, i18n: { language: locale } } = useTranslation("common");
   const newVersions = null;
@@ -109,6 +111,22 @@ const Nav = ({ current }: NavProps) => {
     router.push(`/${locale}/registry`);
   }
 
+  const syncFullscreenState = () => {
+    Ipc.send("app", "isFullscreen")
+      .then((value) => {
+        setIsFullscreen(Boolean(value));
+      })
+      .catch(() => undefined);
+  };
+
+  const handleToggleFullscreen = () => {
+    Ipc.send("app", "toggleFullscreen")
+      .then(() => {
+        window.setTimeout(syncFullscreenState, 80);
+      })
+      .catch(() => undefined);
+  };
+
   const handleExit = () => {
     void Ipc.send("app", "quit");
   };
@@ -124,6 +142,17 @@ const Nav = ({ current }: NavProps) => {
   const handleBackToSettings = () => {
     handleNavigate(`/${locale}/settings`);
   };
+
+  useEffect(() => {
+    syncFullscreenState();
+
+    window.addEventListener("resize", syncFullscreenState);
+    window.addEventListener("focus", syncFullscreenState);
+    return () => {
+      window.removeEventListener("resize", syncFullscreenState);
+      window.removeEventListener("focus", syncFullscreenState);
+    };
+  }, []);
 
   const renderBrandInfo = () => (
     <div className="flex items-center gap-2 whitespace-nowrap">
@@ -199,6 +228,16 @@ const Nav = ({ current }: NavProps) => {
 
         <Button size="sm" isIconOnly aria-label="add" color="success" onPress={handleRegist}>
           <AddIcon />
+        </Button>
+
+        <Button
+          size="sm"
+          isIconOnly
+          aria-label={t("Toggle fullscreen")}
+          color="primary"
+          onPress={handleToggleFullscreen}
+        >
+          {isFullscreen ? <ZoomInIcon /> : <ZoomOutIcon />}
         </Button>
 
         <Button size="sm" isIconOnly aria-label="close" color="danger" onPress={handleExit}>
