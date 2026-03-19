@@ -1,20 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
-import {
-  addToast,
-  Button,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalFooter,
-  ModalHeader,
-  Slider,
-} from "@heroui/react";
+import { addToast } from "@heroui/react";
 import ActionBar from "../../components/ActionBar";
 import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
 import Perform from "../../components/Perform";
+import BrightnessModal from "../../components/stream/BrightnessModal";
+import FsrModal from "../../components/stream/FsrModal";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
@@ -23,6 +16,8 @@ import { triggerGamepadRumbleFromChiaki } from "../../lib/gamepadRumble";
 import { handleGamepadTriggerEffectsFromChiaki } from "../../lib/gamepadTriggerEffects";
 import Ipc from "../../lib/ipc";
 import {
+  FSR_FRAGMENT_SHADER_SOURCE,
+  FSR_VERTEX_SHADER_SOURCE,
   HDR_FRAGMENT_SHADER_SOURCE,
   HDR_VERTEX_SHADER_SOURCE,
   SDR_FRAGMENT_SHADER_SOURCE,
@@ -30,6 +25,7 @@ import {
   SDR_VERTEX_SHADER_SOURCE,
 } from "../../lib/stream-video/shader-sources";
 import type {
+  FsrWebglRenderer,
   HdrWebglRenderer,
   SdrWebglRenderer,
   VideoFrameFormat,
@@ -50,6 +46,10 @@ const MAX_CONTROLLER_POLLING_RATE = 1000;
 const BRIGHTNESS_MIN = 50;
 const BRIGHTNESS_MAX = 150;
 const BRIGHTNESS_DEFAULT = 100;
+const FSR_SHARPNESS_MIN = 0;
+const FSR_SHARPNESS_MAX = 2;
+const FSR_SHARPNESS_STEP = 0.05;
+const FSR_SHADER_SHARPNESS_SCALE = 0.1;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -299,10 +299,23 @@ const getVideoCanvasSizingClass = (format: VideoDisplayFormat) => {
   return "h-full w-full object-contain";
 };
 
+const normalizeFsrSharpness = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return defaultSettings.fsr_sharpness;
+  }
+
+  return Math.max(FSR_SHARPNESS_MIN, Math.min(FSR_SHARPNESS_MAX, numeric));
+};
+
+const toFsrShaderSharpness = (sharpness: number) => {
+  return sharpness * FSR_SHADER_SHARPNESS_SCALE;
+};
+
 function StreamPage() {
   const { t } = useTranslation("stream");
   const router = useRouter();
-  const { settings } = useSettings();
+  const { settings, setSettings } = useSettings();
 
   const [status, setStatus] = useState("");
   const [connectState, setConnectState] = useState("initializing");
@@ -312,7 +325,12 @@ function StreamPage() {
   const [videoReady, setVideoReady] = useState(false);
   const [showActionbar, setShowActionbar] = useState(false);
   const [showBrightnessModal, setShowBrightnessModal] = useState(false);
+  const [showFsrModal, setShowFsrModal] = useState(false);
   const [brightness, setBrightness] = useState(BRIGHTNESS_DEFAULT);
+  const [fsrSharpness, setFsrSharpness] = useState(
+    normalizeFsrSharpness(defaultSettings.fsr_sharpness)
+  );
+  const [fsrFrameRendered, setFsrFrameRendered] = useState(false);
   const [videoFormat, setVideoFormat] = useState<VideoFrameFormat>("NV12");
   const [sessionAlert, setSessionAlert] = useState<{
     title: string;
@@ -321,6 +339,7 @@ function StreamPage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hdrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fsrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const rafRef = useRef<number | null>(null);
   const inputLoopTimerRef = useRef<number | null>(null);
@@ -339,6 +358,11 @@ function StreamPage() {
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
   const sdrGpuRenderingDisabledRef = useRef(false);
   const hdrRendererRef = useRef<HdrWebglRenderer | null>(null);
+  const fsrRendererRef = useRef<FsrWebglRenderer | null>(null);
+  const fsrGpuRenderingDisabledRef = useRef(false);
+  const fsrEnabledRef = useRef(Boolean(defaultSettings.fsr));
+  const fsrSharpnessRef = useRef(normalizeFsrSharpness(defaultSettings.fsr_sharpness));
+  const fsrFrameRenderedRef = useRef(false);
 
   const receivedFramesRef = useRef(0);
   const renderedFramesRef = useRef(0);
@@ -383,9 +407,15 @@ function StreamPage() {
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
+  const isFsrEnabled = !!settings?.fsr;
   const videoDisplayFormat = normalizeVideoDisplayFormat(settings?.video_format);
   const videoCanvasSizingClass = getVideoCanvasSizingClass(videoDisplayFormat);
   const brightnessRatio = Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, brightness)) / 100;
+  const shouldShowFsrCanvas = shouldShowVideo && isFsrEnabled && fsrFrameRendered;
+  const shouldShowSdrCanvas =
+    shouldShowVideo && videoFormat !== "I010" && (!isFsrEnabled || !fsrFrameRendered);
+  const shouldShowHdrCanvas =
+    shouldShowVideo && videoFormat === "I010" && (!isFsrEnabled || !fsrFrameRendered);
 
   const openSessionAlert = (content: string, nextStatus?: string) => {
     if (sessionErrorHandledRef.current || disconnectingRef.current) {
@@ -440,6 +470,30 @@ function StreamPage() {
     }
   }, [settings?.polling_rate, settings?.input_mousekeyboard_maping]);
 
+  useEffect(() => {
+    fsrEnabledRef.current = !!settings?.fsr;
+    if (!settings?.fsr) {
+      setShowFsrModal(false);
+    }
+  }, [settings?.fsr]);
+
+  useEffect(() => {
+    const nextSharpness = normalizeFsrSharpness(settings?.fsr_sharpness);
+    setFsrSharpness(nextSharpness);
+  }, [settings?.fsr_sharpness]);
+
+  useEffect(() => {
+    fsrSharpnessRef.current = fsrSharpness;
+  }, [fsrSharpness]);
+
+  const updateFsrFrameRendered = (nextValue: boolean) => {
+    if (fsrFrameRenderedRef.current === nextValue) {
+      return;
+    }
+    fsrFrameRenderedRef.current = nextValue;
+    setFsrFrameRendered(nextValue);
+  };
+
   const clearPressedKeyboardKeys = () => {
     keyboardPressedKeysRef.current.clear();
   };
@@ -474,6 +528,16 @@ function StreamPage() {
       hdrCanvas.width = width;
       hdrCanvas.height = height;
     }
+
+    const fsrCanvas = fsrCanvasRef.current;
+    if (fsrCanvas) {
+      fsrCanvas.width = width;
+      fsrCanvas.height = height;
+    }
+
+    updateFsrFrameRendered(false);
+    destroyFsrRenderer();
+    fsrGpuRenderingDisabledRef.current = false;
 
     if (format !== "I010") {
       destroyHdrRenderer();
@@ -655,6 +719,20 @@ function StreamPage() {
     gl.deleteVertexArray(renderer.vertexArray);
     gl.deleteProgram(renderer.program);
     hdrRendererRef.current = null;
+  };
+
+  const destroyFsrRenderer = () => {
+    const renderer = fsrRendererRef.current;
+    if (!renderer) {
+      return;
+    }
+
+    const { gl } = renderer;
+    gl.deleteTexture(renderer.sourceTexture);
+    gl.deleteBuffer(renderer.vertexBuffer);
+    gl.deleteVertexArray(renderer.vertexArray);
+    gl.deleteProgram(renderer.program);
+    fsrRendererRef.current = null;
   };
 
   const compileWebglShader = (
@@ -955,6 +1033,107 @@ function StreamPage() {
     };
   };
 
+  const createFsrRenderer = (width: number, height: number) => {
+    const canvas = fsrCanvasRef.current;
+    if (!canvas) {
+      return null;
+    }
+
+    const gl = canvas.getContext("webgl2", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+      desynchronized: true,
+    });
+    if (!gl) {
+      return null;
+    }
+
+    const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, FSR_VERTEX_SHADER_SOURCE);
+    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, FSR_FRAGMENT_SHADER_SOURCE);
+    const program = gl.createProgram();
+    if (!program) {
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      throw new Error("Failed to create FSR program.");
+    }
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const error = gl.getProgramInfoLog(program) || "Unknown FSR shader link error.";
+      gl.deleteProgram(program);
+      throw new Error(error);
+    }
+
+    const vertexArray = gl.createVertexArray();
+    const vertexBuffer = gl.createBuffer();
+    if (!vertexArray || !vertexBuffer) {
+      if (vertexArray) gl.deleteVertexArray(vertexArray);
+      if (vertexBuffer) gl.deleteBuffer(vertexBuffer);
+      gl.deleteProgram(program);
+      throw new Error("Failed to create FSR vertex buffers.");
+    }
+
+    gl.bindVertexArray(vertexArray);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        -1, -1, 0, 1,
+        1, -1, 1, 1,
+        -1, 1, 0, 0,
+        -1, 1, 0, 0,
+        1, -1, 1, 1,
+        1, 1, 1, 0,
+      ]),
+      gl.STATIC_DRAW
+    );
+
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
+
+    const sourceTexture = createSdrPlaneTexture(gl, gl.TEXTURE0, width, height, gl.RGBA, gl.RGBA);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+    gl.useProgram(program);
+    gl.uniform1i(gl.getUniformLocation(program, "u_source"), 0);
+    const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+    const sharpnessLocation = gl.getUniformLocation(program, "u_sharpness");
+    if (resolutionLocation) {
+      gl.uniform2f(resolutionLocation, width, height);
+    }
+    if (sharpnessLocation) {
+      gl.uniform1f(sharpnessLocation, toFsrShaderSharpness(fsrSharpnessRef.current));
+    }
+    gl.viewport(0, 0, width, height);
+
+    return {
+      gl,
+      program,
+      vertexArray,
+      vertexBuffer,
+      sourceTexture,
+      resolutionLocation,
+      sharpnessLocation,
+      width,
+      height,
+    };
+  };
+
   const ensureHdrRenderer = () => {
     const width = widthRef.current;
     const height = heightRef.current;
@@ -1004,6 +1183,85 @@ function StreamPage() {
       sdrGpuRenderingDisabledRef.current = true;
       console.warn("[stream] Failed to initialize SDR WebGL renderer, fallback to CPU:", error);
       return null;
+    }
+  };
+
+  const ensureFsrRenderer = () => {
+    if (fsrGpuRenderingDisabledRef.current) {
+      return null;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const renderer = fsrRendererRef.current;
+    if (renderer && renderer.width === width && renderer.height === height) {
+      return renderer;
+    }
+
+    destroyFsrRenderer();
+
+    try {
+      const nextRenderer = createFsrRenderer(width, height);
+      if (!nextRenderer) {
+        fsrGpuRenderingDisabledRef.current = true;
+        return null;
+      }
+      fsrRendererRef.current = nextRenderer;
+      return nextRenderer;
+    } catch (error) {
+      destroyFsrRenderer();
+      fsrGpuRenderingDisabledRef.current = true;
+      console.warn("[stream] Failed to initialize FSR renderer, fallback to original:", error);
+      return null;
+    }
+  };
+
+  const drawFsrFrame = () => {
+    if (!fsrEnabledRef.current) {
+      updateFsrFrameRendered(false);
+      if (fsrRendererRef.current) {
+        destroyFsrRenderer();
+      }
+      return;
+    }
+
+    const sourceCanvas =
+      videoFormatRef.current === "I010" ? hdrCanvasRef.current : canvasRef.current;
+    if (!sourceCanvas) {
+      updateFsrFrameRendered(false);
+      return;
+    }
+
+    const renderer = ensureFsrRenderer();
+    if (!renderer) {
+      updateFsrFrameRendered(false);
+      return;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const { gl } = renderer;
+
+    try {
+      gl.viewport(0, 0, width, height);
+      gl.useProgram(renderer.program);
+      gl.bindVertexArray(renderer.vertexArray);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, renderer.sourceTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+      if (renderer.resolutionLocation) {
+        gl.uniform2f(renderer.resolutionLocation, width, height);
+      }
+      if (renderer.sharpnessLocation) {
+        gl.uniform1f(renderer.sharpnessLocation, toFsrShaderSharpness(fsrSharpnessRef.current));
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      updateFsrFrameRendered(true);
+    } catch (error) {
+      console.warn("[stream] FSR frame render failed, fallback to original:", error);
+      fsrGpuRenderingDisabledRef.current = true;
+      destroyFsrRenderer();
+      updateFsrFrameRendered(false);
     }
   };
 
@@ -1673,6 +1931,7 @@ function StreamPage() {
           }
         }
 
+        drawFsrFrame();
         renderedFramesRef.current += 1;
 
         if (!videoReadyRef.current) {
@@ -1712,9 +1971,12 @@ function StreamPage() {
         pendingAudioQueueRef.current = [];
         pendingAudioBytesRef.current = 0;
         sdrGpuRenderingDisabledRef.current = false;
+        fsrGpuRenderingDisabledRef.current = false;
+        fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
         controlTransportReadyRef.current = false;
         clearConnectedFeedbackTimers();
+        setFsrFrameRendered(false);
         setVideoReady(false);
         setAudioMutedState(false);
         setAudioAvailable(false);
@@ -1980,6 +2242,8 @@ function StreamPage() {
       pendingAudioQueueRef.current = [];
       pendingAudioBytesRef.current = 0;
       sdrGpuRenderingDisabledRef.current = false;
+      fsrGpuRenderingDisabledRef.current = false;
+      fsrFrameRenderedRef.current = false;
       clearPressedKeyboardKeys();
       sessionConnectedRef.current = false;
       videoReadyRef.current = false;
@@ -1987,8 +2251,10 @@ function StreamPage() {
       latestFrameRef.current = null;
       videoFormatRef.current = "NV12";
       setVideoFormat("NV12");
+      setFsrFrameRendered(false);
       destroySdrRenderer();
       destroyHdrRenderer();
+      destroyFsrRenderer();
       setVideoReady(false);
 
       Ipc.send("app", "stopStreamSession").catch(() => undefined);
@@ -2210,6 +2476,25 @@ function StreamPage() {
     setBrightness(clampedValue);
   };
 
+  const handleFsrSharpnessChange = (value: number | number[]) => {
+    const nextValue = Array.isArray(value) ? Number(value[0]) : Number(value);
+    if (!Number.isFinite(nextValue)) {
+      return;
+    }
+
+    const rounded = Math.round(nextValue / FSR_SHARPNESS_STEP) * FSR_SHARPNESS_STEP;
+    const clampedValue = Math.max(FSR_SHARPNESS_MIN, Math.min(FSR_SHARPNESS_MAX, rounded));
+    setFsrSharpness(Number(clampedValue.toFixed(2)));
+  };
+
+  const handleFsrModalConfirm = () => {
+    setSettings({
+      ...settings,
+      fsr_sharpness: fsrSharpness,
+    });
+    setShowFsrModal(false);
+  };
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-black">
       {sessionAlert ? (
@@ -2238,6 +2523,8 @@ function StreamPage() {
             onTogglePerformance={() => setShowPerformance((prev) => !prev)}
             onAdjustBrightness={() => setShowBrightnessModal(true)}
             brightnessLabel={t("Brightness")}
+            onAdjustFsr={isFsrEnabled ? () => setShowFsrModal(true) : undefined}
+            fsrLabel={t("FSR")}
           />
         )
       }
@@ -2253,7 +2540,7 @@ function StreamPage() {
           width={1280}
           height={720}
           className={`block ${videoCanvasSizingClass} ${
-            shouldShowVideo && videoFormat !== "I010" ? "opacity-100" : "opacity-0"
+            shouldShowSdrCanvas ? "opacity-100" : "opacity-0"
           }`}
         />
         <canvas
@@ -2261,47 +2548,40 @@ function StreamPage() {
           width={1280}
           height={720}
           className={`absolute inset-0 block ${videoCanvasSizingClass} ${
-            shouldShowVideo && videoFormat === "I010" ? "opacity-100" : "opacity-0"
+            shouldShowHdrCanvas ? "opacity-100" : "opacity-0"
+          }`}
+        />
+        <canvas
+          ref={fsrCanvasRef}
+          width={1280}
+          height={720}
+          className={`absolute inset-0 block ${videoCanvasSizingClass} ${
+            shouldShowFsrCanvas ? "opacity-100" : "opacity-0"
           }`}
         />
       </div>
 
-      <Modal
-        isOpen={showBrightnessModal}
+      <BrightnessModal
+        show={showBrightnessModal}
+        brightness={brightness}
+        min={BRIGHTNESS_MIN}
+        max={BRIGHTNESS_MAX}
+        onBrightnessChange={handleBrightnessChange}
         onClose={() => setShowBrightnessModal(false)}
-        size="md"
-      >
-        <ModalContent>
-          <>
-            <ModalHeader>{t("Brightness adjustment")}</ModalHeader>
-            <ModalBody className="gap-4">
-              <Slider
-                label={t("Brightness")}
-                minValue={BRIGHTNESS_MIN}
-                maxValue={BRIGHTNESS_MAX}
-                step={1}
-                value={brightness}
-                onChange={handleBrightnessChange}
-                showTooltip
-              />
-              <div className="text-sm text-default-500">
-                {t("Current brightness")}: {brightness}%
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button
-                variant="flat"
-                onPress={() => setBrightness(BRIGHTNESS_DEFAULT)}
-              >
-                {t("Reset")}
-              </Button>
-              <Button color="primary" onPress={() => setShowBrightnessModal(false)}>
-                {t("Confirm")}
-              </Button>
-            </ModalFooter>
-          </>
-        </ModalContent>
-      </Modal>
+        onReset={() => setBrightness(BRIGHTNESS_DEFAULT)}
+      />
+
+      <FsrModal
+        show={showFsrModal}
+        sharpness={fsrSharpness}
+        min={FSR_SHARPNESS_MIN}
+        max={FSR_SHARPNESS_MAX}
+        step={FSR_SHARPNESS_STEP}
+        onSharpnessChange={handleFsrSharpnessChange}
+        onClose={() => setShowFsrModal(false)}
+        onConfirm={handleFsrModalConfirm}
+        onReset={() => setFsrSharpness(normalizeFsrSharpness(defaultSettings.fsr_sharpness))}
+      />
 
       {!shouldShowVideo && !sessionAlert ? (
         <Loading loadingText={status || t("Connecting...")} />

@@ -31,6 +31,10 @@
   "Brightness": "亮度",
   "Brightness adjustment": "亮度調節",
   "Current brightness": "當前亮度",
+  "FSR": "FSR",
+  "FSR adjustment": "FSR 調節",
+  "FSR sharpness": "FSR 銳化強度",
+  "Current FSR sharpness": "當前 FSR 銳化強度",
   "Reset": "重置",
   "Confirm": "確定"
 }

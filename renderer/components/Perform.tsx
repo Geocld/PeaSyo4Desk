@@ -62,7 +62,7 @@ function Perform({ connectState }: PerformProps) {
           <div id="performances-x" className="flex flex-row justify-center w-full">
             <span className={isLight ? "performance-x-wrap-light" : "performance-x-wrap"}>
               <span className="text-xs">
-                {resolutionText || "--"} | &nbsp;
+                {resolutionText || "--"}{settings.fsr ? " (FSR)" : ""} | &nbsp;
               </span>
               <span className="text-xs">
                 {t("RTT")}: {performance.rtt || "--"} | &nbsp;
@@ -81,7 +81,7 @@ function Perform({ connectState }: PerformProps) {
         ) : (
           <div id="performances">
             <div className="px-1 text-sm">
-              {t("Resolution")}: {resolutionText || "--"}
+              {resolutionText || "--"}{settings.fsr ? " (FSR)" : ""}
             </div>
             <div className="px-1 text-sm">
               {t("RTT")}: {performance.rtt || "--"}

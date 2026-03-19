@@ -129,3 +129,60 @@ void main() {
   outColor = vec4(srgb, 1.0);
 }
 `;
+
+export const FSR_VERTEX_SHADER_SOURCE = `#version 300 es
+in vec2 a_position;
+in vec2 a_texCoord;
+out vec2 v_texCoord;
+
+void main() {
+  v_texCoord = a_texCoord;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+export const FSR_FRAGMENT_SHADER_SOURCE = `#version 300 es
+precision highp float;
+
+in vec2 v_texCoord;
+uniform sampler2D u_source;
+uniform vec2 u_resolution;
+uniform float u_sharpness;
+out vec4 outColor;
+
+#define FSR_RCAS_LIMIT (0.25 - (1.0 / 16.0))
+
+float fsrRcasCon(float sharpness) {
+  return exp2(-sharpness);
+}
+
+vec3 fsrLoad(vec2 uv) {
+  return texture(u_source, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
+}
+
+void main() {
+  vec2 texel = vec2(1.0, 1.0) / u_resolution;
+  vec2 uv = v_texCoord;
+
+  vec3 b = fsrLoad(uv + vec2(0.0, -texel.y));
+  vec3 d = fsrLoad(uv + vec2(-texel.x, 0.0));
+  vec3 e = fsrLoad(uv);
+  vec3 f = fsrLoad(uv + vec2(texel.x, 0.0));
+  vec3 h = fsrLoad(uv + vec2(0.0, texel.y));
+
+  vec3 mn4 = min(b, min(f, h));
+  vec3 mx4 = max(b, max(f, h));
+  vec2 peakC = vec2(1.0, -4.0);
+
+  vec3 hitMin = mn4 / max(vec3(1e-5), 4.0 * mx4);
+  vec3 hitMax = (peakC.x - mx4) / max(vec3(1e-5), 4.0 * mn4 + peakC.y);
+  vec3 lobeRGB = max(-hitMin, hitMax);
+  float lobe = max(
+    -FSR_RCAS_LIMIT,
+    min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)
+  ) * fsrRcasCon(u_sharpness);
+
+  vec3 color = (lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0);
+  outColor = vec4(color, 1.0);
+}
+`;

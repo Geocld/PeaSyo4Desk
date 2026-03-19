@@ -25,3 +25,15 @@ export type SdrWebglRenderer = {
   width: number;
   height: number;
 };
+
+export type FsrWebglRenderer = {
+  gl: WebGL2RenderingContext;
+  program: WebGLProgram;
+  vertexArray: WebGLVertexArrayObject;
+  vertexBuffer: WebGLBuffer;
+  sourceTexture: WebGLTexture;
+  resolutionLocation: WebGLUniformLocation | null;
+  sharpnessLocation: WebGLUniformLocation | null;
+  width: number;
+  height: number;
+};

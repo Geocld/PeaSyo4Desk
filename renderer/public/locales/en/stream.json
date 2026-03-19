@@ -1,5 +1,5 @@
 {
-  "Session_activity": "Host response received",
+  "Session_activity": "Console response received",
   "Session error": "Session error",
   "Connected": "Connected",
   "Connecting...": "Connecting...",
@@ -31,6 +31,10 @@
   "Brightness": "Brightness",
   "Brightness adjustment": "Brightness adjustment",
   "Current brightness": "Current brightness",
+  "FSR": "FSR",
+  "FSR adjustment": "FSR adjustment",
+  "FSR sharpness": "FSR sharpness",
+  "Current FSR sharpness": "Current FSR sharpness",
   "Reset": "Reset",
   "Confirm": "Confirm"
 }

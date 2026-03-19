@@ -45,6 +45,10 @@ function ActionBar(props) {
     props.onAdjustBrightness && props.onAdjustBrightness();
   };
 
+  const handleAdjustFsr = () => {
+    props.onAdjustFsr && props.onAdjustFsr();
+  };
+
   const disconnectPowerActionLabel =
     props.type === "remoteplay"
       ? t("Disconnect and standby")
@@ -95,6 +99,14 @@ function ActionBar(props) {
             props.connectState === CONNECTED && props.onAdjustBrightness && (
               <DropdownItem key="brightness" onClick={handleAdjustBrightness}>
                 {props.brightnessLabel || t("Brightness")}
+              </DropdownItem>
+            )
+          }
+
+          {
+            props.connectState === CONNECTED && props.onAdjustFsr && (
+              <DropdownItem key="fsr" onClick={handleAdjustFsr}>
+                {props.fsrLabel || t("FSR")}
               </DropdownItem>
             )
           }

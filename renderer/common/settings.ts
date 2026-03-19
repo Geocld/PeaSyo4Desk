@@ -49,6 +49,16 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "fsr",
+        type: "radio",
+        title: t("FSR"),
+        description: t("FSR_desc"),
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
         name: "theme",
         type: "radio",
         title: t("Theme"),
