@@ -1805,6 +1805,8 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
       ? requestedBitrate
       : defaultBitrate;
   let profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
+
+  // FIXME: Windows seems to have worse frame pacing with H265 at 1080p60, so force H264 for that specific case until it's resolved
   const isWindowsRealtime1080p60 =
     process.platform === "win32" &&
     profileResolution.width >= 1920 &&
