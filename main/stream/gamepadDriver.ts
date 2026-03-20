@@ -28,6 +28,8 @@ const CONTROLLER_ANALOG_BUTTONS = {
   L2: 1 << 16,
   R2: 1 << 17,
 };
+const TRIGGER_DEADZONE = 0.03;
+const TRIGGER_DIGITAL_PRESS_STATE = 8;
 
 type ControllerStateSnapshot = {
   buttons: number;
@@ -120,7 +122,16 @@ const toTriggerState = (value: unknown) => {
   } else {
     normalized = Math.max(0, Math.min(1, numeric));
   }
+
+  if (normalized <= TRIGGER_DEADZONE) {
+    return 0;
+  }
+
   return Math.max(0, Math.min(255, Math.round(normalized * 255)));
+};
+
+const isTriggerPressed = (value: unknown) => {
+  return toTriggerState(value) >= TRIGGER_DIGITAL_PRESS_STATE;
 };
 
 const normalizeInputToken = (value: unknown) => {
@@ -460,11 +471,11 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       state.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
     }
 
-    if (isPressed(getButtonValue(buttons, ["leftTriggerButton", "leftTrigger", "6"]))) {
+    if (isTriggerPressed(getButtonValue(buttons, ["leftTriggerButton", "leftTrigger", "6"]))) {
       state.l2State = Math.max(state.l2State, 255);
       state.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
     }
-    if (isPressed(getButtonValue(buttons, ["rightTriggerButton", "rightTrigger", "7"]))) {
+    if (isTriggerPressed(getButtonValue(buttons, ["rightTriggerButton", "rightTrigger", "7"]))) {
       state.r2State = Math.max(state.r2State, 255);
       state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
     }
