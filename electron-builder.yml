@@ -12,10 +12,6 @@ files:
       - package.json
       - app
 extraResources:
-  - from: main/chiaki
-    to: chiaki
-    filter:
-      - chiaki-lib*.node
   - from: node_modules/@ffmpeg-installer
     to: ffmpeg-installer
     filter:
@@ -29,7 +25,7 @@ publish:
 mac:
   category: public.app-category.games
   icon: resources/icon.icns
-  x64ArchFiles: "{Contents/Resources/chiaki/*.node,Contents/Resources/ffmpeg-installer/**/*}"
+  mergeASARs: false
   target: 
   - target: dmg
     arch: 
