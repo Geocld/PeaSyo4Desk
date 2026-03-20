@@ -7,7 +7,7 @@ import { PassThrough } from "node:stream";
 import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
-import chiaki from "../chiaki";
+import chiaki from "chiaki-lib";
 import {
   createNodeGamepadDriver,
   type ControllerStateSnapshot,

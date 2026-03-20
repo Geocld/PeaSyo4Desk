@@ -6,7 +6,7 @@ import dns from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import chiaki from "../chiaki";
+import chiaki from "chiaki-lib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { StreamSessionService } from "../stream/session";
 
