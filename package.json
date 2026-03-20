@@ -17,6 +17,7 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@heroui/react": "^2.8.1",
+    "@kmamal/sdl": "^0.11.13",
     "axios": "^1.7.7",
     "compare-versions": "^6.1.0",
     "debounce": "^2.1.1",

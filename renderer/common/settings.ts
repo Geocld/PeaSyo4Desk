@@ -59,6 +59,16 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "gamepad_kernel",
+        type: "radio",
+        title: t("Gamepad input kernel"),
+        description: t("Gamepad input kernel desc"),
+        data: [
+          { value: "node", label: t("Native") },
+          { value: "web", label: t("Web") },
+        ],
+      },
+      {
         name: "theme",
         type: "radio",
         title: t("Theme"),

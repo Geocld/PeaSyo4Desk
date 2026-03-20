@@ -8,6 +8,10 @@ import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
 import chiaki from "../chiaki";
+import {
+  createNodeGamepadDriver,
+  type ControllerStateSnapshot,
+} from "./gamepadDriver";
 
 const STREAM_WS_HOST = "127.0.0.1";
 const STREAM_WS_PATH = "/stream";
@@ -109,7 +113,11 @@ type StreamSessionSettings = {
   remote_bitrate_mode?: string;
   remote_codec?: string;
   remote_fps?: number;
+  gamepad_kernel?: unknown;
+  gamepad_kernal?: unknown;
 };
+
+type ControllerKernel = "web" | "node";
 
 type StreamPixelFormat = typeof SDR_STREAM_FORMAT | typeof HDR_STREAM_FORMAT;
 
@@ -247,6 +255,26 @@ const controllerState = {
   rightX: 0,
   rightY: 0,
 };
+const frontendControllerState: ControllerStateSnapshot = {
+  buttons: 0,
+  l2State: 0,
+  r2State: 0,
+  leftX: 0,
+  leftY: 0,
+  rightX: 0,
+  rightY: 0,
+};
+const nodeControllerState: ControllerStateSnapshot = {
+  buttons: 0,
+  l2State: 0,
+  r2State: 0,
+  leftX: 0,
+  leftY: 0,
+  rightX: 0,
+  rightY: 0,
+};
+let controllerKernel: ControllerKernel = "node";
+let nodeGamepadDriver: ReturnType<typeof createNodeGamepadDriver> | null = null;
 const controllerButtonRefCounts = new Map<string, number>();
 
 type ControllerStatePayload = {
@@ -558,23 +586,56 @@ const clampInt = (value: unknown, min: number, max: number) => {
   return Math.trunc(numeric);
 };
 
-const setControllerButtonState = (key: string, pressed: boolean) => {
-  const mask = BUTTON_NAME_TO_MASK[key];
-  if (!mask) {
-    return;
+const resetControllerState = (state: ControllerStateSnapshot) => {
+  state.buttons = 0;
+  state.l2State = 0;
+  state.r2State = 0;
+  state.leftX = 0;
+  state.leftY = 0;
+  state.rightX = 0;
+  state.rightY = 0;
+};
+
+const setNormalizedControllerState = (
+  target: ControllerStateSnapshot,
+  state: ControllerStatePayload | ControllerStateSnapshot
+) => {
+  target.buttons = clampInt((state as any).buttons, 0, 0xffffffff) >>> 0;
+  target.l2State = clampInt((state as any).l2State, 0, 255);
+  target.r2State = clampInt((state as any).r2State, 0, 255);
+  target.leftX = clampInt((state as any).leftX, -32768, 32767);
+  target.leftY = clampInt((state as any).leftY, -32768, 32767);
+  target.rightX = clampInt((state as any).rightX, -32768, 32767);
+  target.rightY = clampInt((state as any).rightY, -32768, 32767);
+};
+
+const mergeAxisInput = (primary: number, secondary: number) => {
+  return Math.abs(primary) >= Math.abs(secondary) ? primary : secondary;
+};
+
+const buildEffectiveControllerState = (): ControllerStateSnapshot => {
+  if (controllerKernel !== "node") {
+    return { ...frontendControllerState };
   }
 
-  if (pressed) {
-    controllerState.buttons |= mask;
-  } else {
-    controllerState.buttons &= ~mask;
+  const merged: ControllerStateSnapshot = {
+    buttons: (frontendControllerState.buttons | nodeControllerState.buttons) >>> 0,
+    l2State: Math.max(frontendControllerState.l2State, nodeControllerState.l2State),
+    r2State: Math.max(frontendControllerState.r2State, nodeControllerState.r2State),
+    leftX: mergeAxisInput(frontendControllerState.leftX, nodeControllerState.leftX),
+    leftY: mergeAxisInput(frontendControllerState.leftY, nodeControllerState.leftY),
+    rightX: mergeAxisInput(frontendControllerState.rightX, nodeControllerState.rightX),
+    rightY: mergeAxisInput(frontendControllerState.rightY, nodeControllerState.rightY),
+  };
+
+  if (merged.l2State > 0) {
+    merged.buttons |= ANALOG_BUTTONS.L2;
+  }
+  if (merged.r2State > 0) {
+    merged.buttons |= ANALOG_BUTTONS.R2;
   }
 
-  if (key === "l2") {
-    controllerState.l2State = pressed ? 0xff : 0;
-  } else if (key === "r2") {
-    controllerState.r2State = pressed ? 0xff : 0;
-  }
+  return merged;
 };
 
 const pushControllerState = (reason: string) => {
@@ -586,6 +647,106 @@ const pushControllerState = (reason: string) => {
     streamSession.setControllerState(controllerState);
   } catch (error: any) {
     log(`setControllerState failed (${reason}):`, error?.message || String(error));
+  }
+};
+
+const applyEffectiveControllerState = (reason: string) => {
+  const nextState = buildEffectiveControllerState();
+  controllerState.buttons = nextState.buttons;
+  controllerState.l2State = nextState.l2State;
+  controllerState.r2State = nextState.r2State;
+  controllerState.leftX = nextState.leftX;
+  controllerState.leftY = nextState.leftY;
+  controllerState.rightX = nextState.rightX;
+  controllerState.rightY = nextState.rightY;
+  pushControllerState(reason);
+};
+
+const applyNodeControllerState = (state: ControllerStateSnapshot, reason: string) => {
+  setNormalizedControllerState(nodeControllerState, state);
+  applyEffectiveControllerState(reason);
+};
+
+const resolveControllerKernel = (settings: StreamSessionSettings | null | undefined): ControllerKernel => {
+  const normalizedKernel = String(settings?.gamepad_kernel || "").trim().toLowerCase();
+  if (normalizedKernel === "web" || normalizedKernel === "node") {
+    return normalizedKernel;
+  }
+
+  const legacyKernel = String(settings?.gamepad_kernal || "").trim().toLowerCase();
+  if (legacyKernel === "web" || legacyKernel === "node") {
+    return legacyKernel;
+  }
+
+  return "node";
+};
+
+const stopNodeGamepadDriver = () => {
+  if (!nodeGamepadDriver) {
+    resetControllerState(nodeControllerState);
+    return;
+  }
+
+  nodeGamepadDriver.stop();
+  nodeGamepadDriver = null;
+  resetControllerState(nodeControllerState);
+};
+
+const startNodeGamepadDriver = () => {
+  if (controllerKernel !== "node") {
+    stopNodeGamepadDriver();
+    return;
+  }
+
+  if (!nodeGamepadDriver) {
+    nodeGamepadDriver = createNodeGamepadDriver({
+      onStateChange: (state) => {
+        applyNodeControllerState(state, "node-sdl:state");
+      },
+      onError: (error) => {
+        log("node-sdl driver error:", error?.message || String(error));
+      },
+      onLog: (message) => {
+        log(message);
+      },
+    });
+  }
+
+  const started = nodeGamepadDriver.start();
+  if (!started) {
+    log("node-sdl driver unavailable, node kernel will run without native gamepad input.");
+    stopNodeGamepadDriver();
+  }
+};
+
+const configureControllerKernel = (settings: StreamSessionSettings | null | undefined) => {
+  controllerKernel = resolveControllerKernel(settings);
+  if (controllerKernel === "node") {
+    startNodeGamepadDriver();
+  } else {
+    stopNodeGamepadDriver();
+  }
+
+  applyEffectiveControllerState("controller-kernel:init");
+  log(`controller kernel: ${controllerKernel}`);
+};
+
+const setControllerButtonState = (key: string, pressed: boolean) => {
+  const mask = BUTTON_NAME_TO_MASK[key];
+  if (!mask) {
+    return;
+  }
+
+  if (pressed) {
+    frontendControllerState.buttons |= mask;
+  } else {
+    frontendControllerState.buttons &= ~mask;
+  }
+
+  if (key === "l2") {
+    frontendControllerState.l2State = pressed ? 0xff : 0;
+  } else if (key === "r2") {
+    frontendControllerState.r2State = pressed ? 0xff : 0;
   }
 };
 
@@ -651,7 +812,7 @@ const releaseClientPressedButtons = (socket: any, reason: string) => {
   }
 
   if (changed) {
-    pushControllerState(reason);
+    applyEffectiveControllerState(reason);
   }
 };
 
@@ -725,7 +886,7 @@ const postNativeTypedBinary = (kind: number, payload: Buffer) => {
 
   try {
     const webContents = streamWebContents as WebContents;
-    const transferBuffer = payload.buffer as ArrayBuffer;
+    const transferBuffer = payload.buffer as any;
     webContents.postMessage(
       "stream-binary",
       {
@@ -803,7 +964,7 @@ const handleWsControlText = (socket: any, message: any) => {
 
   const changed = updateControllerStateFromClient(socket, key, !!message?.pressed);
   if (changed) {
-    pushControllerState(`ws:${key}:${message?.pressed ? "down" : "up"}`);
+    applyEffectiveControllerState(`ws:${key}:${message?.pressed ? "down" : "up"}`);
   }
 };
 
@@ -812,15 +973,8 @@ const applyControllerState = (state: ControllerStatePayload | null | undefined, 
     return;
   }
 
-  controllerState.buttons = (clampInt(state.buttons, 0, 0xffffffff) >>> 0);
-  controllerState.l2State = clampInt(state.l2State, 0, 255);
-  controllerState.r2State = clampInt(state.r2State, 0, 255);
-  controllerState.leftX = clampInt(state.leftX, -32768, 32767);
-  controllerState.leftY = clampInt(state.leftY, -32768, 32767);
-  controllerState.rightX = clampInt(state.rightX, -32768, 32767);
-  controllerState.rightY = clampInt(state.rightY, -32768, 32767);
-
-  pushControllerState(reason);
+  setNormalizedControllerState(frontendControllerState, state);
+  applyEffectiveControllerState(reason);
 };
 
 const handleWsControlState = (message: any) => {
@@ -1580,14 +1734,11 @@ const cleanupSessionOnly = () => {
   for (const socket of wsClients) {
     releaseClientPressedButtons(socket, "session-stop");
   }
+  stopNodeGamepadDriver();
   controllerButtonRefCounts.clear();
-  controllerState.buttons = 0;
-  controllerState.l2State = 0;
-  controllerState.r2State = 0;
-  controllerState.leftX = 0;
-  controllerState.leftY = 0;
-  controllerState.rightX = 0;
-  controllerState.rightY = 0;
+  resetControllerState(controllerState);
+  resetControllerState(frontendControllerState);
+  resetControllerState(nodeControllerState);
   pendingDirectControllerState = null;
   directControllerStateFlushScheduled = false;
 
@@ -1846,6 +1997,7 @@ const startSession = async (args: StartStreamSessionArgs) => {
     await stopSession(false);
   }
 
+  configureControllerKernel(args.settings);
   const sessionOptions = buildSessionOptions(args);
   createVideoDecodePipeline();
   createSession(sessionOptions);

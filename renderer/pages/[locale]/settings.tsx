@@ -50,6 +50,20 @@ type BasicStreamDraft = {
   remote_fps: number;
 };
 
+const resolveGamepadKernel = (settings: any): "web" | "node" => {
+  const direct = String(settings?.gamepad_kernel || "").trim().toLowerCase();
+  if (direct === "web" || direct === "node") {
+    return direct;
+  }
+
+  const legacy = String(settings?.gamepad_kernal || "").trim().toLowerCase();
+  if (legacy === "web" || legacy === "node") {
+    return legacy;
+  }
+
+  return "node";
+};
+
 const getAutoBitrateForResolution = (resolution: number) => {
   if (resolution >= 1080) return 27000;
   if (resolution >= 720) return 10000;
@@ -192,11 +206,20 @@ function SettingsPage() {
   const localMetas = settingsMetas.local || [];
   const remoteMetas = settingsMetas.remote || [];
   const shouldShowFeedbackEntry = settings?.locale === "zh" || settings?.locale === "zht";
+  const isWebGamepadKernel = resolveGamepadKernel(settings) === "web";
   const visibleOtherMetas = useMemo(
     () => (settingsMetas.others || []).filter(
-      (item: any) => item.action !== "open-feedback" || shouldShowFeedbackEntry
+      (item: any) => {
+        if (item.action === "open-feedback") {
+          return shouldShowFeedbackEntry;
+        }
+        if (item.action === "open-map") {
+          return isWebGamepadKernel;
+        }
+        return true;
+      }
     ),
-    [settingsMetas, shouldShowFeedbackEntry]
+    [settingsMetas, shouldShowFeedbackEntry, isWebGamepadKernel]
   );
 
   const syncDraft = (nextDraft: BasicStreamDraft) => {

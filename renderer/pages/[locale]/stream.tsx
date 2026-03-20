@@ -141,6 +141,25 @@ type ControllerStatePayload = {
 };
 
 type VideoDisplayFormat = "default" | "stretch" | "zoom";
+type ControllerInputKernel = "web" | "node";
+
+const resolveControllerInputKernel = (settings: Record<string, any> | null | undefined): ControllerInputKernel => {
+  const direct = String(settings?.gamepad_kernel || "")
+    .trim()
+    .toLowerCase();
+  if (direct === "web" || direct === "node") {
+    return direct;
+  }
+
+  const legacy = String(settings?.gamepad_kernal || "")
+    .trim()
+    .toLowerCase();
+  if (legacy === "web" || legacy === "node") {
+    return legacy;
+  }
+
+  return "node";
+};
 
 const NON_ERROR_SESSION_EVENT_NAMES = new Set([
   "connected",
@@ -479,6 +498,9 @@ function StreamPage() {
   const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
   const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
   const gamepadMappingRef = useRef({ ...DEFAULT_GAMEPAD_BUTTON_MAPPING });
+  const controllerInputKernelRef = useRef<ControllerInputKernel>(
+    resolveControllerInputKernel(defaultSettings as Record<string, any>)
+  );
   const nativeBinaryTransportRef = useRef(false);
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
@@ -522,6 +544,10 @@ function StreamPage() {
       settings?.input_mousekeyboard_maping
     );
     gamepadMappingRef.current = normalizeGamepadButtonMapping(settings?.gamepad_maping);
+    controllerInputKernelRef.current = resolveControllerInputKernel({
+      gamepad_kernel: settings?.gamepad_kernel,
+      gamepad_kernal: settings?.gamepad_kernal,
+    });
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
       settings?.polling_rate
@@ -558,7 +584,13 @@ function StreamPage() {
     return () => {
       if (mouseInterval) clearInterval(mouseInterval);
     }
-  }, [settings?.polling_rate, settings?.input_mousekeyboard_maping, settings?.gamepad_maping]);
+  }, [
+    settings?.polling_rate,
+    settings?.input_mousekeyboard_maping,
+    settings?.gamepad_maping,
+    settings?.gamepad_kernel,
+    settings?.gamepad_kernal,
+  ]);
 
   useEffect(() => {
     fsrEnabledRef.current = !!settings?.fsr;
@@ -1909,7 +1941,9 @@ function StreamPage() {
   };
 
   const buildMergedControllerState = () => {
-    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const useWebGamepadKernel = controllerInputKernelRef.current === "web";
+    const gamepads =
+      useWebGamepadKernel && navigator.getGamepads ? navigator.getGamepads() : [];
     let validCount = 0;
     const mergedState: ControllerStatePayload = createIdleControllerState();
 
@@ -1921,8 +1955,10 @@ function StreamPage() {
     const validGamepads = Array.from(gamepads).filter((gamepad): gamepad is Gamepad => {
       return !!gamepad && gamepad.connected && Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
     });
-    const configuredGamepadIndex = Number(settings?.gamepad_index);
-    const shouldMixGamepads = !!settings?.gamepad_mix;
+    const configuredGamepadIndex = useWebGamepadKernel
+      ? Number(settings?.gamepad_index)
+      : -1;
+    const shouldMixGamepads = useWebGamepadKernel && !!settings?.gamepad_mix;
     let activeGamepads = validGamepads;
 
     if (!shouldMixGamepads) {
