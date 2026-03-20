@@ -1715,12 +1715,12 @@ function StreamPage() {
     receivedFramesRef.current += 1;
     if (latestFrameRef.current) {
       droppedFramesRef.current += 1;
-      if (nativeBinaryTransportRef.current) {
-        Ipc.sendStreamVideoFrameRendered();
-      }
     }
 
     latestFrameRef.current = frameBytes;
+    if (nativeBinaryTransportRef.current) {
+      Ipc.sendStreamVideoFrameRendered();
+    }
     if (!renderLoopScheduledRef.current) {
       renderLoopScheduledRef.current = true;
       rafRef.current = requestAnimationFrame(renderLoop);
@@ -2161,9 +2161,6 @@ function StreamPage() {
           drawFsrFrame();
         }
         renderedFramesRef.current += 1;
-        if (nativeBinaryTransportRef.current) {
-          Ipc.sendStreamVideoFrameRendered();
-        }
 
         if (!videoReadyRef.current) {
           videoReadyRef.current = true;

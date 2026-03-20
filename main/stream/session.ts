@@ -21,11 +21,11 @@ const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
-const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = process.platform === "win32" ? 140 : 250;
+const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = process.platform === "win32" ? 100 : 250;
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = process.platform === "win32"
-  ? 1024 * 1024
+  ? 256 * 1024
   : 4 * 1024 * 1024;
-const MAX_PENDING_VIDEO_CHUNKS_FRAMES = process.platform === "win32" ? 3 : 4;
+const MAX_PENDING_VIDEO_CHUNKS_FRAMES = process.platform === "win32" ? 2 : 4;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -557,6 +557,11 @@ const resolveInputFormat = (codec: number) => {
 
 const getVideoDecoderInputOptions = () => {
   const options: string[] = ["-fflags +genpts"];
+
+  if (process.platform === "win32") {
+    // Keep decoder queue shallow to reduce frame-thread reordering latency.
+    options.push("-threads 1");
+  }
 
   // This pipeline always downloads decoded frames back to system memory for IPC transport.
   // On macOS, videotoolbox still performs well here.
