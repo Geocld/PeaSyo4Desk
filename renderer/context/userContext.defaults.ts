@@ -15,7 +15,7 @@ export const defaultSettings = {
   polling_rate: 250,
   coop: false,
   rumble: true,
-  gamepad_kernel: "node",
+  gamepad_kernel: "web",
   gamepad_mix: false,
   gamepad_index: -1,
   dead_zone: 0.1,
