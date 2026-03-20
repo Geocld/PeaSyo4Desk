@@ -148,6 +148,18 @@ jobs:
       - name: Install yarn dependencies
         run: yarn
 
+      - name: Ensure FFmpeg binaries for both mac architectures
+        if: matrix.os == 'macos-latest'
+        run: |
+          npm install --no-save --force @ffmpeg-installer/darwin-x64@4.1.0 @ffmpeg-installer/darwin-arm64@4.1.5
+
+      - name: Verify bundled FFmpeg binaries on mac
+        if: matrix.os == 'macos-latest'
+        run: |
+          test -x node_modules/@ffmpeg-installer/darwin-x64/ffmpeg
+          test -x node_modules/@ffmpeg-installer/darwin-arm64/ffmpeg
+          ls -la node_modules/@ffmpeg-installer/darwin-x64/ffmpeg node_modules/@ffmpeg-installer/darwin-arm64/ffmpeg
+
       - name: Build/release Electron app
         uses: samuelmeuli/action-electron-builder@v1.6.0
         with:

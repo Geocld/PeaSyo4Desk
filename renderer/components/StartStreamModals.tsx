@@ -112,7 +112,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
 
   const title = useMemo(() => {
     if (props.consoleItem?.serverNickname) {
-      return `${t("Start stream")} - ${props.consoleItem.serverNickname}`;
+      return `${props.consoleItem.serverNickname}`;
     }
     return t("Start stream");
   }, [props.consoleItem?.serverNickname, t]);
