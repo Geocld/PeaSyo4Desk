@@ -26,6 +26,7 @@ mac:
   category: public.app-category.games
   icon: resources/icon.icns
   mergeASARs: false
+  x64ArchFiles: "{Contents/Resources/ffmpeg-installer/**/*,Contents/Resources/app.asar.unpacked/node_modules/@kmamal/sdl/dist/**/*}"
   target: 
   - target: dmg
     arch: 
