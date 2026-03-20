@@ -1706,6 +1706,12 @@ function StreamPage() {
       return;
     }
 
+    if (!sessionConnectedRef.current) {
+      sessionConnectedRef.current = true;
+      setConnectState("connected");
+      setStatus(t("Connected"));
+    }
+
     receivedFramesRef.current += 1;
     if (latestFrameRef.current) {
       droppedFramesRef.current += 1;
