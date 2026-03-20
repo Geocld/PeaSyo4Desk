@@ -272,6 +272,16 @@ const nodeControllerState: ControllerStateSnapshot = {
   rightX: 0,
   rightY: 0,
 };
+const lastSubmittedControllerState: ControllerStateSnapshot = {
+  buttons: 0,
+  l2State: 0,
+  r2State: 0,
+  leftX: 0,
+  leftY: 0,
+  rightX: 0,
+  rightY: 0,
+};
+let hasSubmittedControllerState = false;
 let controllerKernel: ControllerKernel = "node";
 let nodeGamepadDriver: ReturnType<typeof createNodeGamepadDriver> | null = null;
 const controllerButtonRefCounts = new Map<string, number>();
@@ -595,6 +605,28 @@ const resetControllerState = (state: ControllerStateSnapshot) => {
   state.rightY = 0;
 };
 
+const copyControllerState = (target: ControllerStateSnapshot, source: ControllerStateSnapshot) => {
+  target.buttons = source.buttons;
+  target.l2State = source.l2State;
+  target.r2State = source.r2State;
+  target.leftX = source.leftX;
+  target.leftY = source.leftY;
+  target.rightX = source.rightX;
+  target.rightY = source.rightY;
+};
+
+const isSameControllerState = (left: ControllerStateSnapshot, right: ControllerStateSnapshot) => {
+  return (
+    left.buttons === right.buttons &&
+    left.l2State === right.l2State &&
+    left.r2State === right.r2State &&
+    left.leftX === right.leftX &&
+    left.leftY === right.leftY &&
+    left.rightX === right.rightX &&
+    left.rightY === right.rightY
+  );
+};
+
 const setNormalizedControllerState = (
   target: ControllerStateSnapshot,
   state: ControllerStatePayload | ControllerStateSnapshot
@@ -642,8 +674,14 @@ const pushControllerState = (reason: string) => {
     return;
   }
 
+  if (hasSubmittedControllerState && isSameControllerState(controllerState, lastSubmittedControllerState)) {
+    return;
+  }
+
   try {
     streamSession.setControllerState(controllerState);
+    copyControllerState(lastSubmittedControllerState, controllerState);
+    hasSubmittedControllerState = true;
   } catch (error: any) {
     log(`setControllerState failed (${reason}):`, error?.message || String(error));
   }
@@ -651,13 +689,12 @@ const pushControllerState = (reason: string) => {
 
 const applyEffectiveControllerState = (reason: string) => {
   const nextState = buildEffectiveControllerState();
-  controllerState.buttons = nextState.buttons;
-  controllerState.l2State = nextState.l2State;
-  controllerState.r2State = nextState.r2State;
-  controllerState.leftX = nextState.leftX;
-  controllerState.leftY = nextState.leftY;
-  controllerState.rightX = nextState.rightX;
-  controllerState.rightY = nextState.rightY;
+
+  if (isSameControllerState(controllerState, nextState)) {
+    return;
+  }
+
+  copyControllerState(controllerState, nextState);
   pushControllerState(reason);
 };
 
@@ -1733,6 +1770,8 @@ const cleanupSessionOnly = () => {
   resetControllerState(controllerState);
   resetControllerState(frontendControllerState);
   resetControllerState(nodeControllerState);
+  resetControllerState(lastSubmittedControllerState);
+  hasSubmittedControllerState = false;
   pendingDirectControllerState = null;
   directControllerStateFlushScheduled = false;
 

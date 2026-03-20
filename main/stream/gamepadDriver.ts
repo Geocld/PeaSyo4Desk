@@ -46,7 +46,6 @@ type NodeGamepadDriverOptions = {
 };
 
 type MutableControllerState = ControllerStateSnapshot;
-const NODE_GAMEPAD_SAMPLE_INTERVAL_MS = 8;
 
 const createIdleState = (): MutableControllerState => ({
   buttons: 0,
@@ -68,15 +67,26 @@ const cloneState = (state: MutableControllerState): ControllerStateSnapshot => (
   rightY: state.rightY,
 });
 
-const mergeDeviceStates = (target: MutableControllerState, source: MutableControllerState) => {
-  target.buttons |= source.buttons;
-  target.l2State = Math.max(target.l2State, source.l2State);
-  target.r2State = Math.max(target.r2State, source.r2State);
+const copyState = (target: MutableControllerState, source: MutableControllerState) => {
+  target.buttons = source.buttons;
+  target.l2State = source.l2State;
+  target.r2State = source.r2State;
+  target.leftX = source.leftX;
+  target.leftY = source.leftY;
+  target.rightX = source.rightX;
+  target.rightY = source.rightY;
+};
 
-  if (Math.abs(source.leftX) > Math.abs(target.leftX)) target.leftX = source.leftX;
-  if (Math.abs(source.leftY) > Math.abs(target.leftY)) target.leftY = source.leftY;
-  if (Math.abs(source.rightX) > Math.abs(target.rightX)) target.rightX = source.rightX;
-  if (Math.abs(source.rightY) > Math.abs(target.rightY)) target.rightY = source.rightY;
+const isSameState = (left: MutableControllerState, right: MutableControllerState) => {
+  return (
+    left.buttons === right.buttons &&
+    left.l2State === right.l2State &&
+    left.r2State === right.r2State &&
+    left.leftX === right.leftX &&
+    left.leftY === right.leftY &&
+    left.rightX === right.rightX &&
+    left.rightY === right.rightY
+  );
 };
 
 const toSignedAxisValue = (value: unknown) => {
@@ -262,13 +272,15 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   let sdl: any = null;
   const controllerInstances = new Map<string, any>();
   const deviceStates = new Map<string, MutableControllerState>();
-  let sampleTimer: ReturnType<typeof setInterval> | null = null;
-  let lastStateKey = "";
+  const lastEmittedState = createIdleState();
+  const idleState = createIdleState();
+  let hasLastEmittedState = false;
+  let activeDeviceId: string | null = null;
 
   const setButtonState = (state: MutableControllerState, token: string, pressed: boolean) => {
     const mask = BUTTON_TOKEN_TO_MASK[token];
     if (!mask) {
-      return;
+      return false;
     }
 
     if (pressed) {
@@ -282,29 +294,31 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     } else if (mask === CONTROLLER_ANALOG_BUTTONS.R2) {
       state.r2State = pressed ? 255 : 0;
     }
+
+    return true;
   };
 
   const setAxisState = (state: MutableControllerState, axisToken: string, rawValue: unknown) => {
     const axisName = AXIS_TOKEN_TO_NAME[axisToken];
     if (!axisName) {
-      return;
+      return false;
     }
 
     if (axisName === "leftX") {
       state.leftX = toSignedAxisValue(rawValue);
-      return;
+      return true;
     }
     if (axisName === "leftY") {
       state.leftY = toSignedAxisValue(rawValue);
-      return;
+      return true;
     }
     if (axisName === "rightX") {
       state.rightX = toSignedAxisValue(rawValue);
-      return;
+      return true;
     }
     if (axisName === "rightY") {
       state.rightY = toSignedAxisValue(rawValue);
-      return;
+      return true;
     }
 
     const triggerValue = toTriggerState(rawValue);
@@ -315,7 +329,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       } else {
         state.buttons &= ~CONTROLLER_ANALOG_BUTTONS.L2;
       }
-      return;
+      return true;
     }
 
     state.r2State = triggerValue;
@@ -324,28 +338,45 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     } else {
       state.buttons &= ~CONTROLLER_ANALOG_BUTTONS.R2;
     }
+    return true;
   };
 
-  const emitMergedState = () => {
-    const merged = createIdleState();
-    for (const state of deviceStates.values()) {
-      mergeDeviceStates(merged, state);
+  const emitState = (sourceState: MutableControllerState) => {
+    const nextState = cloneState(sourceState);
+
+    if (nextState.l2State > 0) {
+      nextState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
+    }
+    if (nextState.r2State > 0) {
+      nextState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
     }
 
-    if (merged.l2State > 0) {
-      merged.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
-    }
-    if (merged.r2State > 0) {
-      merged.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
-    }
-
-    const stateKey = `${merged.buttons}|${merged.l2State}|${merged.r2State}|${merged.leftX}|${merged.leftY}|${merged.rightX}|${merged.rightY}`;
-    if (stateKey === lastStateKey) {
+    if (hasLastEmittedState && isSameState(nextState, lastEmittedState)) {
       return;
     }
 
-    lastStateKey = stateKey;
-    onStateChange(cloneState(merged));
+    copyState(lastEmittedState, nextState);
+    hasLastEmittedState = true;
+    onStateChange(nextState);
+  };
+
+  const emitActiveDeviceState = () => {
+    if (activeDeviceId) {
+      const activeState = deviceStates.get(activeDeviceId);
+      if (activeState) {
+        emitState(activeState);
+        return;
+      }
+    }
+
+    const firstEntry = deviceStates.entries().next().value as [string, MutableControllerState] | undefined;
+    if (firstEntry) {
+      activeDeviceId = firstEntry[0];
+      emitState(firstEntry[1]);
+      return;
+    }
+
+    emitState(idleState);
   };
 
   const syncStateFromControllerInstance = (controller: any, state: MutableControllerState) => {
@@ -439,17 +470,6 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     }
   };
 
-  const sampleAllControllerStates = () => {
-    for (const [deviceId, controller] of controllerInstances.entries()) {
-      const state = deviceStates.get(deviceId);
-      if (!state) {
-        continue;
-      }
-      syncStateFromControllerInstance(controller, state);
-    }
-    emitMergedState();
-  };
-
   const closeController = (deviceId: string) => {
     const controller = controllerInstances.get(deviceId);
     onLog?.(`node-sdl controller disconnected: ${deviceId}`);
@@ -462,7 +482,10 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     }
     controllerInstances.delete(deviceId);
     deviceStates.delete(deviceId);
-    emitMergedState();
+    if (activeDeviceId === deviceId) {
+      activeDeviceId = null;
+    }
+    emitActiveDeviceState();
   };
 
   const openController = (device: any) => {
@@ -478,35 +501,51 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       const controllerState = createIdleState();
       deviceStates.set(deviceId, controllerState);
       syncStateFromControllerInstance(controller, controllerState);
+      if (!activeDeviceId) {
+        activeDeviceId = deviceId;
+      }
+      emitActiveDeviceState();
 
       controller.on("axisMotion", (event: any) => {
         const state = deviceStates.get(deviceId);
         if (!state) return;
-        setAxisState(state, normalizeInputToken(event?.axis), event?.value);
-        syncStateFromControllerInstance(controller, state);
-        emitMergedState();
+        const updated = setAxisState(state, normalizeInputToken(event?.axis), event?.value);
+        if (!updated) {
+          syncStateFromControllerInstance(controller, state);
+        }
+        activeDeviceId = deviceId;
+        emitState(state);
       });
 
       controller.on("buttonDown", (event: any) => {
         const state = deviceStates.get(deviceId);
         if (!state) return;
-        setButtonState(state, normalizeInputToken(event?.button), true);
-        syncStateFromControllerInstance(controller, state);
-        emitMergedState();
+        const updated = setButtonState(state, normalizeInputToken(event?.button), true);
+        if (!updated) {
+          syncStateFromControllerInstance(controller, state);
+        }
+        activeDeviceId = deviceId;
+        emitState(state);
       });
 
       controller.on("buttonUp", (event: any) => {
         const state = deviceStates.get(deviceId);
         if (!state) return;
-        setButtonState(state, normalizeInputToken(event?.button), false);
-        syncStateFromControllerInstance(controller, state);
-        emitMergedState();
+        const updated = setButtonState(state, normalizeInputToken(event?.button), false);
+        if (!updated) {
+          syncStateFromControllerInstance(controller, state);
+        }
+        activeDeviceId = deviceId;
+        emitState(state);
       });
 
       controller.on("close", () => {
         controllerInstances.delete(deviceId);
         deviceStates.delete(deviceId);
-        emitMergedState();
+        if (activeDeviceId === deviceId) {
+          activeDeviceId = null;
+        }
+        emitActiveDeviceState();
       });
     } catch (error: any) {
       onError?.(
@@ -554,12 +593,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     for (const device of devices) {
       openController(device);
     }
-    sampleAllControllerStates();
-    sampleTimer = setInterval(sampleAllControllerStates, NODE_GAMEPAD_SAMPLE_INTERVAL_MS);
-    sampleTimer.unref?.();
 
     started = true;
-    emitMergedState();
+    emitActiveDeviceState();
     return true;
   };
 
@@ -570,21 +606,19 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
 
     sdl?.controller?.removeListener?.("deviceAdd", handleDeviceAdd);
     sdl?.controller?.removeListener?.("deviceRemove", handleDeviceRemove);
-    if (sampleTimer) {
-      clearInterval(sampleTimer);
-      sampleTimer = null;
-    }
 
     for (const deviceId of Array.from(controllerInstances.keys())) {
       closeController(deviceId);
     }
     controllerInstances.clear();
     deviceStates.clear();
+    activeDeviceId = null;
     sdl = null;
     started = false;
 
-    lastStateKey = "";
-    onStateChange(createIdleState());
+    hasLastEmittedState = false;
+    copyState(lastEmittedState, idleState);
+    onStateChange(cloneState(idleState));
   };
 
   return {
