@@ -56,11 +56,6 @@ const resolveGamepadKernel = (settings: any): "web" | "node" => {
     return direct;
   }
 
-  const legacy = String(settings?.gamepad_kernal || "").trim().toLowerCase();
-  if (legacy === "web" || legacy === "node") {
-    return legacy;
-  }
-
   return "node";
 };
 

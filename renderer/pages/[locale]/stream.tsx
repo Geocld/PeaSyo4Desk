@@ -151,13 +151,6 @@ const resolveControllerInputKernel = (settings: Record<string, any> | null | und
     return direct;
   }
 
-  const legacy = String(settings?.gamepad_kernal || "")
-    .trim()
-    .toLowerCase();
-  if (legacy === "web" || legacy === "node") {
-    return legacy;
-  }
-
   return "node";
 };
 
@@ -546,7 +539,6 @@ function StreamPage() {
     gamepadMappingRef.current = normalizeGamepadButtonMapping(settings?.gamepad_maping);
     controllerInputKernelRef.current = resolveControllerInputKernel({
       gamepad_kernel: settings?.gamepad_kernel,
-      gamepad_kernal: settings?.gamepad_kernal,
     });
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
@@ -589,7 +581,6 @@ function StreamPage() {
     settings?.input_mousekeyboard_maping,
     settings?.gamepad_maping,
     settings?.gamepad_kernel,
-    settings?.gamepad_kernal,
   ]);
 
   useEffect(() => {

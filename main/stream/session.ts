@@ -114,7 +114,6 @@ type StreamSessionSettings = {
   remote_codec?: string;
   remote_fps?: number;
   gamepad_kernel?: unknown;
-  gamepad_kernal?: unknown;
 };
 
 type ControllerKernel = "web" | "node";
@@ -671,11 +670,6 @@ const resolveControllerKernel = (settings: StreamSessionSettings | null | undefi
   const normalizedKernel = String(settings?.gamepad_kernel || "").trim().toLowerCase();
   if (normalizedKernel === "web" || normalizedKernel === "node") {
     return normalizedKernel;
-  }
-
-  const legacyKernel = String(settings?.gamepad_kernal || "").trim().toLowerCase();
-  if (legacyKernel === "web" || legacyKernel === "node") {
-    return legacyKernel;
   }
 
   return "node";
