@@ -531,18 +531,18 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     }
 
     try {
-      sdl = runtimeRequire("@kmamal/sdl");
+      sdl = runtimeRequire("peasyo-sdl-lib");
     } catch (error: any) {
       onError?.(
         error instanceof Error
           ? error
-          : new Error(String(error || "Failed to load @kmamal/sdl."))
+          : new Error(String(error || "Failed to load peasyo-sdl-lib."))
       );
       return false;
     }
 
     if (!sdl?.controller) {
-      onError?.(new Error("Invalid @kmamal/sdl controller module."));
+      onError?.(new Error("Invalid peasyo-sdl-lib controller module."));
       return false;
     }
 

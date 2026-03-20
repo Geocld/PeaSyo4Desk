@@ -17,7 +17,6 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@heroui/react": "^2.8.1",
-    "@kmamal/sdl": "^0.11.13",
     "axios": "^1.7.7",
     "chiaki-lib": "^1.0.0",
     "compare-versions": "^6.1.0",
@@ -38,6 +37,7 @@
     "next-i18next": "^15.3.1",
     "next-themes": "^0.3.0",
     "node-hid": "^3.2.0",
+    "peasyo-sdl-lib": "1.0.2",
     "qrcode.react": "^4.2.0",
     "react-i18next": "^15.0.1",
     "react-query": "^3.39.3",

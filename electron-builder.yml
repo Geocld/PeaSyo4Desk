@@ -11,6 +11,8 @@ files:
     filter:
       - package.json
       - app
+asarUnpack:
+  - node_modules/peasyo-sdl-lib/**/*
 extraResources:
   - from: node_modules/@ffmpeg-installer
     to: ffmpeg-installer
@@ -26,7 +28,7 @@ mac:
   category: public.app-category.games
   icon: resources/icon.icns
   mergeASARs: false
-  x64ArchFiles: "{Contents/Resources/ffmpeg-installer/**/*,Contents/Resources/app.asar.unpacked/node_modules/@kmamal/sdl/dist/**/*}"
+  x64ArchFiles: "{Contents/Resources/ffmpeg-installer/**/*,Contents/Resources/app.asar.unpacked/node_modules/peasyo-sdl-lib/**/*}"
   target: 
   - target: dmg
     arch: 
