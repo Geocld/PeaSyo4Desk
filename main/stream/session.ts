@@ -20,8 +20,12 @@ const WS_BINARY_AUDIO = 2;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
-const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
-const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = 250;
+const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = process.platform === "win32" ? 1 : 2;
+const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = process.platform === "win32" ? 96 : 250;
+const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = process.platform === "win32"
+  ? 512 * 1024
+  : 4 * 1024 * 1024;
+const MAX_PENDING_VIDEO_CHUNKS_FRAMES = process.platform === "win32" ? 2 : 4;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -552,13 +556,24 @@ const resolveInputFormat = (codec: number) => {
 };
 
 const getVideoDecoderInputOptions = () => {
-  const options: string[] = [
-    "-fflags +genpts",
-  ];
+  // Windows low-latency path:
+  // - disable probing and deep buffering
+  // - force direct IO path where available
+  // - avoid timestamp synthesis that can increase end-to-end delay on live streams
+  if (process.platform === "win32") {
+    return [
+      "-fflags nobuffer",
+      "-flags low_delay",
+      "-avioflags direct",
+      "-probesize 32",
+      "-analyzeduration 0",
+    ];
+  }
+
+  const options: string[] = ["-fflags +genpts"];
 
   // This pipeline always downloads decoded frames back to system memory for IPC transport.
-  // On macOS, videotoolbox still performs well here. On Windows, `-hwaccel auto` often
-  // selects a path that adds expensive GPU->CPU readback and hurts frame pacing.
+  // On macOS, videotoolbox still performs well here.
   if (process.platform === "darwin") {
     options.push("-hwaccel videotoolbox");
   }
@@ -1276,7 +1291,7 @@ const queueVideoBroadcastFrame = (frame: Buffer) => {
   }
 
   videoBroadcastFlushScheduled = true;
-  setImmediate(flushPendingVideoBroadcastFrame);
+  flushPendingVideoBroadcastFrame();
 };
 
 const notifyVideoFrameRendered = () => {
@@ -1293,7 +1308,7 @@ const notifyVideoFrameRendered = () => {
   }
 
   videoBroadcastFlushScheduled = true;
-  setImmediate(flushPendingVideoBroadcastFrame);
+  flushPendingVideoBroadcastFrame();
 };
 
 const handleDecodedVideoChunk = (chunk: Buffer) => {
@@ -1345,7 +1360,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
     queueVideoBroadcastFrame(frame);
   }
 
-  if (pendingBytes > frameSize * 4) {
+  if (pendingBytes > frameSize * MAX_PENDING_VIDEO_CHUNKS_FRAMES) {
     pendingChunks.length = 0;
     pendingBytes = 0;
   }
@@ -1359,7 +1374,7 @@ const createVideoDecodePipeline = () => {
   destroyVideoPipeline();
 
   ffmpegInput = new PassThrough({
-    highWaterMark: 4 * 1024 * 1024,
+    highWaterMark: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
   });
 
   ffmpegCommand = ffmpeg(ffmpegInput)
@@ -1367,6 +1382,7 @@ const createVideoDecodePipeline = () => {
     .inputOptions(getVideoDecoderInputOptions())
     .outputOptions("-fflags", "nobuffer")
     .outputOptions("-flags", "low_delay")
+    .outputOptions("-vsync", "0")
     .outputOptions("-an")
     .outputOptions("-sn")
     .outputOptions("-dn")
