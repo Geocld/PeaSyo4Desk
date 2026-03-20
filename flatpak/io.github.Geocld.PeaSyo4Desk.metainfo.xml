@@ -3,7 +3,7 @@
   <id>io.github.Geocld.PeaSyo4Desk</id>
   <launchable type="desktop-id">io.github.Geocld.PeaSyo4Desk.desktop</launchable>
   <name>PeaSyo4Desk</name>
-  <project_license>AGPLv3</project_license>
+  <project_license>AGPL-3.0</project_license>
   <developer_name>Geocld</developer_name>
   <summary>PeaSyo4Desk: A simple desktop application for Playstation remote play.</summary>
   <metadata_license>CC0-1.0</metadata_license>
