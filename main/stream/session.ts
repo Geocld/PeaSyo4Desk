@@ -1,6 +1,7 @@
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
@@ -26,6 +27,9 @@ const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
+const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : 4 * 1024 * 1024;
+const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 1024 * 1024;
+const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -172,6 +176,20 @@ type VideoOutputFormat = {
   frameSize: number;
 };
 
+type VideoDecoderPlan = {
+  name: "software" | "vaapi";
+  inputOptions: string[];
+  filterGraph: string | null;
+  inputHighWaterMarkBytes: number;
+};
+
+type QueuedVideoSample = {
+  data: Buffer;
+  isSyncFrame: boolean;
+  hasConfig: boolean;
+  hasSlice: boolean;
+};
+
 type StreamPerformanceStats = {
   resolution: string;
   rtt: string;
@@ -210,12 +228,19 @@ let ffmpegInput: PassThrough | null = null;
 let ffmpegCommand: any = null;
 let ffmpegOutput: any = null;
 let ffmpegInputBlocked = false;
+const pendingVideoSamples: QueuedVideoSample[] = [];
+let pendingVideoSampleBytes = 0;
 const pendingChunks: Buffer[] = [];
 let pendingBytes = 0;
 let pendingVideoBroadcastFrame: Buffer | null = null;
 let videoBroadcastFlushScheduled = false;
 let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
+let activeVideoDecoderPlanName: VideoDecoderPlan["name"] = "software";
+let waitingForVideoSyncFrame = false;
+let cachedVideoConfigSample: Buffer | null = null;
+let cachedLinuxVaapiDevicePath: string | null | undefined;
+let cachedFfmpegHwaccelsOutput: string | null | undefined;
 let decodedFrameCount = 0;
 let framesLostCount = 0;
 const decodeFrameCostWindowMs: number[] = [];
@@ -374,7 +399,12 @@ const resolveFfmpegPath = () => {
   const packageDir = FFMPEG_PACKAGE_DIR_BY_TARGET[target];
   const candidatePaths: string[] = [];
   const seen = new Set<string>();
+  const envFfmpegPath = String(process.env.PEASYO_FFMPEG_PATH || "").trim();
 
+  pushUniqueCandidatePath(candidatePaths, seen, envFfmpegPath);
+  if (IS_LINUX) {
+    pushUniqueCandidatePath(candidatePaths, seen, "/app/bin/ffmpeg");
+  }
   pushUniqueCandidatePath(candidatePaths, seen, resolvePackagedFfmpegPath());
   pushUniqueCandidatePath(
     candidatePaths,
@@ -426,6 +456,62 @@ const resolveFfmpegPath = () => {
   throw new Error(
     `FFmpeg executable was not found for target '${target}'. Tried:\n- ${candidatePaths.join("\n- ")}`
   );
+};
+
+const readFfmpegCommandOutput = (args: string[]) => {
+  const ffmpegPath = resolveFfmpegPath();
+  const result = spawnSync(ffmpegPath, args, {
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    log("ffmpeg probe failed:", result.error.message);
+    return "";
+  }
+
+  return `${result.stdout || ""}\n${result.stderr || ""}`;
+};
+
+const getFfmpegHwaccelsOutput = () => {
+  if (cachedFfmpegHwaccelsOutput !== undefined) {
+    return cachedFfmpegHwaccelsOutput;
+  }
+
+  cachedFfmpegHwaccelsOutput = readFfmpegCommandOutput(["-hide_banner", "-hwaccels"]);
+  return cachedFfmpegHwaccelsOutput;
+};
+
+const resolveLinuxVaapiDevicePath = () => {
+  if (!IS_LINUX) {
+    return null;
+  }
+
+  if (cachedLinuxVaapiDevicePath !== undefined) {
+    return cachedLinuxVaapiDevicePath;
+  }
+
+  const envDevicePath = String(process.env.PEASYO_VAAPI_DEVICE || "").trim();
+  if (envDevicePath && isExistingFile(envDevicePath)) {
+    cachedLinuxVaapiDevicePath = envDevicePath;
+    return cachedLinuxVaapiDevicePath;
+  }
+
+  try {
+    const renderNodes = readdirSync("/dev/dri")
+      .filter((entry) => /^renderD\d+$/.test(entry))
+      .sort();
+    if (renderNodes.length > 0) {
+      cachedLinuxVaapiDevicePath = path.join("/dev/dri", renderNodes[0]);
+      return cachedLinuxVaapiDevicePath;
+    }
+  } catch {
+    // Ignore missing /dev/dri and fall back to software decode.
+  }
+
+  cachedLinuxVaapiDevicePath = null;
+  return cachedLinuxVaapiDevicePath;
 };
 
 const wait = (ms: number) =>
@@ -555,8 +641,8 @@ const resolveInputFormat = (codec: number) => {
   return "h264";
 };
 
-const getVideoDecoderInputOptions = () => {
-  const options: string[] = ["-fflags +genpts"];
+const getSoftwareVideoDecoderInputOptions = () => {
+  const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
   const inputFormat = streamVideoConfig?.inputFormat;
 
   if (IS_WINDOWS || (IS_LINUX && inputFormat === "hevc")) {
@@ -573,28 +659,195 @@ const getVideoDecoderInputOptions = () => {
   return options;
 };
 
-const getVideoDecoderInputHighWatermarkBytes = () => {
-  if (IS_WINDOWS) {
-    return 256 * 1024;
+const canUseLinuxVaapiDecoder = () => {
+  if (!IS_LINUX || !streamVideoConfig) {
+    return false;
   }
 
-  if (IS_LINUX) {
-    return streamVideoConfig?.isHdr ? 256 * 1024 : 512 * 1024;
+  const preference = String(process.env.PEASYO_LINUX_VIDEO_DECODER || "auto").trim().toLowerCase();
+  if (preference === "software") {
+    return false;
   }
 
-  return 4 * 1024 * 1024;
+  const hwaccelsOutput = getFfmpegHwaccelsOutput();
+  if (!/\bvaapi\b/i.test(hwaccelsOutput)) {
+    return false;
+  }
+
+  return !!resolveLinuxVaapiDevicePath();
 };
 
-const getMaxPendingVideoChunksFrames = () => {
-  if (IS_WINDOWS) {
-    return 2;
+const buildVideoDecoderPlan = (): VideoDecoderPlan => {
+  const softwarePlan: VideoDecoderPlan = {
+    name: "software",
+    inputOptions: getSoftwareVideoDecoderInputOptions(),
+    filterGraph: null,
+    inputHighWaterMarkBytes: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
+  };
+
+  if (!streamVideoConfig || !canUseLinuxVaapiDecoder()) {
+    return softwarePlan;
   }
 
-  if (IS_LINUX) {
-    return streamVideoConfig?.isHdr ? 1 : 2;
+  const vaapiDevicePath = resolveLinuxVaapiDevicePath();
+  if (!vaapiDevicePath) {
+    return softwarePlan;
   }
 
-  return 4;
+  return {
+    name: "vaapi",
+    inputOptions: [
+      "-fflags +genpts",
+      "-probesize 32",
+      "-analyzeduration 0",
+      "-threads 1",
+      "-hwaccel vaapi",
+      "-hwaccel_output_format vaapi",
+      `-vaapi_device ${vaapiDevicePath}`,
+    ],
+    filterGraph: `hwdownload,format=${streamVideoConfig.outputPixelFormat}`,
+    inputHighWaterMarkBytes: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
+  };
+};
+
+const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
+  const inputFormat = streamVideoConfig?.inputFormat || "h264";
+  let hasConfig = false;
+  let hasSlice = false;
+  let isSyncFrame = false;
+
+  const length = sampleData.length;
+  let cursor = 0;
+
+  while (cursor + 4 <= length) {
+    let start = -1;
+    let nalOffset = -1;
+
+    for (let i = cursor; i + 3 < length; i += 1) {
+      if (sampleData[i] !== 0 || sampleData[i + 1] !== 0) {
+        continue;
+      }
+      if (sampleData[i + 2] === 1) {
+        start = i;
+        nalOffset = i + 3;
+        break;
+      }
+      if (sampleData[i + 2] === 0 && sampleData[i + 3] === 1) {
+        start = i;
+        nalOffset = i + 4;
+        break;
+      }
+    }
+
+    if (start < 0 || nalOffset < 0 || nalOffset >= length) {
+      break;
+    }
+
+    if (inputFormat === "hevc") {
+      if (nalOffset + 1 >= length) {
+        break;
+      }
+      const nalType = (sampleData[nalOffset] >> 1) & 0x3f;
+      if (nalType >= 0 && nalType <= 31) {
+        hasSlice = true;
+      }
+      if (nalType === 19 || nalType === 20 || nalType === 21) {
+        isSyncFrame = true;
+      }
+      if (nalType === 32 || nalType === 33 || nalType === 34) {
+        hasConfig = true;
+      }
+    } else {
+      const nalType = sampleData[nalOffset] & 0x1f;
+      if (nalType === 1 || nalType === 5) {
+        hasSlice = true;
+      }
+      if (nalType === 5) {
+        isSyncFrame = true;
+      }
+      if (nalType === 7 || nalType === 8) {
+        hasConfig = true;
+      }
+    }
+
+    cursor = nalOffset + 1;
+  }
+
+  return {
+    data: sampleData,
+    isSyncFrame,
+    hasConfig,
+    hasSlice,
+  };
+};
+
+const getMaxPendingVideoSampleBytes = () => {
+  const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
+  const targetBytes = bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * 0.75 / 8) : 0;
+  return Math.max(
+    MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN,
+    Math.min(MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX, targetBytes || MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN)
+  );
+};
+
+const clearPendingVideoSampleQueue = () => {
+  pendingVideoSamples.length = 0;
+  pendingVideoSampleBytes = 0;
+  waitingForVideoSyncFrame = false;
+};
+
+const enqueueVideoSample = (sample: QueuedVideoSample) => {
+  pendingVideoSamples.push(sample);
+  pendingVideoSampleBytes += sample.data.length;
+};
+
+const shiftPendingVideoSample = () => {
+  const sample = pendingVideoSamples.shift() || null;
+  if (sample) {
+    pendingVideoSampleBytes -= sample.data.length;
+    if (pendingVideoSampleBytes < 0) {
+      pendingVideoSampleBytes = 0;
+    }
+  }
+  return sample;
+};
+
+const recreateVideoDecodePipelineForSync = (reason: string) => {
+  const keptSamples = pendingVideoSamples.slice();
+  let syncIndex = -1;
+  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
+    if (keptSamples[i].isSyncFrame) {
+      syncIndex = i;
+      break;
+    }
+  }
+
+  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+
+  destroyVideoPipeline();
+  createVideoDecodePipeline();
+
+  clearPendingVideoSampleQueue();
+
+  if (cachedVideoConfigSample && (nextQueue.length < 1 || !nextQueue[0].hasConfig)) {
+    enqueueVideoSample({
+      data: Buffer.from(cachedVideoConfigSample),
+      isSyncFrame: false,
+      hasConfig: true,
+      hasSlice: false,
+    });
+  }
+
+  for (const sample of nextQueue) {
+    enqueueVideoSample(sample);
+  }
+
+  waitingForVideoSyncFrame = nextQueue.length < 1;
+  log(
+    waitingForVideoSyncFrame
+      ? `video decoder resync requested (${reason}), waiting for next sync frame`
+      : `video decoder resynced from latest sync frame (${reason})`
+  );
 };
 
 const resolveOutputFormat = (
@@ -1223,6 +1476,7 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
 };
 
 const destroyVideoPipeline = () => {
+  clearPendingVideoSampleQueue();
   pendingChunks.length = 0;
   pendingBytes = 0;
   pendingVideoBroadcastFrame = null;
@@ -1230,6 +1484,7 @@ const destroyVideoPipeline = () => {
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
   ffmpegInputBlocked = false;
+  activeVideoDecoderPlanName = "software";
   decodedFrameCount = 0;
   framesLostCount = 0;
   decodeFrameCostWindowMs.length = 0;
@@ -1375,11 +1630,6 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
 
     queueVideoBroadcastFrame(frame);
   }
-
-  if (pendingBytes > frameSize * getMaxPendingVideoChunksFrames()) {
-    pendingChunks.length = 0;
-    pendingBytes = 0;
-  }
 };
 
 const createVideoDecodePipeline = () => {
@@ -1388,14 +1638,16 @@ const createVideoDecodePipeline = () => {
   }
 
   destroyVideoPipeline();
+  const decoderPlan = buildVideoDecoderPlan();
 
   ffmpegInput = new PassThrough({
-    highWaterMark: getVideoDecoderInputHighWatermarkBytes(),
+    highWaterMark: decoderPlan.inputHighWaterMarkBytes,
   });
+  activeVideoDecoderPlanName = decoderPlan.name;
 
   ffmpegCommand = ffmpeg(ffmpegInput)
     .inputFormat(streamVideoConfig.inputFormat)
-    .inputOptions(getVideoDecoderInputOptions())
+    .inputOptions(decoderPlan.inputOptions)
     .outputOptions("-fflags", "nobuffer")
     .outputOptions("-flags", "low_delay")
     .outputOptions("-vsync", "0")
@@ -1405,9 +1657,13 @@ const createVideoDecodePipeline = () => {
     .outputOptions("-pix_fmt", streamVideoConfig.outputPixelFormat)
     .outputOptions("-f", "rawvideo")
     .outputOptions("-vcodec", "rawvideo")
-    .on("start", (cmd) => log("ffmpeg video decoder started:", cmd))
+    .on("start", (cmd) => log(`ffmpeg video decoder started (${decoderPlan.name}):`, cmd))
     .on("error", (error) => log("ffmpeg video decoder error:", error?.message || String(error)))
     .on("end", () => log("ffmpeg video decoder ended"));
+
+  if (decoderPlan.filterGraph) {
+    ffmpegCommand.outputOptions("-vf", decoderPlan.filterGraph);
+  }
 
   ffmpegOutput = ffmpegCommand.pipe();
   ffmpegOutput.on("data", handleDecodedVideoChunk);
@@ -1416,17 +1672,59 @@ const createVideoDecodePipeline = () => {
   });
 };
 
-const dispatchVideoSample = (sampleData: Buffer) => {
-  if (!sampleData || sampleData.length < 1 || !ffmpegInput || !ffmpegInput.writable || ffmpegInputBlocked) {
+const flushPendingVideoSamples = () => {
+  if (!ffmpegInput || !ffmpegInput.writable) {
     return;
   }
 
-  const ok = ffmpegInput.write(sampleData);
-  if (!ok) {
-    ffmpegInputBlocked = true;
-    ffmpegInput.once("drain", () => {
-      ffmpegInputBlocked = false;
-    });
+  while (!ffmpegInputBlocked && pendingVideoSamples.length > 0) {
+    const sample = shiftPendingVideoSample();
+    if (!sample) {
+      break;
+    }
+
+    const ok = ffmpegInput.write(sample.data);
+    if (!ok) {
+      ffmpegInputBlocked = true;
+      ffmpegInput.once("drain", () => {
+        ffmpegInputBlocked = false;
+        flushPendingVideoSamples();
+      });
+      break;
+    }
+  }
+};
+
+const dispatchVideoSample = (sampleData: Buffer) => {
+  if (!sampleData || sampleData.length < 1 || !ffmpegInput || !ffmpegInput.writable) {
+    return;
+  }
+
+  const inspectedSample = inspectVideoSample(sampleData);
+  if (inspectedSample.hasConfig) {
+    cachedVideoConfigSample = Buffer.from(sampleData);
+  }
+
+  if (waitingForVideoSyncFrame && !inspectedSample.isSyncFrame) {
+    return;
+  }
+
+  if (waitingForVideoSyncFrame && inspectedSample.isSyncFrame) {
+    waitingForVideoSyncFrame = false;
+  }
+
+  enqueueVideoSample(inspectedSample);
+
+  if (
+    IS_LINUX &&
+    streamVideoConfig?.inputFormat === "hevc" &&
+    pendingVideoSampleBytes > getMaxPendingVideoSampleBytes()
+  ) {
+    recreateVideoDecodePipelineForSync("compressed sample backlog");
+  }
+
+  if (pendingVideoSamples.length > 0) {
+    flushPendingVideoSamples();
   }
 };
 
@@ -1833,6 +2131,8 @@ const cleanupSessionOnly = () => {
   streamVideoConfig = null;
 
   destroyVideoPipeline();
+  cachedVideoConfigSample = null;
+  waitingForVideoSyncFrame = false;
   destroyAudioPipeline();
   audioHeaderInfo = null;
 };
@@ -1986,6 +2286,12 @@ const getPerformanceStats = (): StreamPerformanceStats => {
   const resolution = streamVideoConfig
     ? `${streamVideoConfig.width}x${streamVideoConfig.height}`
     : "--";
+  const decodeText =
+    decodeAvgMs > 0
+      ? `${decodeAvgMs.toFixed(2)} ms (${activeVideoDecoderPlanName}, q:${Math.round(
+          pendingVideoSampleBytes / 1024
+        )} KB)`
+      : "--";
 
   return {
     resolution,
@@ -1994,7 +2300,7 @@ const getPerformanceStats = (): StreamPerformanceStats => {
     fl: `${framesLostCount}`,
     pl: packetLossRatio > 0 ? `${(packetLossRatio * 100).toFixed(2)} %` : "0.00 %",
     br: measuredBitrateMbps > 0 ? `${measuredBitrateMbps.toFixed(2)} Mbps` : "0.00 Mbps",
-    decode: decodeAvgMs > 0 ? `${decodeAvgMs.toFixed(2)} ms` : "--",
+    decode: decodeText,
     decodeFrames: decodedFrameCount,
     raw: {
       rttMs,
