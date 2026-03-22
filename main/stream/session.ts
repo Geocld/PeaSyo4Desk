@@ -13,6 +13,10 @@ import {
   type ControllerStateSnapshot,
 } from "./gamepadDriver";
 
+const IS_WINDOWS = process.platform === "win32";
+const IS_MACOS = process.platform === "darwin";
+const IS_LINUX = process.platform === "linux";
+
 const STREAM_WS_HOST = "127.0.0.1";
 const STREAM_WS_PATH = "/stream";
 const WS_BINARY_VIDEO = 1;
@@ -21,11 +25,7 @@ const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
-const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = process.platform === "win32" ? 100 : 250;
-const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = process.platform === "win32"
-  ? 256 * 1024
-  : 4 * 1024 * 1024;
-const MAX_PENDING_VIDEO_CHUNKS_FRAMES = process.platform === "win32" ? 2 : 4;
+const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -90,7 +90,7 @@ type FfmpegDesktopTarget =
   | "linux-x64"
   | "win32-x64";
 
-const FFMPEG_BINARY_NAME = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+const FFMPEG_BINARY_NAME = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const FFMPEG_PACKAGE_DIR_BY_TARGET: Record<FfmpegDesktopTarget, string> = {
   "darwin-arm64": "darwin-arm64",
   "darwin-x64": "darwin-x64",
@@ -557,19 +557,44 @@ const resolveInputFormat = (codec: number) => {
 
 const getVideoDecoderInputOptions = () => {
   const options: string[] = ["-fflags +genpts"];
+  const inputFormat = streamVideoConfig?.inputFormat;
 
-  if (process.platform === "win32") {
+  if (IS_WINDOWS || (IS_LINUX && inputFormat === "hevc")) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
     options.push("-threads 1");
   }
 
   // This pipeline always downloads decoded frames back to system memory for IPC transport.
   // On macOS, videotoolbox still performs well here.
-  if (process.platform === "darwin") {
+  if (IS_MACOS) {
     options.push("-hwaccel videotoolbox");
   }
 
   return options;
+};
+
+const getVideoDecoderInputHighWatermarkBytes = () => {
+  if (IS_WINDOWS) {
+    return 256 * 1024;
+  }
+
+  if (IS_LINUX) {
+    return streamVideoConfig?.isHdr ? 256 * 1024 : 512 * 1024;
+  }
+
+  return 4 * 1024 * 1024;
+};
+
+const getMaxPendingVideoChunksFrames = () => {
+  if (IS_WINDOWS) {
+    return 2;
+  }
+
+  if (IS_LINUX) {
+    return streamVideoConfig?.isHdr ? 1 : 2;
+  }
+
+  return 4;
 };
 
 const resolveOutputFormat = (
@@ -1351,7 +1376,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
     queueVideoBroadcastFrame(frame);
   }
 
-  if (pendingBytes > frameSize * MAX_PENDING_VIDEO_CHUNKS_FRAMES) {
+  if (pendingBytes > frameSize * getMaxPendingVideoChunksFrames()) {
     pendingChunks.length = 0;
     pendingBytes = 0;
   }
@@ -1365,7 +1390,7 @@ const createVideoDecodePipeline = () => {
   destroyVideoPipeline();
 
   ffmpegInput = new PassThrough({
-    highWaterMark: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
+    highWaterMark: getVideoDecoderInputHighWatermarkBytes(),
   });
 
   ffmpegCommand = ffmpeg(ffmpegInput)
@@ -1850,7 +1875,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     Number.isFinite(requestedBitrate) && requestedBitrate > 0
       ? requestedBitrate
       : defaultBitrate;
-  let profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
+  const profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
 
   const outputFormat = resolveOutputFormat(
     profileCodec,

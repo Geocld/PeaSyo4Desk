@@ -80,6 +80,10 @@ const clamp = (value: number) => {
   return value;
 };
 
+const isLinuxRuntime = () => {
+  return typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent || "");
+};
+
 const GAMEPAD_DEADZONE = 0.12;
 
 const CONTROLLER_BUTTONS = {
@@ -1068,6 +1072,7 @@ function StreamPage() {
       stencil: false,
       preserveDrawingBuffer: false,
       powerPreference: "high-performance",
+      desynchronized: isLinuxRuntime(),
     });
     if (!gl) {
       throw new Error("WebGL2 is unavailable.");
@@ -1133,7 +1138,7 @@ function StreamPage() {
     gl.uniform1i(gl.getUniformLocation(program, "u_texY"), 0);
     gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
     gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 2);
     gl.viewport(0, 0, width, height);
 
     return {
