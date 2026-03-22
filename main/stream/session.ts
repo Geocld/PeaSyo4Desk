@@ -794,6 +794,18 @@ const getMaxPendingVideoSampleBytes = () => {
   );
 };
 
+const shouldResyncVideoDecoderOnBacklog = () => {
+  if (!streamVideoConfig) {
+    return false;
+  }
+
+  // The "keep only the latest frame" render model is already cross-platform.
+  // Applying sync-frame-based decoder recovery to HEVC on every desktop platform
+  // keeps the compressed-sample path consistent with that model without touching
+  // the existing Windows/macOS rendering behavior.
+  return streamVideoConfig.inputFormat === "hevc";
+};
+
 const clearPendingVideoSampleQueue = () => {
   pendingVideoSamples.length = 0;
   pendingVideoSampleBytes = 0;
@@ -1719,11 +1731,7 @@ const dispatchVideoSample = (sampleData: Buffer) => {
 
   enqueueVideoSample(inspectedSample);
 
-  if (
-    IS_LINUX &&
-    streamVideoConfig?.inputFormat === "hevc" &&
-    pendingVideoSampleBytes > getMaxPendingVideoSampleBytes()
-  ) {
+  if (shouldResyncVideoDecoderOnBacklog() && pendingVideoSampleBytes > getMaxPendingVideoSampleBytes()) {
     recreateVideoDecodePipelineForSync("compressed sample backlog");
   }
 
