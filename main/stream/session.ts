@@ -31,9 +31,9 @@ const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : 4 * 1
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
 const SDR_STREAM_FORMAT = "NV12";
-const HDR_STREAM_FORMAT: "I010" | "P010" = IS_LINUX ? "P010" : "I010";
+const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
-const HDR_PIXEL_FORMAT: "p010le" | "yuv420p10le" = IS_LINUX ? "p010le" : "yuv420p10le";
+const HDR_PIXEL_FORMAT: "p010le" | "yuv420p10le" = "yuv420p10le";
 
 const BUTTONS = (chiaki as any).controllerButtons || {
   CROSS: 1 << 0,
@@ -681,12 +681,24 @@ const canUseLinuxVaapiDecoder = () => {
   return !!resolveLinuxVaapiDevicePath();
 };
 
+const getVideoDecoderInputHighWatermarkBytes = () => {
+  if (!streamVideoConfig) {
+    return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
+  }
+
+  if (IS_LINUX && streamVideoConfig.isHdr) {
+    return 512 * 1024;
+  }
+
+  return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
+};
+
 const buildVideoDecoderPlan = (): VideoDecoderPlan => {
   const softwarePlan: VideoDecoderPlan = {
     name: "software",
     inputOptions: getSoftwareVideoDecoderInputOptions(),
     filterGraph: null,
-    inputHighWaterMarkBytes: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
+    inputHighWaterMarkBytes: getVideoDecoderInputHighWatermarkBytes(),
   };
 
   if (!streamVideoConfig || !canUseLinuxVaapiDecoder()) {
@@ -710,7 +722,7 @@ const buildVideoDecoderPlan = (): VideoDecoderPlan => {
       `-vaapi_device ${vaapiDevicePath}`,
     ],
     filterGraph: `hwdownload,format=${streamVideoConfig.outputPixelFormat}`,
-    inputHighWaterMarkBytes: VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES,
+    inputHighWaterMarkBytes: getVideoDecoderInputHighWatermarkBytes(),
   };
 };
 
@@ -787,11 +799,11 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
 
 const getMaxPendingVideoSampleBytes = () => {
   const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
-  const targetSeconds = IS_LINUX && streamVideoConfig?.isHdr ? 0.35 : 0.75;
+  const targetSeconds = IS_LINUX && streamVideoConfig?.isHdr ? 0.2 : 0.75;
   const targetBytes =
     bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * targetSeconds / 8) : 0;
-  const maxBytes = IS_LINUX && streamVideoConfig?.isHdr ? 2 * 1024 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX;
-  const minBytes = IS_LINUX && streamVideoConfig?.isHdr ? 512 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN;
+  const maxBytes = IS_LINUX && streamVideoConfig?.isHdr ? 1024 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX;
+  const minBytes = IS_LINUX && streamVideoConfig?.isHdr ? 256 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN;
   return Math.max(
     minBytes,
     Math.min(maxBytes, targetBytes || minBytes)
