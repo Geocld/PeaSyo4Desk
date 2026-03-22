@@ -30,6 +30,10 @@ const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 25
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : 4 * 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
+const VIDEO_DECODER_RESYNC_HISTORY_BYTES_MIN = 2 * 1024 * 1024;
+const VIDEO_DECODER_RESYNC_HISTORY_BYTES_MAX = 12 * 1024 * 1024;
+const LINUX_HDR_DECODE_STALL_THRESHOLD_MS = 250;
+const LINUX_HDR_DECODE_RESYNC_COOLDOWN_MS = 500;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -230,6 +234,8 @@ let ffmpegOutput: any = null;
 let ffmpegInputBlocked = false;
 const pendingVideoSamples: QueuedVideoSample[] = [];
 let pendingVideoSampleBytes = 0;
+const recentVideoSyncSamples: QueuedVideoSample[] = [];
+let recentVideoSyncSampleBytes = 0;
 const pendingChunks: Buffer[] = [];
 let pendingBytes = 0;
 let pendingVideoBroadcastFrame: Buffer | null = null;
@@ -241,6 +247,10 @@ let waitingForVideoSyncFrame = false;
 let cachedVideoConfigSample: Buffer | null = null;
 let cachedLinuxVaapiDevicePath: string | null | undefined;
 let cachedFfmpegHwaccelsOutput: string | null | undefined;
+let videoDecodePipelineCreatedAtMs = 0;
+let lastReceivedVideoSampleAtMs = 0;
+let lastVideoDecoderResyncAtMs = 0;
+let submittedVideoFrameSampleCount = 0;
 let decodedFrameCount = 0;
 let framesLostCount = 0;
 const decodeFrameCostWindowMs: number[] = [];
@@ -641,14 +651,31 @@ const resolveInputFormat = (codec: number) => {
   return "h264";
 };
 
-const getSoftwareVideoDecoderInputOptions = () => {
-  const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
+const isLinuxHdrHevcStream = () => {
+  return !!(IS_LINUX && streamVideoConfig?.isHdr && streamVideoConfig.inputFormat === "hevc");
+};
+
+const getSoftwareVideoDecoderThreadOptions = () => {
   const inputFormat = streamVideoConfig?.inputFormat;
+
+  if (isLinuxHdrHevcStream()) {
+    // HDR software HEVC decode is substantially heavier on Linux.
+    // Slice threading improves throughput without reintroducing the deeper
+    // frame-thread backlog that was hurting latency.
+    return ["-thread_type slice", "-threads 2"];
+  }
 
   if (IS_WINDOWS || (IS_LINUX && inputFormat === "hevc")) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
-    options.push("-threads 1");
+    return ["-threads 1"];
   }
+
+  return [];
+};
+
+const getSoftwareVideoDecoderInputOptions = () => {
+  const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
+  options.push(...getSoftwareVideoDecoderThreadOptions());
 
   // This pipeline always downloads decoded frames back to system memory for IPC transport.
   // On macOS, videotoolbox still performs well here.
@@ -810,6 +837,32 @@ const getMaxPendingVideoSampleBytes = () => {
   );
 };
 
+const getVideoDecoderResyncHistoryMaxBytes = () => {
+  const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
+  const targetSeconds = isLinuxHdrHevcStream() ? 2 : 1.25;
+  const targetBytes =
+    bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * targetSeconds / 8) : 0;
+
+  return Math.max(
+    VIDEO_DECODER_RESYNC_HISTORY_BYTES_MIN,
+    Math.min(VIDEO_DECODER_RESYNC_HISTORY_BYTES_MAX, targetBytes || VIDEO_DECODER_RESYNC_HISTORY_BYTES_MIN)
+  );
+};
+
+const getEstimatedVideoDecoderFramesInFlight = () => {
+  return Math.max(0, submittedVideoFrameSampleCount - decodedFrameCount);
+};
+
+const getVideoDecoderExpectedFrameIntervalMs = () => {
+  const fps = Number(streamVideoConfig?.fps || 0);
+  return fps > 0 ? 1000 / fps : 1000 / 60;
+};
+
+const getLinuxHdrDecoderMaxFramesInFlight = () => {
+  const fps = Number(streamVideoConfig?.fps || 0) || 60;
+  return Math.max(6, Math.min(12, Math.ceil(fps * 0.125)));
+};
+
 const shouldResyncVideoDecoderOnBacklog = () => {
   if (!streamVideoConfig) {
     return false;
@@ -820,6 +873,95 @@ const shouldResyncVideoDecoderOnBacklog = () => {
   // keeps the compressed-sample path consistent with that model without touching
   // the existing Windows/macOS rendering behavior.
   return streamVideoConfig.inputFormat === "hevc";
+};
+
+const clearRecentVideoSyncHistory = () => {
+  recentVideoSyncSamples.length = 0;
+  recentVideoSyncSampleBytes = 0;
+};
+
+const trackRecentVideoSyncSample = (sample: QueuedVideoSample) => {
+  if (!isLinuxHdrHevcStream()) {
+    return;
+  }
+
+  if (sample.isSyncFrame) {
+    clearRecentVideoSyncHistory();
+  }
+
+  if (recentVideoSyncSamples.length < 1 && !sample.isSyncFrame) {
+    return;
+  }
+
+  recentVideoSyncSamples.push(sample);
+  recentVideoSyncSampleBytes += sample.data.length;
+
+  if (recentVideoSyncSampleBytes <= getVideoDecoderResyncHistoryMaxBytes()) {
+    return;
+  }
+
+  clearRecentVideoSyncHistory();
+  log("video decoder sync history exceeded budget, waiting for next sync frame");
+};
+
+const buildVideoDecoderResyncQueue = () => {
+  const sourceSamples =
+    recentVideoSyncSamples.length > 0 ? recentVideoSyncSamples : pendingVideoSamples;
+  let syncIndex = -1;
+
+  for (let i = sourceSamples.length - 1; i >= 0; i -= 1) {
+    if (sourceSamples[i].isSyncFrame) {
+      syncIndex = i;
+      break;
+    }
+  }
+
+  return syncIndex >= 0 ? sourceSamples.slice(syncIndex) : [];
+};
+
+const shouldResyncLinuxHdrDecoder = () => {
+  if (!isLinuxHdrHevcStream() || waitingForVideoSyncFrame) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (videoDecodePipelineCreatedAtMs < 1 || lastReceivedVideoSampleAtMs < 1) {
+    return false;
+  }
+
+  if (
+    lastVideoDecoderResyncAtMs > 0 &&
+    now - lastVideoDecoderResyncAtMs < LINUX_HDR_DECODE_RESYNC_COOLDOWN_MS
+  ) {
+    return false;
+  }
+
+  if (buildVideoDecoderResyncQueue().length < 1) {
+    return false;
+  }
+
+  if (
+    lastDecodedFrameAtMs < 1 &&
+    now - videoDecodePipelineCreatedAtMs < LINUX_HDR_DECODE_RESYNC_COOLDOWN_MS
+  ) {
+    return false;
+  }
+
+  if (getEstimatedVideoDecoderFramesInFlight() > getLinuxHdrDecoderMaxFramesInFlight()) {
+    return true;
+  }
+
+  const lastOutputAtMs =
+    lastDecodedFrameAtMs > 0 ? lastDecodedFrameAtMs : videoDecodePipelineCreatedAtMs;
+  if (lastReceivedVideoSampleAtMs <= lastOutputAtMs) {
+    return false;
+  }
+
+  if (now - lastReceivedVideoSampleAtMs > Math.max(100, getVideoDecoderExpectedFrameIntervalMs() * 4)) {
+    return false;
+  }
+
+  return now - lastOutputAtMs > LINUX_HDR_DECODE_STALL_THRESHOLD_MS;
 };
 
 const clearPendingVideoSampleQueue = () => {
@@ -845,17 +987,9 @@ const shiftPendingVideoSample = () => {
 };
 
 const recreateVideoDecodePipelineForSync = (reason: string) => {
-  const keptSamples = pendingVideoSamples.slice();
-  let syncIndex = -1;
-  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
-    if (keptSamples[i].isSyncFrame) {
-      syncIndex = i;
-      break;
-    }
-  }
+  const nextQueue = buildVideoDecoderResyncQueue();
 
-  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
-
+  lastVideoDecoderResyncAtMs = Date.now();
   destroyVideoPipeline();
   createVideoDecodePipeline();
 
@@ -1517,6 +1651,8 @@ const destroyVideoPipeline = () => {
   nativeVideoFrameInFlightAtMs = 0;
   ffmpegInputBlocked = false;
   activeVideoDecoderPlanName = "software";
+  videoDecodePipelineCreatedAtMs = 0;
+  submittedVideoFrameSampleCount = 0;
   decodedFrameCount = 0;
   framesLostCount = 0;
   decodeFrameCostWindowMs.length = 0;
@@ -1676,6 +1812,7 @@ const createVideoDecodePipeline = () => {
     highWaterMark: decoderPlan.inputHighWaterMarkBytes,
   });
   activeVideoDecoderPlanName = decoderPlan.name;
+  videoDecodePipelineCreatedAtMs = Date.now();
 
   ffmpegCommand = ffmpeg(ffmpegInput)
     .inputFormat(streamVideoConfig.inputFormat)
@@ -1716,6 +1853,9 @@ const flushPendingVideoSamples = () => {
     }
 
     const ok = ffmpegInput.write(sample.data);
+    if (sample.hasSlice) {
+      submittedVideoFrameSampleCount += 1;
+    }
     if (!ok) {
       ffmpegInputBlocked = true;
       ffmpegInput.once("drain", () => {
@@ -1732,6 +1872,7 @@ const dispatchVideoSample = (sampleData: Buffer) => {
     return;
   }
 
+  lastReceivedVideoSampleAtMs = Date.now();
   const inspectedSample = inspectVideoSample(sampleData);
   if (inspectedSample.hasConfig) {
     cachedVideoConfigSample = Buffer.from(sampleData);
@@ -1745,6 +1886,7 @@ const dispatchVideoSample = (sampleData: Buffer) => {
     waitingForVideoSyncFrame = false;
   }
 
+  trackRecentVideoSyncSample(inspectedSample);
   enqueueVideoSample(inspectedSample);
 
   if (shouldResyncVideoDecoderOnBacklog() && pendingVideoSampleBytes > getMaxPendingVideoSampleBytes()) {
@@ -1753,6 +1895,15 @@ const dispatchVideoSample = (sampleData: Buffer) => {
 
   if (pendingVideoSamples.length > 0) {
     flushPendingVideoSamples();
+  }
+
+  if (shouldResyncLinuxHdrDecoder()) {
+    recreateVideoDecodePipelineForSync(
+      `linux hdr decoder backlog (${getEstimatedVideoDecoderFramesInFlight()} frames)`
+    );
+    if (pendingVideoSamples.length > 0) {
+      flushPendingVideoSamples();
+    }
   }
 };
 
@@ -2159,8 +2310,12 @@ const cleanupSessionOnly = () => {
   streamVideoConfig = null;
 
   destroyVideoPipeline();
+  clearRecentVideoSyncHistory();
   cachedVideoConfigSample = null;
   waitingForVideoSyncFrame = false;
+  videoDecodePipelineCreatedAtMs = 0;
+  lastReceivedVideoSampleAtMs = 0;
+  lastVideoDecoderResyncAtMs = 0;
   destroyAudioPipeline();
   audioHeaderInfo = null;
 };
