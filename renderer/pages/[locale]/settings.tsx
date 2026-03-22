@@ -125,6 +125,14 @@ const defaultDraft = createDraftFromSettings(defaultSettings);
 
 const getOptionLabel = (option: any) => option?.label ?? option?.text ?? String(option?.value);
 const formatBitrateText = (bitrate: number) => `${Math.round(bitrate / 1000)} Mbps`;
+const isLinuxOrSteamOsRuntime = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+  return /linux|steamos|steam deck/i.test(platformText);
+};
 
 function SettingsPage() {
   const {
@@ -145,6 +153,7 @@ function SettingsPage() {
   const [updateText, setUpdateText] = useState("");
   const [updateUrl, setUpdateUrl] = useState("");
   const [isChecking, setIsChecking] = useState(false);
+  const [showLinuxHdrHint, setShowLinuxHdrHint] = useState(false);
   const [psnUsers, setPsnUsers] = useState<PsnLoginInfo[]>([]);
   const [currentPsnUserKey, setCurrentPsnUserKey] = useState("");
   const [selectedPsnUserKey, setSelectedPsnUserKey] = useState("");
@@ -157,6 +166,10 @@ function SettingsPage() {
     if (localFontSize && localFontSize !== "16") {
       document.documentElement.style.fontSize = `${localFontSize}px`;
     }
+  }, []);
+
+  useEffect(() => {
+    setShowLinuxHdrHint(isLinuxOrSteamOsRuntime());
   }, []);
 
   useEffect(() => {
@@ -613,6 +626,7 @@ function SettingsPage() {
     const autoBitrate = getAutoBitrateForResolution(resolution);
     const customBitrate = type === "local" ? draft.bitrate : draft.remote_bitrate;
     const customBitrateSliderValue = Math.round(customBitrate / 1000);
+    const codecTips = showLinuxHdrHint ? t("LinuxHdrDisabledHint") : codecMeta.tips;
 
     return (
       <>
@@ -700,7 +714,8 @@ function SettingsPage() {
                 {getOptionLabel(option)}
               </Radio>
             ))}
-          </RadioGroup>
+          </RadioGroup>,
+          codecTips
         )}
 
         {renderSettingCard(

@@ -81,6 +81,7 @@
   "RemoteBitrateDesc": "Set the maximum remote streaming bitrate. Note that PS4/PS5 streaming bitrate is dynamic.",
   "Codec": "Codec",
   "CodecDesc": "Set the video playback codec. H264 uses AVC decoding, H265 uses HEVC decoding.",
+  "LinuxHdrDisabledHint": "On Linux/SteamOS, HDR is currently ineffective. Selecting H265-HDR will automatically fall back to H265 during streaming.",
   "RemoteCodec": "Video Codec",
   "RemoteCodecDesc": "Set the remote video playback codec. H264 uses AVC decoding, H265 uses HEVC decoding.",
   "If your device supports newer codecs, it can reduce the video bandwidth requirements": "If your device supports newer codecs, it can reduce the video bandwidth requirements",

@@ -78,6 +78,7 @@
   "RemoteBitrateDesc": "設置遠程串流最高碼率，需要注意的是PS4/PS5的串流碼率是動態的",
   "Codec": "編碼器",
   "CodecDesc": "設置視頻播放解碼，H264使用AVC解碼，H265使用HEVC解碼",
+  "LinuxHdrDisabledHint": "當前裝置系統為 Linux/SteamOS，HDR 目前無效。選擇 H265-HDR 後，串流時會自動降級為 H265。",
   "RemoteCodec": "視頻解碼器",
   "RemoteCodecDesc": "設置遠程視頻播放解碼，H264使用AVC解碼，H265使用HEVC解碼",
   "If your device supports newer codecs, it can reduce the video bandwidth requirements": "如果您的設備支持較新的編解碼器，則可以降低視頻帶寬要求。",
