@@ -1852,16 +1852,6 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
       : defaultBitrate;
   let profileCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
 
-  // FIXME: Windows seems to have worse frame pacing with H265 at 1080p60, so force H264 for that specific case until it's resolved
-  const isWindowsRealtime1080p60 =
-    process.platform === "win32" &&
-    profileResolution.width >= 1920 &&
-    profileResolution.height >= 1080 &&
-    profileFps >= 60;
-  if (isWindowsRealtime1080p60 && profileCodec === (chiaki as any).codecs.H265) {
-    profileCodec = (chiaki as any).codecs.H264;
-    log("forcing H264 on Windows for 1080p60 stream to improve frame pacing");
-  }
   const outputFormat = resolveOutputFormat(
     profileCodec,
     profileResolution.width,
