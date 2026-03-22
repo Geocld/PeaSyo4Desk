@@ -31,9 +31,9 @@ const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : 4 * 1
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
 const SDR_STREAM_FORMAT = "NV12";
-const HDR_STREAM_FORMAT = "I010";
+const HDR_STREAM_FORMAT: "I010" | "P010" = IS_LINUX ? "P010" : "I010";
 const SDR_PIXEL_FORMAT = "nv12";
-const HDR_PIXEL_FORMAT = "yuv420p10le";
+const HDR_PIXEL_FORMAT: "p010le" | "yuv420p10le" = IS_LINUX ? "p010le" : "yuv420p10le";
 
 const BUTTONS = (chiaki as any).controllerButtons || {
   CROSS: 1 << 0,
@@ -787,10 +787,14 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
 
 const getMaxPendingVideoSampleBytes = () => {
   const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
-  const targetBytes = bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * 0.75 / 8) : 0;
+  const targetSeconds = IS_LINUX && streamVideoConfig?.isHdr ? 0.35 : 0.75;
+  const targetBytes =
+    bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * targetSeconds / 8) : 0;
+  const maxBytes = IS_LINUX && streamVideoConfig?.isHdr ? 2 * 1024 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX;
+  const minBytes = IS_LINUX && streamVideoConfig?.isHdr ? 512 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN;
   return Math.max(
-    MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN,
-    Math.min(MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX, targetBytes || MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN)
+    minBytes,
+    Math.min(maxBytes, targetBytes || minBytes)
   );
 };
 

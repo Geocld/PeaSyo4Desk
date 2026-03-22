@@ -24,6 +24,7 @@ import {
   FSR_FRAGMENT_SHADER_SOURCE,
   FSR_VERTEX_SHADER_SOURCE,
   HDR_FRAGMENT_SHADER_SOURCE,
+  HDR_P010_FRAGMENT_SHADER_SOURCE,
   HDR_VERTEX_SHADER_SOURCE,
   SDR_FRAGMENT_SHADER_SOURCE,
   SDR_NV12_FRAGMENT_SHADER_SOURCE,
@@ -82,6 +83,10 @@ const clamp = (value: number) => {
 
 const isLinuxRuntime = () => {
   return typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent || "");
+};
+
+const isHdrVideoFormat = (format: VideoFrameFormat) => {
+  return format === "I010" || format === "P010";
 };
 
 const GAMEPAD_DEADZONE = 0.12;
@@ -518,9 +523,9 @@ function StreamPage() {
   const brightnessRatio = Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, brightness)) / 100;
   const shouldShowFsrCanvas = shouldShowVideo && isFsrEnabled && fsrFrameRendered;
   const shouldShowSdrCanvas =
-    shouldShowVideo && videoFormat !== "I010" && (!isFsrEnabled || !fsrFrameRendered);
+    shouldShowVideo && !isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
   const shouldShowHdrCanvas =
-    shouldShowVideo && videoFormat === "I010" && (!isFsrEnabled || !fsrFrameRendered);
+    shouldShowVideo && isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
 
   const openSessionAlert = (content: string, nextStatus?: string) => {
     if (sessionErrorHandledRef.current || disconnectingRef.current) {
@@ -627,10 +632,16 @@ function StreamPage() {
     const height = Number(config?.height || heightRef.current);
     const fps = Number(config?.fps || fpsRef.current);
     const format =
-      config?.format === "I010" ? "I010" : config?.format === "NV12" ? "NV12" : "I420";
+      config?.format === "I010"
+        ? "I010"
+        : config?.format === "P010"
+          ? "P010"
+          : config?.format === "NV12"
+            ? "NV12"
+            : "I420";
     const frameSize =
       Number(config?.frameSize) ||
-      (format === "I010" ? width * height * 3 : Math.floor((width * height * 3) / 2));
+      (isHdrVideoFormat(format) ? width * height * 3 : Math.floor((width * height * 3) / 2));
 
     widthRef.current = width;
     heightRef.current = height;
@@ -663,13 +674,13 @@ function StreamPage() {
     destroyFsrRenderer();
     fsrGpuRenderingDisabledRef.current = false;
 
-    if (format !== "I010") {
+    if (!isHdrVideoFormat(format)) {
       destroyHdrRenderer();
     } else {
       destroySdrRenderer();
     }
 
-    if (format === "I010" && !window.WebGL2RenderingContext) {
+    if (isHdrVideoFormat(format) && !window.WebGL2RenderingContext) {
       openSessionAlert(t("HdrWebgl2Required"));
     }
   };
@@ -838,8 +849,9 @@ function StreamPage() {
 
     const { gl } = renderer;
     gl.deleteTexture(renderer.yTexture);
-    gl.deleteTexture(renderer.uTexture);
-    gl.deleteTexture(renderer.vTexture);
+    if (renderer.uTexture) gl.deleteTexture(renderer.uTexture);
+    if (renderer.vTexture) gl.deleteTexture(renderer.vTexture);
+    if (renderer.uvTexture) gl.deleteTexture(renderer.uvTexture);
     gl.deleteBuffer(renderer.vertexBuffer);
     gl.deleteVertexArray(renderer.vertexArray);
     gl.deleteProgram(renderer.program);
@@ -919,7 +931,9 @@ function StreamPage() {
     gl: WebGL2RenderingContext,
     textureUnit: number,
     width: number,
-    height: number
+    height: number,
+    internalFormat: number = gl.R16UI,
+    format: number = gl.RED_INTEGER
   ) => {
     const texture = gl.createTexture();
     if (!texture) {
@@ -935,11 +949,11 @@ function StreamPage() {
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
-      gl.R16UI,
+      internalFormat,
       width,
       height,
       0,
-      gl.RED_INTEGER,
+      format,
       gl.UNSIGNED_SHORT,
       null
     );
@@ -1085,8 +1099,13 @@ function StreamPage() {
       throw new Error("WebGL2 is unavailable.");
     }
 
+    const format: "I010" | "P010" = videoFormatRef.current === "P010" ? "P010" : "I010";
     const vertexShader = compileWebglShader(gl, gl.VERTEX_SHADER, HDR_VERTEX_SHADER_SOURCE);
-    const fragmentShader = compileWebglShader(gl, gl.FRAGMENT_SHADER, HDR_FRAGMENT_SHADER_SOURCE);
+    const fragmentShader = compileWebglShader(
+      gl,
+      gl.FRAGMENT_SHADER,
+      format === "P010" ? HDR_P010_FRAGMENT_SHADER_SOURCE : HDR_FRAGMENT_SHADER_SOURCE
+    );
     const program = gl.createProgram();
     if (!program) {
       gl.deleteShader(vertexShader);
@@ -1138,13 +1157,23 @@ function StreamPage() {
     gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
 
     const yTexture = createHdrTexture(gl, gl.TEXTURE0, width, height);
-    const uTexture = createHdrTexture(gl, gl.TEXTURE1, width >> 1, height >> 1);
-    const vTexture = createHdrTexture(gl, gl.TEXTURE2, width >> 1, height >> 1);
+    const uTexture =
+      format === "P010" ? null : createHdrTexture(gl, gl.TEXTURE1, width >> 1, height >> 1);
+    const vTexture =
+      format === "P010" ? null : createHdrTexture(gl, gl.TEXTURE2, width >> 1, height >> 1);
+    const uvTexture =
+      format === "P010"
+        ? createHdrTexture(gl, gl.TEXTURE1, width >> 1, height >> 1, gl.RG16UI, gl.RG_INTEGER)
+        : null;
 
     gl.useProgram(program);
     gl.uniform1i(gl.getUniformLocation(program, "u_texY"), 0);
-    gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
-    gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
+    if (format === "P010") {
+      gl.uniform1i(gl.getUniformLocation(program, "u_texUV"), 1);
+    } else {
+      gl.uniform1i(gl.getUniformLocation(program, "u_texU"), 1);
+      gl.uniform1i(gl.getUniformLocation(program, "u_texV"), 2);
+    }
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 2);
     gl.viewport(0, 0, width, height);
 
@@ -1153,9 +1182,11 @@ function StreamPage() {
       program,
       vertexArray,
       vertexBuffer,
+      format,
       yTexture,
       uTexture,
       vTexture,
+      uvTexture,
       width,
       height,
     };
@@ -1266,9 +1297,10 @@ function StreamPage() {
   const ensureHdrRenderer = () => {
     const width = widthRef.current;
     const height = heightRef.current;
+    const format: "I010" | "P010" = videoFormatRef.current === "P010" ? "P010" : "I010";
     const renderer = hdrRendererRef.current;
 
-    if (renderer && renderer.width === width && renderer.height === height) {
+    if (renderer && renderer.width === width && renderer.height === height && renderer.format === format) {
       return renderer;
     }
 
@@ -1355,7 +1387,7 @@ function StreamPage() {
     }
 
     const sourceCanvas =
-      videoFormatRef.current === "I010" ? hdrCanvasRef.current : canvasRef.current;
+      isHdrVideoFormat(videoFormatRef.current) ? hdrCanvasRef.current : canvasRef.current;
     if (!sourceCanvas) {
       updateFsrFrameRendered(false);
       return;
@@ -1505,6 +1537,9 @@ function StreamPage() {
 
   const drawI010HdrFrame = (frameBytes: Uint8Array) => {
     const renderer = ensureHdrRenderer();
+    if (!renderer || renderer.format !== "I010" || !renderer.uTexture || !renderer.vTexture) {
+      return;
+    }
     const width = widthRef.current;
     const height = heightRef.current;
     const yPlaneBytes = width * height * 2;
@@ -1539,7 +1574,6 @@ function StreamPage() {
       baseOffset + yPlaneBytes + uvPlaneBytes,
       uvPlaneBytes >> 1
     );
-
     const { gl } = renderer;
     gl.viewport(0, 0, width, height);
     gl.useProgram(renderer.program);
@@ -1575,6 +1609,66 @@ function StreamPage() {
       gl.RED_INTEGER,
       gl.UNSIGNED_SHORT,
       vPlane
+    );
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+
+  const drawP010HdrFrame = (frameBytes: Uint8Array) => {
+    const renderer = ensureHdrRenderer();
+    if (!renderer || renderer.format !== "P010" || !renderer.uvTexture) {
+      return;
+    }
+
+    const width = widthRef.current;
+    const height = heightRef.current;
+    const yPlaneBytes = width * height * 2;
+    const uvPlaneBytes = width * (height >> 1) * 2;
+
+    if (frameBytes.byteLength < yPlaneBytes + uvPlaneBytes) {
+      return;
+    }
+
+    let alignedFrameBytes = frameBytes;
+    if ((alignedFrameBytes.byteOffset & 1) !== 0) {
+      const copied = new Uint8Array(alignedFrameBytes.byteLength);
+      copied.set(alignedFrameBytes);
+      alignedFrameBytes = copied;
+    }
+
+    const baseOffset = alignedFrameBytes.byteOffset;
+    const yPlane = new Uint16Array(
+      alignedFrameBytes.buffer,
+      baseOffset,
+      yPlaneBytes >> 1
+    );
+    const uvPlane = new Uint16Array(
+      alignedFrameBytes.buffer,
+      baseOffset + yPlaneBytes,
+      uvPlaneBytes >> 1
+    );
+
+    const { gl } = renderer;
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(renderer.program);
+    gl.bindVertexArray(renderer.vertexArray);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.yTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RED_INTEGER, gl.UNSIGNED_SHORT, yPlane);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, renderer.uvTexture);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      width >> 1,
+      height >> 1,
+      gl.RG_INTEGER,
+      gl.UNSIGNED_SHORT,
+      uvPlane
     );
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -2157,6 +2251,8 @@ function StreamPage() {
       try {
         if (videoFormatRef.current === "I010") {
           drawI010HdrFrame(frame);
+        } else if (videoFormatRef.current === "P010") {
+          drawP010HdrFrame(frame);
         } else if (videoFormatRef.current === "NV12") {
           const renderedWithGpu = drawNv12Gpu(frame);
           if (!renderedWithGpu) {

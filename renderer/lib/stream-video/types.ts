@@ -1,13 +1,15 @@
-export type VideoFrameFormat = "I420" | "NV12" | "I010";
+export type VideoFrameFormat = "I420" | "NV12" | "I010" | "P010";
 
 export type HdrWebglRenderer = {
   gl: WebGL2RenderingContext;
   program: WebGLProgram;
   vertexArray: WebGLVertexArrayObject;
   vertexBuffer: WebGLBuffer;
+  format: "I010" | "P010";
   yTexture: WebGLTexture;
-  uTexture: WebGLTexture;
-  vTexture: WebGLTexture;
+  uTexture: WebGLTexture | null;
+  vTexture: WebGLTexture | null;
+  uvTexture: WebGLTexture | null;
   width: number;
   height: number;
 };
