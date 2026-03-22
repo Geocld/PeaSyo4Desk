@@ -48,8 +48,7 @@ export default class Application {
 
     const settings: any = this._store.get('settings', defaultSettings)
 
-    if (true) {
-    // if (settings.use_vulkan) {
+    if (settings.use_vulkan) {
       ElectronApp.commandLine.appendSwitch('use-vulkan')
       ElectronApp.commandLine.appendSwitch(
         'enable-features',
