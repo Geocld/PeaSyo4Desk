@@ -611,6 +611,13 @@ function StreamPage() {
     setFsrFrameRendered(nextValue);
   };
 
+  const updateSessionActivityStatus = () => {
+    if (sessionConnectedRef.current) {
+      return;
+    }
+    setStatus(t("Session_activity"));
+  };
+
   const clearPressedKeyboardKeys = () => {
     keyboardPressedKeysRef.current.clear();
   };
@@ -2345,7 +2352,7 @@ function StreamPage() {
                     `session: ${eventName}`
                   );
                 } else if (typeof eventName === "string") {
-                  setStatus(t("Session_activity"));
+                  updateSessionActivityStatus();
                 }
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
@@ -2362,7 +2369,7 @@ function StreamPage() {
                     `session: ${String(msg.status)}`
                   );
                 } else {
-                  setStatus(t("Session_activity"));
+                  updateSessionActivityStatus();
                 }
               } else if (msg?.type === "connected") {
                 setStatus(t("Connecting..."));

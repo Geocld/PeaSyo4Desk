@@ -664,8 +664,12 @@ const canUseLinuxVaapiDecoder = () => {
     return false;
   }
 
-  const preference = String(process.env.PEASYO_LINUX_VIDEO_DECODER || "auto").trim().toLowerCase();
-  if (preference === "software") {
+  const preference = String(process.env.PEASYO_LINUX_VIDEO_DECODER || "software")
+    .trim()
+    .toLowerCase();
+  // Keep Linux software decode as the stable default path.
+  // VAAPI remains available as an explicit opt-in until it is validated across devices.
+  if (preference !== "vaapi") {
     return false;
   }
 
