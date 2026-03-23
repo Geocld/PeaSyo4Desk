@@ -22,6 +22,7 @@ const STREAM_WS_HOST = "127.0.0.1";
 const STREAM_WS_PATH = "/stream";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
+const WS_BINARY_VIDEO_ENCODED = 3;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
@@ -128,6 +129,13 @@ type StreamSessionSettings = {
   gamepad_kernel?: unknown;
 };
 
+type ClientVideoCapabilities = {
+  webCodecs?: boolean;
+  preferCompressedVideo?: boolean;
+  h264?: boolean;
+  hevc?: boolean;
+};
+
 type ControllerKernel = "web" | "node";
 
 type StreamPixelFormat = typeof SDR_STREAM_FORMAT | typeof HDR_STREAM_FORMAT;
@@ -150,6 +158,7 @@ type StartStreamSessionArgs = {
     codec?: string | number;
   };
   targetWebContents?: WebContents | null;
+  clientVideoCapabilities?: ClientVideoCapabilities;
   consoleInfo?: {
     rpRegistKey?: string;
     rpKey?: string;
@@ -194,6 +203,8 @@ type QueuedVideoSample = {
   hasSlice: boolean;
 };
 
+type VideoTransportMode = "ffmpeg-rawvideo" | "compressed-webcodecs";
+
 type StreamPerformanceStats = {
   resolution: string;
   rtt: string;
@@ -232,6 +243,9 @@ let ffmpegInput: PassThrough | null = null;
 let ffmpegCommand: any = null;
 let ffmpegOutput: any = null;
 let ffmpegInputBlocked = false;
+let activeVideoDecoderPlanName: VideoDecoderPlan["name"] = "software";
+let activeVideoTransportMode: VideoTransportMode = "ffmpeg-rawvideo";
+let videoDecoderRecoveryInProgress = false;
 const pendingVideoSamples: QueuedVideoSample[] = [];
 let pendingVideoSampleBytes = 0;
 const pendingChunks: Buffer[] = [];
@@ -240,10 +254,14 @@ let pendingVideoBroadcastFrame: Buffer | null = null;
 let videoBroadcastFlushScheduled = false;
 let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
+let nativeEncodedVideoSampleInFlight = false;
+let nativeEncodedVideoSampleInFlightAtMs = 0;
+let pendingEncodedVideoSample: QueuedVideoSample | null = null;
 let waitingForVideoSyncFrame = false;
 let cachedVideoConfigSample: Buffer | null = null;
 let cachedLinuxVaapiDevicePath: string | null | undefined;
 let cachedFfmpegHwaccelsOutput: string | null | undefined;
+const disabledVideoDecoderPlans = new Set<VideoDecoderPlan["name"]>();
 let decodedFrameCount = 0;
 let framesLostCount = 0;
 const decodeFrameCostWindowMs: number[] = [];
@@ -719,8 +737,69 @@ const getPlatformVideoDecoderPreference = () => {
   return platformPreference || globalPreference || "auto";
 };
 
+const getPlatformVideoTransportPreference = () => {
+  const globalPreference = String(process.env.PEASYO_VIDEO_TRANSPORT || "")
+    .trim()
+    .toLowerCase();
+
+  const platformPreference = String(
+    IS_WINDOWS
+      ? process.env.PEASYO_WINDOWS_VIDEO_TRANSPORT || ""
+      : IS_LINUX
+        ? process.env.PEASYO_LINUX_VIDEO_TRANSPORT || ""
+        : process.env.PEASYO_MACOS_VIDEO_TRANSPORT || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  return platformPreference || globalPreference || "auto";
+};
+
+const isCompressedVideoTransportActive = () => {
+  return activeVideoTransportMode === "compressed-webcodecs";
+};
+
+const shouldUseLinuxCompressedVideoTransport = (args: StartStreamSessionArgs) => {
+  if (!IS_LINUX || !streamVideoConfig) {
+    return false;
+  }
+
+  if (!canUseNativeStreamBinary()) {
+    return false;
+  }
+
+  const transportPreference = getPlatformVideoTransportPreference();
+  if (
+    transportPreference === "raw" ||
+    transportPreference === "ffmpeg" ||
+    transportPreference === "software"
+  ) {
+    return false;
+  }
+
+  if (
+    transportPreference !== "auto" &&
+    transportPreference !== "webcodecs" &&
+    transportPreference !== "compressed"
+  ) {
+    return false;
+  }
+
+  const capabilities = args.clientVideoCapabilities || {};
+  if (!capabilities.webCodecs || !capabilities.preferCompressedVideo) {
+    return false;
+  }
+
+  return streamVideoConfig.inputFormat === "hevc"
+    ? !!capabilities.hevc
+    : !!capabilities.h264;
+};
+
 const canUseLinuxVaapiDecoder = () => {
   if (!IS_LINUX || !streamVideoConfig) {
+    return false;
+  }
+  if (disabledVideoDecoderPlans.has("vaapi")) {
     return false;
   }
 
@@ -743,6 +822,9 @@ const canUseWindowsD3d11vaDecoder = () => {
   if (!IS_WINDOWS || !streamVideoConfig) {
     return false;
   }
+  if (disabledVideoDecoderPlans.has("d3d11va")) {
+    return false;
+  }
 
   const preference = getPlatformVideoDecoderPreference();
   if (preference === "software") {
@@ -757,6 +839,9 @@ const canUseWindowsD3d11vaDecoder = () => {
 
 const canUseMacosVideotoolboxDecoder = () => {
   if (!IS_MACOS || !streamVideoConfig) {
+    return false;
+  }
+  if (disabledVideoDecoderPlans.has("videotoolbox")) {
     return false;
   }
 
@@ -999,6 +1084,54 @@ const recreateVideoDecodePipelineForSync = (reason: string) => {
       ? `video decoder resync requested (${reason}), waiting for next sync frame`
       : `video decoder resynced from latest sync frame (${reason})`
   );
+};
+
+const fallbackVideoDecoderToSoftware = (reason: string) => {
+  if (videoDecoderRecoveryInProgress || activeVideoDecoderPlanName === "software") {
+    return;
+  }
+
+  videoDecoderRecoveryInProgress = true;
+  const failedPlan = activeVideoDecoderPlanName;
+  const keptSamples = pendingVideoSamples.slice();
+  let syncIndex = -1;
+  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
+    if (keptSamples[i].isSyncFrame) {
+      syncIndex = i;
+      break;
+    }
+  }
+
+  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+  disabledVideoDecoderPlans.add(failedPlan);
+  log(
+    `video decoder '${failedPlan}' failed (${reason}), falling back to software decode`
+  );
+
+  destroyVideoPipeline();
+  createVideoDecodePipeline();
+
+  clearPendingVideoSampleQueue();
+
+  if (cachedVideoConfigSample && (nextQueue.length < 1 || !nextQueue[0].hasConfig)) {
+    enqueueVideoSample({
+      data: Buffer.from(cachedVideoConfigSample),
+      isSyncFrame: false,
+      hasConfig: true,
+      hasSlice: false,
+    });
+  }
+
+  for (const sample of nextQueue) {
+    enqueueVideoSample(sample);
+  }
+
+  waitingForVideoSyncFrame = nextQueue.length < 1;
+  videoDecoderRecoveryInProgress = false;
+
+  if (pendingVideoSamples.length > 0) {
+    flushPendingVideoSamples();
+  }
 };
 
 const resolveOutputFormat = (
@@ -1451,6 +1584,9 @@ const sendVideoConfigToClient = (client: any) => {
     fps: streamVideoConfig.fps,
     format: streamVideoConfig.format,
     frameSize: streamVideoConfig.frameSize,
+    transport: activeVideoTransportMode,
+    codecName: streamVideoConfig.codecName,
+    inputFormat: streamVideoConfig.inputFormat,
   });
 };
 
@@ -1513,15 +1649,15 @@ const postNativeTypedBinary = (kind: number, payload: Buffer) => {
 
 const broadcastTypedBinary = (kind: number, payload: Buffer) => {
   if (!payload || payload.length < 1) {
-    return;
+    return false;
   }
 
   if (postNativeTypedBinary(kind, payload)) {
-    return;
+    return true;
   }
 
   if (wsClients.size < 1) {
-    return;
+    return false;
   }
 
   const packet = Buffer.allocUnsafe(1 + payload.length);
@@ -1529,6 +1665,7 @@ const broadcastTypedBinary = (kind: number, payload: Buffer) => {
   payload.copy(packet, 1);
   const backlogLimit =
     kind === WS_BINARY_AUDIO ? MAX_AUDIO_CLIENT_BACKLOG_BYTES : MAX_VIDEO_CLIENT_BACKLOG_BYTES;
+  let sent = false;
 
   for (const client of wsClients) {
     if (!client || client.readyState !== 1) {
@@ -1540,10 +1677,13 @@ const broadcastTypedBinary = (kind: number, payload: Buffer) => {
 
     try {
       client.send(packet, { binary: true, compress: false });
+      sent = true;
     } catch {
       // ignore send failures, socket lifecycle handlers will clean it up
     }
   }
+
+  return sent;
 };
 
 const closeWsClient = (socket: any) => {
@@ -1764,6 +1904,9 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
   streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
+  nativeEncodedVideoSampleInFlight = false;
+  nativeEncodedVideoSampleInFlightAtMs = 0;
+  pendingEncodedVideoSample = null;
 };
 
 const destroyVideoPipeline = () => {
@@ -1774,6 +1917,9 @@ const destroyVideoPipeline = () => {
   videoBroadcastFlushScheduled = false;
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
+  nativeEncodedVideoSampleInFlight = false;
+  nativeEncodedVideoSampleInFlightAtMs = 0;
+  pendingEncodedVideoSample = null;
   ffmpegInputBlocked = false;
   decodedFrameCount = 0;
   framesLostCount = 0;
@@ -1802,6 +1948,83 @@ const destroyVideoPipeline = () => {
   }
 
   ffmpegOutput = null;
+  activeVideoDecoderPlanName = "software";
+  activeVideoTransportMode = "ffmpeg-rawvideo";
+  videoDecoderRecoveryInProgress = false;
+};
+
+const buildEncodedVideoSamplePacket = (sample: QueuedVideoSample) => {
+  let payload = sample.data;
+
+  if (sample.isSyncFrame && cachedVideoConfigSample && !sample.hasConfig) {
+    payload = Buffer.concat([cachedVideoConfigSample, sample.data]);
+  }
+
+  const packet = Buffer.allocUnsafe(1 + payload.length);
+  packet[0] = (sample.isSyncFrame ? 1 : 0) | (sample.hasConfig ? 2 : 0);
+  payload.copy(packet, 1);
+  return packet;
+};
+
+const flushPendingEncodedVideoSample = () => {
+  if (!pendingEncodedVideoSample) {
+    return;
+  }
+
+  const now = Date.now();
+  if (
+    nativeEncodedVideoSampleInFlight &&
+    now - nativeEncodedVideoSampleInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
+  ) {
+    nativeEncodedVideoSampleInFlight = false;
+    nativeEncodedVideoSampleInFlightAtMs = 0;
+  }
+
+  if (nativeEncodedVideoSampleInFlight) {
+    return;
+  }
+
+  const sample = pendingEncodedVideoSample;
+  pendingEncodedVideoSample = null;
+  if (broadcastTypedBinary(WS_BINARY_VIDEO_ENCODED, buildEncodedVideoSamplePacket(sample))) {
+    nativeEncodedVideoSampleInFlight = true;
+    nativeEncodedVideoSampleInFlightAtMs = now;
+  }
+};
+
+const dispatchEncodedVideoSample = (sample: QueuedVideoSample) => {
+  if (!sample.hasSlice) {
+    return;
+  }
+
+  if (waitingForVideoSyncFrame && !sample.isSyncFrame) {
+    return;
+  }
+
+  if (waitingForVideoSyncFrame && sample.isSyncFrame) {
+    waitingForVideoSyncFrame = false;
+  }
+
+  if (nativeEncodedVideoSampleInFlight && pendingEncodedVideoSample) {
+    pendingEncodedVideoSample = null;
+    waitingForVideoSyncFrame = true;
+    if (!sample.isSyncFrame) {
+      return;
+    }
+    waitingForVideoSyncFrame = false;
+  }
+
+  pendingEncodedVideoSample = sample;
+  flushPendingEncodedVideoSample();
+};
+
+const activateCompressedVideoTransport = () => {
+  destroyVideoPipeline();
+  activeVideoTransportMode = "compressed-webcodecs";
+  nativeEncodedVideoSampleInFlight = false;
+  nativeEncodedVideoSampleInFlightAtMs = 0;
+  pendingEncodedVideoSample = null;
+  waitingForVideoSyncFrame = false;
 };
 
 const flushPendingVideoBroadcastFrame = () => {
@@ -1856,6 +2079,13 @@ const queueVideoBroadcastFrame = (frame: Buffer) => {
 };
 
 const notifyVideoFrameRendered = () => {
+  if (isCompressedVideoTransportActive()) {
+    nativeEncodedVideoSampleInFlight = false;
+    nativeEncodedVideoSampleInFlightAtMs = 0;
+    flushPendingEncodedVideoSample();
+    return;
+  }
+
   if (nativeVideoFramesInFlight > 0) {
     nativeVideoFramesInFlight -= 1;
   }
@@ -1966,6 +2196,7 @@ const createVideoDecodePipeline = () => {
 
   destroyVideoPipeline();
   const decoderPlan = buildVideoDecoderPlan();
+  activeVideoDecoderPlanName = decoderPlan.name;
 
   ffmpegInput = new PassThrough({
     highWaterMark: decoderPlan.inputHighWaterMarkBytes,
@@ -1984,7 +2215,11 @@ const createVideoDecodePipeline = () => {
     .outputOptions("-f", "rawvideo")
     .outputOptions("-vcodec", "rawvideo")
     .on("start", (cmd) => log(`ffmpeg video decoder started (${decoderPlan.name}):`, cmd))
-    .on("error", (error) => log("ffmpeg video decoder error:", error?.message || String(error)))
+    .on("error", (error) => {
+      const message = error?.message || String(error);
+      log("ffmpeg video decoder error:", message);
+      fallbackVideoDecoderToSoftware(message);
+    })
     .on("end", () => log("ffmpeg video decoder ended"));
 
   if (decoderPlan.filterGraph) {
@@ -2022,13 +2257,22 @@ const flushPendingVideoSamples = () => {
 };
 
 const dispatchVideoSample = (sampleData: Buffer) => {
-  if (!sampleData || sampleData.length < 1 || !ffmpegInput || !ffmpegInput.writable) {
+  if (!sampleData || sampleData.length < 1) {
     return;
   }
 
   const inspectedSample = inspectVideoSample(sampleData);
   if (inspectedSample.hasConfig) {
     cachedVideoConfigSample = Buffer.from(sampleData);
+  }
+
+  if (isCompressedVideoTransportActive()) {
+    dispatchEncodedVideoSample(inspectedSample);
+    return;
+  }
+
+  if (!ffmpegInput || !ffmpegInput.writable) {
+    return;
   }
 
   if (waitingForVideoSyncFrame && !inspectedSample.isSyncFrame) {
@@ -2687,7 +2931,14 @@ const startSession = async (args: StartStreamSessionArgs) => {
 
   configureControllerKernel(args.settings);
   const sessionOptions = buildSessionOptions(args);
-  createVideoDecodePipeline();
+  if (shouldUseLinuxCompressedVideoTransport(args)) {
+    activateCompressedVideoTransport();
+    log(
+      `using Linux compressed video transport (${streamVideoConfig?.inputFormat || "unknown"} -> WebCodecs)`
+    );
+  } else {
+    createVideoDecodePipeline();
+  }
   createSession(sessionOptions);
 
   streamSession.start();
@@ -2707,6 +2958,9 @@ const startSession = async (args: StartStreamSessionArgs) => {
       fps: streamVideoConfig.fps,
       format: streamVideoConfig.format,
       frameSize: streamVideoConfig.frameSize,
+      transport: activeVideoTransportMode,
+      codecName: streamVideoConfig.codecName,
+      inputFormat: streamVideoConfig.inputFormat,
     });
   }
   broadcastAudioConfig();
@@ -2716,6 +2970,7 @@ const startSession = async (args: StartStreamSessionArgs) => {
     video: streamVideoConfig,
     audioEnabled: !!audioHeaderInfo,
     binaryTransport: canUseNativeStreamBinary() ? "electron-ipc" : "websocket",
+    videoTransport: activeVideoTransportMode,
   };
 };
 
