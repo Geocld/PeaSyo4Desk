@@ -52,5 +52,6 @@
   "FSR sharpness": "FSR 锐化强度",
   "Current FSR sharpness": "当前 FSR 锐化强度",
   "Reset": "重置",
-  "Confirm": "确定"
+  "Confirm": "确定",
+  "Touchpad opacity": "触摸板透明度"
 }

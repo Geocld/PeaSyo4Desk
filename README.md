@@ -37,6 +37,13 @@ PeaSyo, also known as Pixiu, is a PS4/5 streaming application for Android that s
 <img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="600" />
 <img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="600" />
 
+## Steam Deck
+
+### Installing from Flathub
+`PeaSyo` is now available on Flathub. You can directly search for `PeaSyo` in the application store (Discover) in desktop mode on your Steam Deck to install and receive future updates.
+
+[![Build/release](https://flathub.org/assets/badges/flathub-badge-en.svg)](https://flathub.org/apps/io.github.Geocld.PeaSyo4Desk)
+
 ## Local Development
 
 ### Requirements

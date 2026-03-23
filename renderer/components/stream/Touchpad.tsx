@@ -54,6 +54,7 @@ type TouchpadProps = {
   className?: string;
   isPs5?: boolean;
   scale?: number;
+  opacity?: number;
   visible: boolean;
   onActivity?: () => void;
   onTap?: () => void;
@@ -81,6 +82,7 @@ export default function Touchpad({
   className = "",
   isPs5 = true,
   scale = 1,
+  opacity = 0.6,
   visible,
   onActivity,
   onTap,
@@ -99,6 +101,7 @@ export default function Touchpad({
     dpr: 1,
   });
   const normalizedScale = clamp(scale, 0.5, 2);
+  const normalizedOpacity = clamp(opacity, 0, 0.8);
   const targetWidth = Math.round(BASE_WIDTH_PX * normalizedScale);
   const targetHeight = Math.round(BASE_HEIGHT_PX * normalizedScale);
 
@@ -486,6 +489,7 @@ export default function Touchpad({
         style={{
           width: `${targetWidth}px`,
           height: `${targetHeight}px`,
+          opacity: visible ? normalizedOpacity : 0,
           touchAction: "none",
           background:
             "linear-gradient(135deg, rgba(30,41,59,0.52) 0%, rgba(15,23,42,0.35) 100%)",

@@ -57,6 +57,9 @@ const MAX_CONTROLLER_TOUCH_ID = 127;
 const TOUCHPAD_BUTTON_TAP_MS = 90;
 const TOUCHPAD_SCALE_MIN = 0.5;
 const TOUCHPAD_SCALE_MAX = 2;
+const TOUCHPAD_OPACITY_MIN = 0;
+const TOUCHPAD_OPACITY_MAX = 0.8;
+const TOUCHPAD_OPACITY_DEFAULT = 0.6;
 const GAMEPAD_AXIS_QUANTIZATION = 128;
 const GAMEPAD_TRIGGER_QUANTIZATION = 64;
 const GAMEPAD_TRIGGER_DEADZONE = 0.02;
@@ -482,6 +485,15 @@ const normalizeTouchpadScale = (value: unknown) => {
   return Math.max(TOUCHPAD_SCALE_MIN, Math.min(TOUCHPAD_SCALE_MAX, numeric));
 };
 
+const normalizeTouchpadOpacity = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return TOUCHPAD_OPACITY_DEFAULT;
+  }
+
+  return Math.max(TOUCHPAD_OPACITY_MIN, Math.min(TOUCHPAD_OPACITY_MAX, numeric));
+};
+
 const normalizeBrightnessSetting = (value: unknown) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -653,6 +665,7 @@ function StreamPage() {
         ? "bottom-4"
         : "top-1/2 -translate-y-1/2";
   const touchpadScale = normalizeTouchpadScale(settings?.stream_touchpad_scale);
+  const touchpadOpacity = normalizeTouchpadOpacity(settings?.stream_touchpad_opacity);
 
   const markUserActivity = useCallback(() => {
     lastUserInputAtRef.current = Date.now();
@@ -736,6 +749,22 @@ function StreamPage() {
     setSettings({
       ...settings,
       stream_touchpad_scale: nextScale,
+    });
+  };
+
+  const handleTouchpadOpacityChange = (value: number | number[]) => {
+    const raw = Array.isArray(value) ? Number(value[0]) : Number(value);
+    if (!Number.isFinite(raw)) {
+      return;
+    }
+
+    const nextOpacity = Number(
+      Math.max(TOUCHPAD_OPACITY_MIN, Math.min(TOUCHPAD_OPACITY_MAX, raw)).toFixed(2)
+    );
+
+    setSettings({
+      ...settings,
+      stream_touchpad_opacity: nextOpacity,
     });
   };
 
@@ -3175,6 +3204,8 @@ function StreamPage() {
             onTouchpadPositionChange={handleTouchpadPositionChange}
             touchpadScale={touchpadScale}
             onTouchpadScaleChange={handleTouchpadScaleChange}
+            touchpadOpacity={touchpadOpacity}
+            onTouchpadOpacityChange={handleTouchpadOpacityChange}
             onDrawerOpenChange={handleActionBarDrawerOpenChange}
           />
         )
@@ -3217,6 +3248,7 @@ function StreamPage() {
           className={`absolute left-4 ${touchpadVerticalClass}`}
           isPs5={isPs5Console}
           scale={touchpadScale}
+          opacity={touchpadOpacity}
           visible={shouldShowTouchpads}
           onActivity={markUserActivity}
           onTap={triggerTouchpadButtonTap}
@@ -3226,6 +3258,7 @@ function StreamPage() {
           className={`absolute right-4 ${touchpadVerticalClass}`}
           isPs5={isPs5Console}
           scale={touchpadScale}
+          opacity={touchpadOpacity}
           visible={shouldShowTouchpads}
           onActivity={markUserActivity}
           onTap={triggerTouchpadButtonTap}

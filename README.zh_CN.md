@@ -36,6 +36,13 @@ PeaSyo，也称貔貅（pixiu），使用中国古代神兽命名，是一款PS4
 <img src="https://raw.githubusercontent.com/Geocld/PeaSyo4Desk/main/images/consoles.png" width="600" />
 <img src="https://github.com/Geocld/PeaSyo4Desk/blob/main/images/stream.png" width="600" />
 
+## Steam Deck
+
+### 从Flathub安装
+`PeaSyo`已经上架Flathub，你可以直接在SteamDeck的桌面模式，使用应用商店（Discover）直接搜索`PeaSyo`即可下载安装和后续的更新。
+
+[![Build/release](https://flathub.org/assets/badges/flathub-badge-en.svg)](https://flathub.org/apps/io.github.Geocld.PeaSyo4Desk)
+
 ## 本地开发
 
 ### 环境要求

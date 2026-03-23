@@ -59,6 +59,7 @@ const ANALOG_BUTTONS = (chiaki as any).controllerAnalogButtons || {
 };
 const MAX_CONTROLLER_TOUCH_ID = 127;
 const MAX_CONTROLLER_TOUCHES = 2;
+const CONTROLLER_RESET_RETRY_DELAY_MS = 500;
 const BUTTON_NAME_TO_MASK = {
   cross: BUTTONS.CROSS,
   circle: BUTTONS.MOON,
@@ -355,6 +356,7 @@ type ControllerStatePayload = {
 };
 let pendingDirectControllerState: ControllerStatePayload | null = null;
 let directControllerStateFlushScheduled = false;
+let delayedControllerResetRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 const OGG_CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -1040,6 +1042,29 @@ const isSameControllerState = (left: ControllerStateSnapshot, right: ControllerS
   );
 };
 
+const isNeutralControllerState = (state: ControllerStateSnapshot) => {
+  if (
+    state.buttons !== 0 ||
+    state.l2State !== 0 ||
+    state.r2State !== 0 ||
+    state.leftX !== 0 ||
+    state.leftY !== 0 ||
+    state.rightX !== 0 ||
+    state.rightY !== 0
+  ) {
+    return false;
+  }
+
+  return state.touches.every((touch) => touch.id < 0);
+};
+
+const clearDelayedControllerResetRetry = () => {
+  if (delayedControllerResetRetryTimer) {
+    clearTimeout(delayedControllerResetRetryTimer);
+    delayedControllerResetRetryTimer = null;
+  }
+};
+
 const setNormalizedNodeControllerState = (
   target: NodeControllerStateSnapshot,
   state: NodeControllerStateSnapshot | ControllerStatePayload
@@ -1113,12 +1138,16 @@ const buildEffectiveControllerState = (): ControllerStateSnapshot => {
   return merged;
 };
 
-const pushControllerState = (reason: string) => {
+const pushControllerState = (reason: string, options?: { force?: boolean }) => {
   if (!streamSession || !streamSessionStarted) {
     return;
   }
 
-  if (hasSubmittedControllerState && isSameControllerState(controllerState, lastSubmittedControllerState)) {
+  if (
+    !options?.force &&
+    hasSubmittedControllerState &&
+    isSameControllerState(controllerState, lastSubmittedControllerState)
+  ) {
     return;
   }
 
@@ -1140,6 +1169,27 @@ const applyEffectiveControllerState = (reason: string) => {
 
   copyControllerState(controllerState, nextState);
   pushControllerState(reason);
+
+  if (isNeutralControllerState(controllerState)) {
+    clearDelayedControllerResetRetry();
+    delayedControllerResetRetryTimer = setTimeout(() => {
+      delayedControllerResetRetryTimer = null;
+
+      if (!streamSession || !streamSessionStarted) {
+        return;
+      }
+
+      if (!isNeutralControllerState(controllerState)) {
+        return;
+      }
+
+      // Retry one neutral packet after a short delay to reduce sticky inputs
+      // when a release packet gets dropped in transport/session handling.
+      pushControllerState("neutral-reset-retry", { force: true });
+    }, CONTROLLER_RESET_RETRY_DELAY_MS);
+  } else {
+    clearDelayedControllerResetRetry();
+  }
 };
 
 const applyNodeControllerState = (state: NodeControllerStateSnapshot, reason: string) => {
@@ -2246,6 +2296,7 @@ const dispatchHapticsFrameAsRumble = (frame: any) => {
 };
 
 const cleanupSessionOnly = () => {
+  clearDelayedControllerResetRetry();
   for (const socket of wsClients) {
     releaseClientPressedButtons(socket, "session-stop");
   }

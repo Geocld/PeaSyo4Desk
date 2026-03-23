@@ -25,6 +25,7 @@ type ActionBarProps = {
   disconnectAndStandby?: boolean;
   touchpadPosition?: TouchpadPosition;
   touchpadScale?: number;
+  touchpadOpacity?: number;
   onTogglePerformance?: () => void;
   onPressPs?: () => void;
   onLongPressPs?: () => void;
@@ -35,6 +36,7 @@ type ActionBarProps = {
   onDisconnectAndStandbyChange?: (enabled: boolean) => void;
   onTouchpadPositionChange?: (position: TouchpadPosition) => void;
   onTouchpadScaleChange?: (value: number | number[]) => void;
+  onTouchpadOpacityChange?: (value: number | number[]) => void;
   onDrawerOpenChange?: (open: boolean) => void;
 };
 
@@ -67,6 +69,9 @@ function ActionBar(props: ActionBarProps) {
   const normalizedTouchpadScale = Number.isFinite(Number(props.touchpadScale))
     ? Math.max(0.5, Math.min(2, Number(props.touchpadScale)))
     : 1;
+  const normalizedTouchpadOpacity = Number.isFinite(Number(props.touchpadOpacity))
+    ? Math.max(0, Math.min(0.8, Number(props.touchpadOpacity)))
+    : 0.6;
   const touchpadPosition = props.touchpadPosition || "center";
 
   return (
@@ -91,7 +96,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onTogglePerformance)}
                       >
                         {t("Toggle Performance")}
@@ -102,7 +107,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onPressPs)}
                       >
                         {t("Press PS Button")}
@@ -113,7 +118,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onLongPressPs)}
                       >
                         {t("Long press PS Button")}
@@ -124,7 +129,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onAudio)}
                       >
                         {props.audioMuted ? t("Open Audio") : t("Close Audio")}
@@ -135,7 +140,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onAdjustBrightness)}
                       >
                         {props.brightnessLabel || t("Brightness")}
@@ -146,14 +151,14 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         variant="flat"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onAdjustFsr)}
                       >
                         {props.fsrLabel || t("FSR")}
                       </Button>
                     ) : null}
 
-                    <Button size="sm" variant="flat" className="justify-start" onPress={handleToggleFullscreen}>
+                    <Button size="sm" variant="flat" className="justify-center" onPress={handleToggleFullscreen}>
                       {t("Toggle fullscreen")}
                     </Button>
 
@@ -195,6 +200,25 @@ function ActionBar(props: ActionBarProps) {
                       </div>
                     ) : null}
 
+                    {isConnected && props.onTouchpadOpacityChange ? (
+                      <div className="rounded-lg border border-default-200 p-3">
+                        <Slider
+                          label={t("Touchpad opacity")}
+                          size="sm"
+                          step={0.05}
+                          minValue={0}
+                          maxValue={0.8}
+                          value={normalizedTouchpadOpacity}
+                          onChange={props.onTouchpadOpacityChange}
+                        />
+                        <div className="mt-1 flex items-center justify-between text-xs text-default-400">
+                          <span>0.00</span>
+                          <span>{normalizedTouchpadOpacity.toFixed(2)}</span>
+                          <span>0.80</span>
+                        </div>
+                      </div>
+                    ) : null}
+
                   </div>
                 </div>
 
@@ -219,7 +243,7 @@ function ActionBar(props: ActionBarProps) {
                       <Button
                         size="sm"
                         color="danger"
-                        className="justify-start"
+                        className="justify-center"
                         onPress={() => runAndClose(props.onDisconnect)}
                       >
                         {t("Disconnect")}

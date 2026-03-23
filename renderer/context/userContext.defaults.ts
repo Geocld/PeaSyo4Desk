@@ -71,5 +71,6 @@ export const defaultSettings = {
   stream_disconnect_standby: false,
   stream_touchpad_position: "center",
   stream_touchpad_scale: 1,
+  stream_touchpad_opacity: 0.6,
   debug: false,
 };
