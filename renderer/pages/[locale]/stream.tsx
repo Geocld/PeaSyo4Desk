@@ -66,7 +66,6 @@ const BRIGHTNESS_DEFAULT = 100;
 const FSR_SHARPNESS_MIN = 0;
 const FSR_SHARPNESS_MAX = 2;
 const FSR_SHARPNESS_STEP = 0.05;
-const FSR_SHADER_SHARPNESS_SCALE = 0.1;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -512,7 +511,11 @@ const normalizeFsrSharpness = (value: unknown) => {
 };
 
 const toFsrShaderSharpness = (sharpness: number) => {
-  return sharpness * FSR_SHADER_SHARPNESS_SCALE;
+  const normalized = Math.max(FSR_SHARPNESS_MIN, Math.min(FSR_SHARPNESS_MAX, sharpness));
+  // Match XStreaming behavior:
+  // UI range 0~2 maps to shader range 0~0.2 (divide by 10).
+  // 0 = strongest sharpening, 0.2 = weakest sharpening.
+  return normalized * 0.1;
 };
 
 function StreamPage() {
@@ -1486,8 +1489,8 @@ function StreamPage() {
     const sourceTexture = createSdrPlaneTexture(gl, gl.TEXTURE0, width, height, gl.RGBA, gl.RGBA);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
     gl.useProgram(program);
     gl.uniform1i(gl.getUniformLocation(program, "u_source"), 0);
@@ -1622,14 +1625,27 @@ function StreamPage() {
     const width = widthRef.current;
     const height = heightRef.current;
     const { gl } = renderer;
+    const sourceRenderer = isHdrVideoFormat(videoFormatRef.current)
+      ? hdrRendererRef.current
+      : sdrRendererRef.current;
 
     try {
+      if (sourceRenderer?.gl) {
+        sourceRenderer.gl.flush();
+      }
       gl.viewport(0, 0, width, height);
       gl.useProgram(renderer.program);
       gl.bindVertexArray(renderer.vertexArray);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, renderer.sourceTexture);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        sourceCanvas
+      );
       if (renderer.resolutionLocation) {
         gl.uniform2f(renderer.resolutionLocation, width, height);
       }
