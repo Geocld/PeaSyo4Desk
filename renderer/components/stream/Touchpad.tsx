@@ -53,11 +53,15 @@ export type StreamTouchState = {
 type TouchpadProps = {
   className?: string;
   isPs5?: boolean;
+  scale?: number;
   visible: boolean;
   onActivity?: () => void;
   onTap?: () => void;
   onTouchStateChange: (state: StreamTouchState) => void;
 };
+
+const BASE_WIDTH_PX = 280;
+const BASE_HEIGHT_PX = 160;
 
 const clamp = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) {
@@ -76,6 +80,7 @@ const buildIdleTouchState = (touchIdNext: number): StreamTouchState => ({
 export default function Touchpad({
   className = "",
   isPs5 = true,
+  scale = 1,
   visible,
   onActivity,
   onTap,
@@ -89,10 +94,13 @@ export default function Touchpad({
   const visibleRef = useRef(visible);
   const rafRef = useRef<number | null>(null);
   const sizeRef = useRef({
-    width: 1,
-    height: 1,
+    width: BASE_WIDTH_PX,
+    height: BASE_HEIGHT_PX,
     dpr: 1,
   });
+  const normalizedScale = clamp(scale, 0.5, 2);
+  const targetWidth = Math.round(BASE_WIDTH_PX * normalizedScale);
+  const targetHeight = Math.round(BASE_HEIGHT_PX * normalizedScale);
 
   const resolveTouchpadSize = () => {
     if (isPs5) {
@@ -449,6 +457,11 @@ export default function Touchpad({
   }, [resizeCanvas, scheduleDraw]);
 
   useEffect(() => {
+    resizeCanvas();
+    scheduleDraw();
+  }, [resizeCanvas, scheduleDraw, targetWidth, targetHeight]);
+
+  useEffect(() => {
     const activePointers = activePointersRef.current;
     return () => {
       if (rafRef.current !== null) {
@@ -465,12 +478,14 @@ export default function Touchpad({
     <div className={`${visible ? "pointer-events-auto" : "pointer-events-none"} ${className}`}>
       <div
         ref={containerRef}
-        className={`relative h-[160px] w-[280px] max-h-[32vh] max-w-[42vw] overflow-hidden rounded-2xl border border-white/30 transition-opacity duration-200 ${
+        className={`relative overflow-hidden rounded-2xl border border-white/30 transition-opacity duration-200 ${
           visible ? "pointer-events-auto" : "pointer-events-none"
         } ${
           visible ? "opacity-100" : "opacity-0"
         }`}
         style={{
+          width: `${targetWidth}px`,
+          height: `${targetHeight}px`,
           touchAction: "none",
           background:
             "linear-gradient(135deg, rgba(30,41,59,0.52) 0%, rgba(15,23,42,0.35) 100%)",

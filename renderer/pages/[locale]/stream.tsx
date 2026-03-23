@@ -55,6 +55,8 @@ const MAX_CONTROLLER_POLLING_RATE = 1000;
 const MAX_CONTROLLER_SEND_RATE = 120;
 const MAX_CONTROLLER_TOUCH_ID = 127;
 const TOUCHPAD_BUTTON_TAP_MS = 90;
+const TOUCHPAD_SCALE_MIN = 0.5;
+const TOUCHPAD_SCALE_MAX = 2;
 const GAMEPAD_AXIS_QUANTIZATION = 128;
 const GAMEPAD_TRIGGER_QUANTIZATION = 64;
 const GAMEPAD_TRIGGER_DEADZONE = 0.02;
@@ -159,6 +161,7 @@ type ControllerStatePayload = {
 
 type VideoDisplayFormat = "default" | "stretch" | "zoom";
 type ControllerInputKernel = "web" | "node";
+type TouchpadVerticalPosition = "top" | "center" | "bottom";
 
 const resolveControllerInputKernel = (settings: Record<string, any> | null | undefined): ControllerInputKernel => {
   const direct = String(settings?.gamepad_kernel || "")
@@ -464,6 +467,31 @@ const normalizeVideoDisplayFormat = (value: unknown): VideoDisplayFormat => {
   return "default";
 };
 
+const normalizeTouchpadVerticalPosition = (value: unknown): TouchpadVerticalPosition => {
+  if (value === "top" || value === "bottom") {
+    return value;
+  }
+  return "center";
+};
+
+const normalizeTouchpadScale = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 1;
+  }
+
+  return Math.max(TOUCHPAD_SCALE_MIN, Math.min(TOUCHPAD_SCALE_MAX, numeric));
+};
+
+const normalizeBrightnessSetting = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return BRIGHTNESS_DEFAULT;
+  }
+
+  return Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, Math.round(numeric)));
+};
+
 const getVideoCanvasSizingClass = (format: VideoDisplayFormat) => {
   if (format === "stretch") {
     return "h-full w-full object-fill";
@@ -593,6 +621,7 @@ function StreamPage() {
   const touchpadButtonPressedRef = useRef(false);
   const touchpadButtonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUserInputAtRef = useRef(0);
+  const actionBarDrawerOpenRef = useRef(false);
   const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
   const lastControllerSendAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
@@ -609,12 +638,34 @@ function StreamPage() {
   const shouldShowHdrCanvas =
     shouldShowVideo && isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
   const shouldShowTouchpads = shouldShowVideo && showTouchpadOverlay && !sessionAlert;
+  const disconnectAndStandbyOnExit = !!settings?.stream_disconnect_standby;
+  const persistedBrightness = normalizeBrightnessSetting(settings?.stream_brightness);
+  const touchpadVerticalPosition = normalizeTouchpadVerticalPosition(
+    settings?.stream_touchpad_position
+  );
+  const touchpadVerticalClass =
+    touchpadVerticalPosition === "top"
+      ? "top-4"
+      : touchpadVerticalPosition === "bottom"
+        ? "bottom-4"
+        : "top-1/2 -translate-y-1/2";
+  const touchpadScale = normalizeTouchpadScale(settings?.stream_touchpad_scale);
 
   const markUserActivity = useCallback(() => {
     lastUserInputAtRef.current = Date.now();
     setShowActionbar(true);
     setShowTouchpadOverlay(true);
   }, []);
+
+  const handleActionBarDrawerOpenChange = useCallback(
+    (open: boolean) => {
+      actionBarDrawerOpenRef.current = open;
+      if (open) {
+        markUserActivity();
+      }
+    },
+    [markUserActivity]
+  );
 
   const updateTouchpadState = useCallback(
     (nextTouchState: StreamTouchState) => {
@@ -646,6 +697,45 @@ function StreamPage() {
     }, TOUCHPAD_BUTTON_TAP_MS);
   }, [markUserActivity]);
 
+  const handleDisconnectWithCurrentMode = () => {
+    if (disconnectAndStandbyOnExit) {
+      void handleDisconnectAndStandby();
+      return;
+    }
+
+    void handleDisconnect();
+  };
+
+  const handleDisconnectStandbySwitchChange = (enabled: boolean) => {
+    setSettings({
+      ...settings,
+      stream_disconnect_standby: enabled,
+    });
+  };
+
+  const handleTouchpadPositionChange = (position: TouchpadVerticalPosition) => {
+    setSettings({
+      ...settings,
+      stream_touchpad_position: position,
+    });
+  };
+
+  const handleTouchpadScaleChange = (value: number | number[]) => {
+    const raw = Array.isArray(value) ? Number(value[0]) : Number(value);
+    if (!Number.isFinite(raw)) {
+      return;
+    }
+
+    const nextScale = Number(
+      Math.max(TOUCHPAD_SCALE_MIN, Math.min(TOUCHPAD_SCALE_MAX, raw)).toFixed(2)
+    );
+
+    setSettings({
+      ...settings,
+      stream_touchpad_scale: nextScale,
+    });
+  };
+
   const openSessionAlert = (content: string, nextStatus?: string) => {
     if (sessionErrorHandledRef.current || disconnectingRef.current) {
       return;
@@ -659,6 +749,10 @@ function StreamPage() {
       content,
     });
   };
+
+  useEffect(() => {
+    setBrightness(persistedBrightness);
+  }, [persistedBrightness]);
 
   useEffect(() => {
     keyboardMappingRef.current = normalizeKeyboardMapping(
@@ -696,8 +790,9 @@ function StreamPage() {
       const hasTouchpadInteraction = touchpadStateRef.current.touches.some(
         (touch) => touch.id >= 0
       );
+      const shouldKeepActionbarVisible = actionBarDrawerOpenRef.current;
       const isActive = hasTouchpadInteraction || Date.now() - lastUserInputAtRef.current < 2000;
-      setShowActionbar(isActive);
+      setShowActionbar(shouldKeepActionbarVisible || isActive);
       setShowTouchpadOverlay(isActive);
     }, 100);
 
@@ -2997,6 +3092,19 @@ function StreamPage() {
     setBrightness(clampedValue);
   };
 
+  const handleBrightnessModalClose = () => {
+    setBrightness(persistedBrightness);
+    setShowBrightnessModal(false);
+  };
+
+  const handleBrightnessModalConfirm = () => {
+    setSettings({
+      ...settings,
+      stream_brightness: brightness,
+    });
+    setShowBrightnessModal(false);
+  };
+
   const handleFsrSharpnessChange = (value: number | number[]) => {
     const nextValue = Array.isArray(value) ? Number(value[0]) : Number(value);
     if (!Number.isFinite(nextValue)) {
@@ -3039,13 +3147,19 @@ function StreamPage() {
             onAudio={audioAvailable ? toggleAudioMuted : undefined}
             onPressPs={handlePressPs}
             onLongPressPs={handleLongPressPs}
-            onDisconnect={handleDisconnect}
-            onDisconnectPowerOff={handleDisconnectAndStandby}
+            onDisconnect={handleDisconnectWithCurrentMode}
+            disconnectAndStandby={disconnectAndStandbyOnExit}
+            onDisconnectAndStandbyChange={handleDisconnectStandbySwitchChange}
             onTogglePerformance={() => setShowPerformance((prev) => !prev)}
             onAdjustBrightness={() => setShowBrightnessModal(true)}
             brightnessLabel={t("Brightness")}
             onAdjustFsr={isFsrEnabled ? () => setShowFsrModal(true) : undefined}
             fsrLabel={t("FSR")}
+            touchpadPosition={touchpadVerticalPosition}
+            onTouchpadPositionChange={handleTouchpadPositionChange}
+            touchpadScale={touchpadScale}
+            onTouchpadScaleChange={handleTouchpadScaleChange}
+            onDrawerOpenChange={handleActionBarDrawerOpenChange}
           />
         )
       }
@@ -3084,16 +3198,18 @@ function StreamPage() {
 
       <div className="pointer-events-none absolute inset-0 z-20">
         <Touchpad
-          className="absolute left-4 top-1/2 -translate-y-1/2"
+          className={`absolute left-4 ${touchpadVerticalClass}`}
           isPs5={isPs5Console}
+          scale={touchpadScale}
           visible={shouldShowTouchpads}
           onActivity={markUserActivity}
           onTap={triggerTouchpadButtonTap}
           onTouchStateChange={updateTouchpadState}
         />
         <Touchpad
-          className="absolute right-4 top-1/2 -translate-y-1/2"
+          className={`absolute right-4 ${touchpadVerticalClass}`}
           isPs5={isPs5Console}
+          scale={touchpadScale}
           visible={shouldShowTouchpads}
           onActivity={markUserActivity}
           onTap={triggerTouchpadButtonTap}
@@ -3107,7 +3223,8 @@ function StreamPage() {
         min={BRIGHTNESS_MIN}
         max={BRIGHTNESS_MAX}
         onBrightnessChange={handleBrightnessChange}
-        onClose={() => setShowBrightnessModal(false)}
+        onClose={handleBrightnessModalClose}
+        onConfirm={handleBrightnessModalConfirm}
         onReset={() => setBrightness(BRIGHTNESS_DEFAULT)}
       />
 

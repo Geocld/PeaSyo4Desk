@@ -23,6 +23,15 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.1" date="2026-03-23">
+     <description>
+        <ul>
+          <li>Optimize video render</li>
+          <li>Optimize UI interface</li>
+          <li>Add virtual touchpad</li>
+        </ul>
+     </description>
+    </release>
     <release version="1.0.0" date="2026-03-20">
      <description>
         <ul>

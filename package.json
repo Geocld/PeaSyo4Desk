@@ -1,8 +1,8 @@
 {
   "private": true,
   "name": "peasyo4desk",
-  "description": "peasyo4desk",
-  "version": "1.0.0",
+  "description": "PlayStation unofficial remote play client for desktop",
+  "version": "1.0.1",
   "author": "Geocld <lijiahao5372@gmail.com>",
   "main": "app/background.js",
   "scripts": {

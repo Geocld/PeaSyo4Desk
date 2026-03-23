@@ -16,6 +16,7 @@ type BrightnessModalProps = {
   max: number;
   onBrightnessChange: (value: number | number[]) => void;
   onClose: () => void;
+  onConfirm: () => void;
   onReset: () => void;
 };
 
@@ -45,7 +46,7 @@ function BrightnessModal(props: BrightnessModalProps) {
             <Button variant="flat" onPress={props.onReset}>
               {t("Reset")}
             </Button>
-            <Button color="primary" onPress={props.onClose}>
+            <Button color="primary" onPress={props.onConfirm}>
               {t("Confirm")}
             </Button>
           </ModalFooter>

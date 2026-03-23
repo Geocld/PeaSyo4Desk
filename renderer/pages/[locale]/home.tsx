@@ -203,6 +203,28 @@ function Home() {
     handleCloseEditHostModal();
   };
 
+  const handleDeleteEditedHost = () => {
+    const targetIndex = editingConsoleIndex;
+    if (!Number.isInteger(targetIndex) || targetIndex === null || targetIndex < 0) {
+      handleCloseEditHostModal();
+      return;
+    }
+
+    setConsoles((prevConsoles) => {
+      if (targetIndex >= prevConsoles.length) {
+        return prevConsoles;
+      }
+
+      const nextConsoles = prevConsoles.filter((_, index) => index !== targetIndex);
+      void Ipc.send("app", "setCachedConsoles", {
+        consoles: nextConsoles,
+      }).catch(() => undefined);
+      return nextConsoles;
+    });
+
+    handleCloseEditHostModal();
+  };
+
   const handleStartPrepared = (payload: {
     consoleInfo: ConsoleCacheItem;
     streamHost: string;
@@ -287,13 +309,18 @@ function Home() {
                 onValueChange={setEditHostIpInput}
               />
             </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={handleCloseEditHostModal}>
-                {tCommon("Cancel")}
+            <ModalFooter className="w-full items-center justify-between">
+              <Button color="danger" variant="light" onPress={handleDeleteEditedHost}>
+                {t("Delete host")}
               </Button>
-              <Button color="primary" onPress={handleSaveEditedHost}>
-                {t("Save")}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="light" onPress={handleCloseEditHostModal}>
+                  {tCommon("Cancel")}
+                </Button>
+                <Button color="primary" onPress={handleSaveEditedHost}>
+                  {t("Save")}
+                </Button>
+              </div>
             </ModalFooter>
           </>
         </ModalContent>

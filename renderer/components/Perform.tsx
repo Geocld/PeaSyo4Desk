@@ -55,6 +55,8 @@ function Perform({ connectState }: PerformProps) {
     resolutionText = performance.resolution;
   }
 
+  const codec = settings.codec.indexOf('H265') > -1 ? 'HEVC' : 'AVC';
+
   return (
     <>
       {
@@ -74,7 +76,7 @@ function Perform({ connectState }: PerformProps) {
                 {t("Bitrate")}: {performance.br || "--"} | &nbsp;
               </span>
               <span className="text-xs">
-                {t("DT")}: {performance.decode || "--"}
+                {t("DT")}: {performance.decode || "--"}({codec})
               </span>
             </span>
           </div>
@@ -93,7 +95,7 @@ function Perform({ connectState }: PerformProps) {
               {t("Bitrate")}: {performance.br || "--"}
             </div>
             <div className="px-1 text-sm">
-              {t("DT")}: {performance.decode || "--"}
+              {t("DT")}: {performance.decode || "--"}({codec})
             </div>
           </div>
         )

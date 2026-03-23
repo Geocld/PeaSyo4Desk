@@ -238,7 +238,6 @@ let pendingVideoBroadcastFrame: Buffer | null = null;
 let videoBroadcastFlushScheduled = false;
 let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
-let activeVideoDecoderPlanName: VideoDecoderPlan["name"] = "software";
 let waitingForVideoSyncFrame = false;
 let cachedVideoConfigSample: Buffer | null = null;
 let cachedLinuxVaapiDevicePath: string | null | undefined;
@@ -1645,7 +1644,6 @@ const destroyVideoPipeline = () => {
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
   ffmpegInputBlocked = false;
-  activeVideoDecoderPlanName = "software";
   decodedFrameCount = 0;
   framesLostCount = 0;
   decodeFrameCostWindowMs.length = 0;
@@ -1804,7 +1802,6 @@ const createVideoDecodePipeline = () => {
   ffmpegInput = new PassThrough({
     highWaterMark: decoderPlan.inputHighWaterMarkBytes,
   });
-  activeVideoDecoderPlanName = decoderPlan.name;
 
   ffmpegCommand = ffmpeg(ffmpegInput)
     .inputFormat(streamVideoConfig.inputFormat)
@@ -2449,9 +2446,7 @@ const getPerformanceStats = (): StreamPerformanceStats => {
     : "--";
   const decodeText =
     decodeAvgMs > 0
-      ? `${decodeAvgMs.toFixed(2)} ms (${activeVideoDecoderPlanName}, q:${Math.round(
-          pendingVideoSampleBytes / 1024
-        )} KB)`
+      ? `${decodeAvgMs.toFixed(2)} ms`
       : "--";
 
   return {
