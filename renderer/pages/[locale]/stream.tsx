@@ -625,6 +625,7 @@ function StreamPage() {
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
   );
   const nativeBinaryTransportRef = useRef(false);
+  const nativeVideoFrameRenderedAckPendingRef = useRef(false);
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
     resolveControllerPollingIntervalMs(defaultSettings.polling_rate)
@@ -2072,6 +2073,15 @@ function StreamPage() {
     }
   };
 
+  const ackRenderedNativeVideoFrame = () => {
+    if (!nativeVideoFrameRenderedAckPendingRef.current) {
+      return;
+    }
+
+    nativeVideoFrameRenderedAckPendingRef.current = false;
+    Ipc.sendStreamVideoFrameRendered();
+  };
+
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
     if (frameBytes.byteLength !== frameSizeRef.current) {
       return;
@@ -2090,7 +2100,7 @@ function StreamPage() {
 
     latestFrameRef.current = frameBytes;
     if (nativeBinaryTransportRef.current) {
-      Ipc.sendStreamVideoFrameRendered();
+      nativeVideoFrameRenderedAckPendingRef.current = true;
     }
     if (!renderLoopScheduledRef.current) {
       renderLoopScheduledRef.current = true;
@@ -2549,7 +2559,10 @@ function StreamPage() {
           setVideoReady(true);
           showConnectedToastThenEnableAudio();
         }
+
+        ackRenderedNativeVideoFrame();
       } catch (error) {
+        ackRenderedNativeVideoFrame();
         openSessionAlert(
           [
             t("HdrRendererInitializationFailed"),
@@ -2587,6 +2600,7 @@ function StreamPage() {
         fsrGpuRenderingDisabledRef.current = false;
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
+        nativeVideoFrameRenderedAckPendingRef.current = false;
         controlTransportReadyRef.current = false;
         lastSentControllerStateRef.current = createIdleControllerState();
         lastControllerSendAtRef.current = 0;
@@ -2865,6 +2879,7 @@ function StreamPage() {
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
+      nativeVideoFrameRenderedAckPendingRef.current = false;
       if (cleanupRawListener) {
         cleanupRawListener();
         cleanupRawListener = null;

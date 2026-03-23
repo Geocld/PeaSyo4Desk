@@ -25,11 +25,12 @@ const WS_BINARY_AUDIO = 2;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
-const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 2;
+const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 1;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
-const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : 4 * 1024 * 1024;
-const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 1024 * 1024;
+const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LINUX ? 512 * 1024 : 1024 * 1024;
+const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
+const MAX_PENDING_VIDEO_SAMPLE_SECONDS = IS_WINDOWS ? 0.2 : IS_LINUX ? 0.16 : 0.22;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -180,7 +181,7 @@ type VideoOutputFormat = {
 };
 
 type VideoDecoderPlan = {
-  name: "software" | "vaapi";
+  name: "software" | "videotoolbox" | "vaapi" | "d3d11va";
   inputOptions: string[];
   filterGraph: string | null;
   inputHighWaterMarkBytes: number;
@@ -688,13 +689,34 @@ const getSoftwareVideoDecoderInputOptions = () => {
     options.push("-threads 1");
   }
 
-  // This pipeline always downloads decoded frames back to system memory for IPC transport.
-  // On macOS, videotoolbox still performs well here.
-  if (IS_MACOS) {
-    options.push("-hwaccel videotoolbox");
-  }
-
   return options;
+};
+
+const hasFfmpegHwaccel = (name: string) => {
+  const hwaccelsOutput = getFfmpegHwaccelsOutput();
+  if (!hwaccelsOutput) {
+    return false;
+  }
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(hwaccelsOutput);
+};
+
+const getPlatformVideoDecoderPreference = () => {
+  const globalPreference = String(process.env.PEASYO_VIDEO_DECODER || "")
+    .trim()
+    .toLowerCase();
+
+  const platformPreference = String(
+    IS_WINDOWS
+      ? process.env.PEASYO_WINDOWS_VIDEO_DECODER || ""
+      : IS_LINUX
+        ? process.env.PEASYO_LINUX_VIDEO_DECODER || ""
+        : process.env.PEASYO_MACOS_VIDEO_DECODER || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  return platformPreference || globalPreference || "auto";
 };
 
 const canUseLinuxVaapiDecoder = () => {
@@ -702,21 +724,51 @@ const canUseLinuxVaapiDecoder = () => {
     return false;
   }
 
-  const preference = String(process.env.PEASYO_LINUX_VIDEO_DECODER || "software")
-    .trim()
-    .toLowerCase();
-  // Keep Linux software decode as the stable default path.
-  // VAAPI remains available as an explicit opt-in until it is validated across devices.
-  if (preference !== "vaapi") {
+  const preference = getPlatformVideoDecoderPreference();
+  if (preference === "software") {
+    return false;
+  }
+  if (preference !== "auto" && preference !== "vaapi") {
     return false;
   }
 
-  const hwaccelsOutput = getFfmpegHwaccelsOutput();
-  if (!/\bvaapi\b/i.test(hwaccelsOutput)) {
+  if (!hasFfmpegHwaccel("vaapi")) {
     return false;
   }
 
   return !!resolveLinuxVaapiDevicePath();
+};
+
+const canUseWindowsD3d11vaDecoder = () => {
+  if (!IS_WINDOWS || !streamVideoConfig) {
+    return false;
+  }
+
+  const preference = getPlatformVideoDecoderPreference();
+  if (preference === "software") {
+    return false;
+  }
+  if (preference !== "auto" && preference !== "d3d11va") {
+    return false;
+  }
+
+  return hasFfmpegHwaccel("d3d11va");
+};
+
+const canUseMacosVideotoolboxDecoder = () => {
+  if (!IS_MACOS || !streamVideoConfig) {
+    return false;
+  }
+
+  const preference = getPlatformVideoDecoderPreference();
+  if (preference === "software") {
+    return false;
+  }
+  if (preference !== "auto" && preference !== "videotoolbox") {
+    return false;
+  }
+
+  return hasFfmpegHwaccel("videotoolbox");
 };
 
 const getVideoDecoderInputHighWatermarkBytes = () => {
@@ -739,7 +791,42 @@ const buildVideoDecoderPlan = (): VideoDecoderPlan => {
     inputHighWaterMarkBytes: getVideoDecoderInputHighWatermarkBytes(),
   };
 
-  if (!streamVideoConfig || !canUseLinuxVaapiDecoder()) {
+  if (!streamVideoConfig) {
+    return softwarePlan;
+  }
+
+  if (canUseWindowsD3d11vaDecoder()) {
+    return {
+      name: "d3d11va",
+      inputOptions: [
+        "-fflags +genpts",
+        "-probesize 32",
+        "-analyzeduration 0",
+        "-threads 1",
+        "-hwaccel d3d11va",
+        "-hwaccel_output_format d3d11",
+      ],
+      filterGraph: `hwdownload,format=${streamVideoConfig.outputPixelFormat}`,
+      inputHighWaterMarkBytes: getVideoDecoderInputHighWatermarkBytes(),
+    };
+  }
+
+  if (canUseMacosVideotoolboxDecoder()) {
+    return {
+      name: "videotoolbox",
+      inputOptions: [
+        "-fflags +genpts",
+        "-probesize 32",
+        "-analyzeduration 0",
+        "-threads 1",
+        "-hwaccel videotoolbox",
+      ],
+      filterGraph: null,
+      inputHighWaterMarkBytes: getVideoDecoderInputHighWatermarkBytes(),
+    };
+  }
+
+  if (!canUseLinuxVaapiDecoder()) {
     return softwarePlan;
   }
 
@@ -837,7 +924,9 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
 
 const getMaxPendingVideoSampleBytes = () => {
   const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
-  const targetSeconds = IS_LINUX && streamVideoConfig?.isHdr ? 0.2 : 0.75;
+  const targetSeconds = IS_LINUX && streamVideoConfig?.isHdr
+    ? Math.min(MAX_PENDING_VIDEO_SAMPLE_SECONDS, 0.18)
+    : MAX_PENDING_VIDEO_SAMPLE_SECONDS;
   const targetBytes =
     bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * targetSeconds / 8) : 0;
   const maxBytes = IS_LINUX && streamVideoConfig?.isHdr ? 1024 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX;
@@ -849,15 +938,7 @@ const getMaxPendingVideoSampleBytes = () => {
 };
 
 const shouldResyncVideoDecoderOnBacklog = () => {
-  if (!streamVideoConfig) {
-    return false;
-  }
-
-  // The "keep only the latest frame" render model is already cross-platform.
-  // Applying sync-frame-based decoder recovery to HEVC on every desktop platform
-  // keeps the compressed-sample path consistent with that model without touching
-  // the existing Windows/macOS rendering behavior.
-  return streamVideoConfig.inputFormat === "hevc";
+  return !!streamVideoConfig;
 };
 
 const clearPendingVideoSampleQueue = () => {
@@ -1791,6 +1872,42 @@ const notifyVideoFrameRendered = () => {
   flushPendingVideoBroadcastFrame();
 };
 
+const discardPendingDecodedBytes = (byteCount: number) => {
+  let remaining = Math.max(0, byteCount);
+
+  while (remaining > 0 && pendingChunks.length > 0) {
+    const head = pendingChunks[0];
+    if (head.length <= remaining) {
+      remaining -= head.length;
+      pendingChunks.shift();
+      continue;
+    }
+
+    pendingChunks[0] = head.subarray(remaining);
+    remaining = 0;
+  }
+
+  pendingBytes = Math.max(0, pendingBytes - Math.max(0, byteCount));
+};
+
+const trimPendingDecodedFrames = (frameSize: number) => {
+  if (
+    !canUseNativeStreamBinary() ||
+    frameSize < 1 ||
+    (nativeVideoFramesInFlight < 1 && !pendingVideoBroadcastFrame)
+  ) {
+    return;
+  }
+
+  const completeFrames = Math.floor(pendingBytes / frameSize);
+  const framesToDrop = Math.max(0, completeFrames - 1);
+  if (framesToDrop < 1) {
+    return;
+  }
+
+  discardPendingDecodedBytes(framesToDrop * frameSize);
+};
+
 const handleDecodedVideoChunk = (chunk: Buffer) => {
   if (!chunk || chunk.length < 1 || !streamVideoConfig) {
     return;
@@ -1799,6 +1916,7 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
   const frameSize = streamVideoConfig.frameSize;
   pendingChunks.push(chunk);
   pendingBytes += chunk.length;
+  trimPendingDecodedFrames(frameSize);
 
   while (pendingBytes >= frameSize) {
     const decodeFrameStart = performance.now();
