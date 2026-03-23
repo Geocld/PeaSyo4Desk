@@ -1,9 +1,16 @@
 import {
+  addToast,
   Button,
   Card,
   CardBody,
   CardFooter,
   Divider,
+  Input,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
 } from "@heroui/react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
@@ -19,6 +26,7 @@ import Ipc from "../../lib/ipc";
 import {
   ConsoleCacheItem,
   hasLoginCredential,
+  normalizeConsoleCacheItem,
   PENDING_STREAM_STORAGE_KEY,
   parseCachedConsoles,
   upsertConsoleCache,
@@ -26,6 +34,7 @@ import {
 
 function Home() {
   const { t, i18n: { language: locale } } = useTranslation("home");
+  const { t: tCommon } = useTranslation("common");
   const router = useRouter();
   const { setTheme } = useTheme();
   const [isLogined, setIsLogined] = useState(false);
@@ -35,6 +44,10 @@ function Home() {
   const [selectedConsole, setSelectedConsole] = useState<ConsoleCacheItem | null>(
     null
   );
+  const [showEditHostModal, setShowEditHostModal] = useState(false);
+  const [editingConsoleIndex, setEditingConsoleIndex] = useState<number | null>(null);
+  const [editHostNameInput, setEditHostNameInput] = useState("");
+  const [editHostIpInput, setEditHostIpInput] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -137,6 +150,59 @@ function Home() {
     });
   };
 
+  const handleEditHostClick = (item: ConsoleCacheItem, index: number) => {
+    setEditingConsoleIndex(index);
+    setEditHostNameInput(String(item.serverNickname || "").trim());
+    setEditHostIpInput(String(item.host || "").trim());
+    setShowEditHostModal(true);
+  };
+
+  const handleCloseEditHostModal = () => {
+    setShowEditHostModal(false);
+    setEditingConsoleIndex(null);
+    setEditHostNameInput("");
+    setEditHostIpInput("");
+  };
+
+  const handleSaveEditedHost = () => {
+    const host = editHostIpInput.trim();
+    if (!host) {
+      addToast({
+        title: t("Host cannot be empty."),
+        color: "danger",
+      });
+      return;
+    }
+
+    const nextName = editHostNameInput.trim();
+    const targetIndex = editingConsoleIndex;
+    if (!Number.isInteger(targetIndex) || targetIndex === null || targetIndex < 0) {
+      handleCloseEditHostModal();
+      return;
+    }
+
+    setConsoles((prevConsoles) => {
+      if (targetIndex >= prevConsoles.length) {
+        return prevConsoles;
+      }
+
+      const targetConsole = prevConsoles[targetIndex];
+      const updatedConsole = normalizeConsoleCacheItem({
+        ...targetConsole,
+        serverNickname: nextName,
+        host,
+      });
+      const nextConsoles = [...prevConsoles];
+      nextConsoles[targetIndex] = updatedConsole;
+      void Ipc.send("app", "setCachedConsoles", {
+        consoles: nextConsoles,
+      }).catch(() => undefined);
+      return nextConsoles;
+    });
+
+    handleCloseEditHostModal();
+  };
+
   const handleStartPrepared = (payload: {
     consoleInfo: ConsoleCacheItem;
     streamHost: string;
@@ -170,6 +236,7 @@ function Home() {
                   item={item}
                   index={index}
                   onStartStream={handleStartStreamClick}
+                  onEditHost={handleEditHostClick}
                 />
               ))}
             </div>
@@ -202,6 +269,35 @@ function Home() {
         onConsoleUpdated={handleConsoleUpdated}
         onStartPrepared={handleStartPrepared}
       />
+      <Modal isOpen={showEditHostModal} onClose={handleCloseEditHostModal} size="lg">
+        <ModalContent>
+          <>
+            <ModalHeader>{t("Edit host")}</ModalHeader>
+            <ModalBody className="gap-3">
+              <Input
+                label={t("Host name")}
+                labelPlacement="outside"
+                value={editHostNameInput}
+                onValueChange={setEditHostNameInput}
+              />
+              <Input
+                label={t("Host IP")}
+                labelPlacement="outside"
+                value={editHostIpInput}
+                onValueChange={setEditHostIpInput}
+              />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={handleCloseEditHostModal}>
+                {tCommon("Cancel")}
+              </Button>
+              <Button color="primary" onPress={handleSaveEditedHost}>
+                {t("Save")}
+              </Button>
+            </ModalFooter>
+          </>
+        </ModalContent>
+      </Modal>
     </>
   );
 }

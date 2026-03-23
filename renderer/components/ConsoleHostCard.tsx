@@ -8,6 +8,7 @@ type ConsoleHostCardProps = {
   item: ConsoleCacheItem;
   index: number;
   onStartStream: (item: ConsoleCacheItem) => void;
+  onEditHost?: (item: ConsoleCacheItem, index: number) => void;
 };
 
 const formatRegisteredTime = (value: number | undefined) => {
@@ -51,7 +52,7 @@ const resolveConsoleVariant = (item: ConsoleCacheItem) => {
   return { isPs5, isPs5Pro };
 };
 
-function ConsoleHostCard({ item, index, onStartStream }: ConsoleHostCardProps) {
+function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHostCardProps) {
   const { t } = useTranslation("home");
   const { theme, resolvedTheme } = useTheme();
 
@@ -73,8 +74,19 @@ function ConsoleHostCard({ item, index, onStartStream }: ConsoleHostCardProps) {
   }
 
   return (
-    <Card>
-      <CardBody>
+    <Card className="relative">
+      {onEditHost ? (
+        <Button
+          size="sm"
+          variant="light"
+          className="absolute right-2 top-2 z-10 min-w-0 px-2 text-default-500"
+          onPress={() => onEditHost(item, index)}
+          aria-label={t("Edit host")}
+        >
+          ...
+        </Button>
+      ) : null}
+      <CardBody className="pt-6">
         <p className="text-center text-base font-medium">{nickname}</p>
         <p className="text-center text-xs text-gray-500">({consoleId})</p>
 

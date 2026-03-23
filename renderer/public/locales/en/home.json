@@ -27,6 +27,8 @@
   "Host name": "Host name",
   "Host ID": "Host ID",
   "Host IP": "Host IP",
+  "Edit host": "Edit console",
+  "Save": "Save",
   "Registered": "Registered",
   "Register a PS host with the 8-digit PIN shown on your console.": "Register a PS host with the 8-digit PIN shown on your console.",
   "Select console type": "Select console type",

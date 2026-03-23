@@ -2889,10 +2889,14 @@ function StreamPage() {
     }
 
     await Ipc.send("app", "stopStreamSession").catch(() => undefined);
-    const localeParam = Array.isArray(router.query.locale)
-      ? router.query.locale[0]
-      : router.query.locale || "en";
-    router.push(`/${localeParam}/home`);
+
+    setTimeout(() => {
+      const localeParam = Array.isArray(router.query.locale)
+        ? router.query.locale[0]
+        : router.query.locale || "en";
+      router.push(`/${localeParam}/home`);
+    }, 2000);
+    
   };
 
   const sendControlButtonState = (button: string, pressed: boolean) => {

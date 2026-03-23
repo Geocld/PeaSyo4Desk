@@ -27,6 +27,8 @@
   "Host name": "主機名稱",
   "Host ID": "主機 ID",
   "Host IP": "主機 IP",
+  "Edit host": "編輯主機",
+  "Save": "儲存",
   "Registered": "註冊",
   "Register a PS host with the 8-digit PIN shown on your console.": "使用主機上顯示的 8 位 PIN 註冊 PS 主機。",
   "Select console type": "選擇主機類型",
