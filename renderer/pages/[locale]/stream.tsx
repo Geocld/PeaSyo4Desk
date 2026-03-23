@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import { addToast } from "@heroui/react";
@@ -7,6 +7,10 @@ import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
 import Perform from "../../components/Perform";
 import BrightnessModal from "../../components/stream/BrightnessModal";
+import Touchpad, {
+  type StreamTouchPoint as TouchPoint,
+  type StreamTouchState,
+} from "../../components/stream/Touchpad";
 import FsrModal from "../../components/stream/FsrModal";
 import {
   DEFAULT_GAMEPAD_BUTTON_MAPPING,
@@ -49,6 +53,8 @@ const LONG_PS_PRESS_MS = 1000;
 const MIN_CONTROLLER_POLLING_RATE = 30;
 const MAX_CONTROLLER_POLLING_RATE = 1000;
 const MAX_CONTROLLER_SEND_RATE = 120;
+const MAX_CONTROLLER_TOUCH_ID = 127;
+const TOUCHPAD_BUTTON_TAP_MS = 90;
 const GAMEPAD_AXIS_QUANTIZATION = 128;
 const GAMEPAD_TRIGGER_QUANTIZATION = 64;
 const GAMEPAD_TRIGGER_DEADZONE = 0.02;
@@ -147,6 +153,8 @@ type ControllerStatePayload = {
   leftY: number;
   rightX: number;
   rightY: number;
+  touchIdNext: number;
+  touches: [TouchPoint, TouchPoint];
 };
 
 type VideoDisplayFormat = "default" | "stretch" | "zoom";
@@ -297,8 +305,69 @@ const isEditableKeyboardTarget = (target: EventTarget | null) => {
   return KEYBOARD_INPUT_TAGS.has(target.tagName) || target.isContentEditable;
 };
 
+const normalizeTouchIdNext = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(MAX_CONTROLLER_TOUCH_ID, Math.trunc(numeric)));
+};
+
+const normalizeTouchPoint = (touch: unknown): TouchPoint => {
+  const rawTouch = touch && typeof touch === "object" ? (touch as Record<string, unknown>) : {};
+  const idNumeric = Number(rawTouch.id);
+  const id = Number.isFinite(idNumeric)
+    ? Math.max(-1, Math.min(MAX_CONTROLLER_TOUCH_ID, Math.trunc(idNumeric)))
+    : -1;
+
+  if (id < 0) {
+    return { id: -1 };
+  }
+
+  const xNumeric = Number(rawTouch.x);
+  const yNumeric = Number(rawTouch.y);
+  const x = Number.isFinite(xNumeric) ? Math.max(0, Math.min(65535, Math.round(xNumeric))) : 0;
+  const y = Number.isFinite(yNumeric) ? Math.max(0, Math.min(65535, Math.round(yNumeric))) : 0;
+  return { id, x, y };
+};
+
+const cloneTouchPoint = (touch: TouchPoint): TouchPoint => {
+  if (touch.id < 0) {
+    return { id: -1 };
+  }
+
+  return {
+    id: touch.id,
+    x: touch.x,
+    y: touch.y,
+  };
+};
+
+const touchPointToKey = (touch: TouchPoint) => {
+  if (touch.id < 0) {
+    return "-1";
+  }
+  return `${touch.id}:${touch.x ?? 0}:${touch.y ?? 0}`;
+};
+
+const isSameTouchPoint = (left: TouchPoint, right: TouchPoint) => {
+  if (left.id !== right.id) {
+    return false;
+  }
+  if (left.id < 0) {
+    return true;
+  }
+
+  return (left.x ?? 0) === (right.x ?? 0) && (left.y ?? 0) === (right.y ?? 0);
+};
+
+const createIdleTouchState = (): StreamTouchState => ({
+  touchIdNext: 0,
+  touches: [{ id: -1 }, { id: -1 }],
+});
+
 const buildControllerStateKey = (state: ControllerStatePayload) => {
-  return `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}`;
+  return `${state.buttons}|${state.l2State}|${state.r2State}|${state.leftX}|${state.leftY}|${state.rightX}|${state.rightY}|${state.touchIdNext}|${touchPointToKey(state.touches[0])}|${touchPointToKey(state.touches[1])}`;
 };
 
 const createIdleControllerState = (): ControllerStatePayload => ({
@@ -309,6 +378,8 @@ const createIdleControllerState = (): ControllerStatePayload => ({
   leftY: 0,
   rightX: 0,
   rightY: 0,
+  touchIdNext: 0,
+  touches: [{ id: -1 }, { id: -1 }],
 });
 
 const cloneControllerState = (state: ControllerStatePayload): ControllerStatePayload => ({
@@ -319,6 +390,8 @@ const cloneControllerState = (state: ControllerStatePayload): ControllerStatePay
   leftY: state.leftY,
   rightX: state.rightX,
   rightY: state.rightY,
+  touchIdNext: state.touchIdNext,
+  touches: [cloneTouchPoint(state.touches[0]), cloneTouchPoint(state.touches[1])],
 });
 
 const resolveControllerSendIntervalMs = (pollingRate: unknown) => {
@@ -367,7 +440,10 @@ const isPriorityControllerStateChange = (
   return (
     nextState.buttons !== previousState.buttons ||
     nextState.l2State !== previousState.l2State ||
-    nextState.r2State !== previousState.r2State
+    nextState.r2State !== previousState.r2State ||
+    nextState.touchIdNext !== previousState.touchIdNext ||
+    !isSameTouchPoint(nextState.touches[0], previousState.touches[0]) ||
+    !isSameTouchPoint(nextState.touches[1], previousState.touches[1])
   );
 };
 
@@ -423,8 +499,10 @@ function StreamPage() {
   const [showPerformance, setShowPerformance] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [showActionbar, setShowActionbar] = useState(false);
+  const [showTouchpadOverlay, setShowTouchpadOverlay] = useState(false);
   const [showBrightnessModal, setShowBrightnessModal] = useState(false);
   const [showFsrModal, setShowFsrModal] = useState(false);
+  const [isPs5Console, setIsPs5Console] = useState(true);
   const [brightness, setBrightness] = useState(BRIGHTNESS_DEFAULT);
   const [fsrSharpness, setFsrSharpness] = useState(
     normalizeFsrSharpness(defaultSettings.fsr_sharpness)
@@ -511,6 +589,10 @@ function StreamPage() {
   const controllerSendIntervalMsRef = useRef(
     resolveControllerSendIntervalMs(defaultSettings.polling_rate)
   );
+  const touchpadStateRef = useRef<StreamTouchState>(createIdleTouchState());
+  const touchpadButtonPressedRef = useRef(false);
+  const touchpadButtonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUserInputAtRef = useRef(0);
   const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
   const lastControllerSendAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
@@ -526,6 +608,43 @@ function StreamPage() {
     shouldShowVideo && !isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
   const shouldShowHdrCanvas =
     shouldShowVideo && isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
+  const shouldShowTouchpads = shouldShowVideo && showTouchpadOverlay && !sessionAlert;
+
+  const markUserActivity = useCallback(() => {
+    lastUserInputAtRef.current = Date.now();
+    setShowActionbar(true);
+    setShowTouchpadOverlay(true);
+  }, []);
+
+  const updateTouchpadState = useCallback(
+    (nextTouchState: StreamTouchState) => {
+      touchpadStateRef.current = {
+        touchIdNext: normalizeTouchIdNext(nextTouchState.touchIdNext),
+        touches: [
+          normalizeTouchPoint(nextTouchState.touches[0]),
+          normalizeTouchPoint(nextTouchState.touches[1]),
+        ],
+      };
+      markUserActivity();
+      pollAndSendControllerStateRef.current();
+    },
+    [markUserActivity]
+  );
+
+  const triggerTouchpadButtonTap = useCallback(() => {
+    markUserActivity();
+    touchpadButtonPressedRef.current = true;
+    pollAndSendControllerStateRef.current();
+
+    if (touchpadButtonTimerRef.current) {
+      clearTimeout(touchpadButtonTimerRef.current);
+    }
+
+    touchpadButtonTimerRef.current = setTimeout(() => {
+      touchpadButtonPressedRef.current = false;
+      pollAndSendControllerStateRef.current();
+    }, TOUCHPAD_BUTTON_TAP_MS);
+  }, [markUserActivity]);
 
   const openSessionAlert = (content: string, nextStatus?: string) => {
     if (sessionErrorHandledRef.current || disconnectingRef.current) {
@@ -557,39 +676,45 @@ function StreamPage() {
       settings?.polling_rate
     );
 
-    let lastMovement = 0;
-    const mouseEvent = () => {
-      lastMovement = Date.now();
+    const activityEvent = () => {
+      markUserActivity();
     };
-    window.addEventListener("mousemove", mouseEvent);
-    window.addEventListener("mousedown", mouseEvent);
+    window.addEventListener("mousemove", activityEvent);
+    window.addEventListener("mousedown", activityEvent);
 
-    window.addEventListener("touchstart", mouseEvent);
-    window.addEventListener("touchmove", mouseEvent);
+    window.addEventListener("touchstart", activityEvent);
+    window.addEventListener("touchmove", activityEvent);
 
-    const escEvent = (event) => {
-      if (event.key === 'Escape') {
-        Ipc.send('app', 'exitFullscreen')
+    const escEvent = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        Ipc.send("app", "exitFullscreen");
       }
-    }
-    window.addEventListener('keydown', escEvent)
+    };
+    window.addEventListener("keydown", escEvent);
 
-    const mouseInterval = setInterval(() => {
-      if (Date.now() - lastMovement >= 2000) {
-        setShowActionbar(false)
-      } else {
-        setShowActionbar(true)
-      }
+    const visibilityInterval = setInterval(() => {
+      const hasTouchpadInteraction = touchpadStateRef.current.touches.some(
+        (touch) => touch.id >= 0
+      );
+      const isActive = hasTouchpadInteraction || Date.now() - lastUserInputAtRef.current < 2000;
+      setShowActionbar(isActive);
+      setShowTouchpadOverlay(isActive);
     }, 100);
 
     return () => {
-      if (mouseInterval) clearInterval(mouseInterval);
-    }
+      if (visibilityInterval) clearInterval(visibilityInterval);
+      window.removeEventListener("mousemove", activityEvent);
+      window.removeEventListener("mousedown", activityEvent);
+      window.removeEventListener("touchstart", activityEvent);
+      window.removeEventListener("touchmove", activityEvent);
+      window.removeEventListener("keydown", escEvent);
+    };
   }, [
     settings?.polling_rate,
     settings?.input_mousekeyboard_maping,
     settings?.gamepad_maping,
     settings?.gamepad_kernel,
+    markUserActivity,
   ]);
 
   useEffect(() => {
@@ -2197,6 +2322,15 @@ function StreamPage() {
     mergedState.leftY = toSignedAxis(leftYNorm);
     mergedState.rightX = toSignedAxis(rightXNorm);
     mergedState.rightY = toSignedAxis(rightYNorm);
+    mergedState.touchIdNext = touchpadStateRef.current.touchIdNext;
+    mergedState.touches = [
+      cloneTouchPoint(touchpadStateRef.current.touches[0]),
+      cloneTouchPoint(touchpadStateRef.current.touches[1]),
+    ];
+
+    if (touchpadButtonPressedRef.current) {
+      mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
+    }
 
     validGamepadCountRef.current = validCount;
     return mergedState;
@@ -2317,6 +2451,15 @@ function StreamPage() {
         lastSentControllerStateRef.current = createIdleControllerState();
         lastControllerSendAtRef.current = 0;
         lastControlStateKeyRef.current = "";
+        touchpadStateRef.current = createIdleTouchState();
+        touchpadButtonPressedRef.current = false;
+        if (touchpadButtonTimerRef.current) {
+          clearTimeout(touchpadButtonTimerRef.current);
+          touchpadButtonTimerRef.current = null;
+        }
+        setShowActionbar(false);
+        setShowTouchpadOverlay(false);
+        setIsPs5Console(true);
         clearConnectedFeedbackTimers();
         setFsrFrameRendered(false);
         setVideoReady(false);
@@ -2355,6 +2498,9 @@ function StreamPage() {
           setConnectState("error");
           return;
         }
+
+        const apName = String(pendingConfig?.consoleInfo?.apName || "");
+        setIsPs5Console(apName ? apName.toUpperCase().includes("PS5") : true);
 
         setStatus(t("Connecting..."));
         setConnectState("starting");
@@ -2569,6 +2715,14 @@ function StreamPage() {
       controlTransportReadyRef.current = false;
       lastSentControllerStateRef.current = createIdleControllerState();
       lastControllerSendAtRef.current = 0;
+      touchpadStateRef.current = createIdleTouchState();
+      touchpadButtonPressedRef.current = false;
+      if (touchpadButtonTimerRef.current) {
+        clearTimeout(touchpadButtonTimerRef.current);
+        touchpadButtonTimerRef.current = null;
+      }
+      setShowActionbar(false);
+      setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
       if (cleanupRawListener) {
@@ -2714,6 +2868,13 @@ function StreamPage() {
     audioPlaybackEnabledRef.current = false;
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
+    touchpadStateRef.current = createIdleTouchState();
+    touchpadButtonPressedRef.current = false;
+    if (touchpadButtonTimerRef.current) {
+      clearTimeout(touchpadButtonTimerRef.current);
+      touchpadButtonTimerRef.current = null;
+    }
+    setShowTouchpadOverlay(false);
     pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
@@ -2782,6 +2943,13 @@ function StreamPage() {
     audioPlaybackEnabledRef.current = false;
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
+    touchpadStateRef.current = createIdleTouchState();
+    touchpadButtonPressedRef.current = false;
+    if (touchpadButtonTimerRef.current) {
+      clearTimeout(touchpadButtonTimerRef.current);
+      touchpadButtonTimerRef.current = null;
+    }
+    setShowTouchpadOverlay(false);
     pollAndSendControllerStateRef.current();
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
@@ -2907,6 +3075,25 @@ function StreamPage() {
           className={`absolute inset-0 block ${videoCanvasSizingClass} ${
             shouldShowFsrCanvas ? "opacity-100" : "opacity-0"
           }`}
+        />
+      </div>
+
+      <div className="pointer-events-none absolute inset-0 z-20">
+        <Touchpad
+          className="absolute left-4 top-1/2 -translate-y-1/2"
+          isPs5={isPs5Console}
+          visible={shouldShowTouchpads}
+          onActivity={markUserActivity}
+          onTap={triggerTouchpadButtonTap}
+          onTouchStateChange={updateTouchpadState}
+        />
+        <Touchpad
+          className="absolute right-4 top-1/2 -translate-y-1/2"
+          isPs5={isPs5Console}
+          visible={shouldShowTouchpads}
+          onActivity={markUserActivity}
+          onTap={triggerTouchpadButtonTap}
+          onTouchStateChange={updateTouchpadState}
         />
       </div>
 

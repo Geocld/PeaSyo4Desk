@@ -11,7 +11,7 @@ import WS from "ws";
 import chiaki from "chiaki-lib";
 import {
   createNodeGamepadDriver,
-  type ControllerStateSnapshot,
+  type ControllerStateSnapshot as NodeControllerStateSnapshot,
 } from "./gamepadDriver";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -57,6 +57,8 @@ const ANALOG_BUTTONS = (chiaki as any).controllerAnalogButtons || {
   L2: 1 << 16,
   R2: 1 << 17,
 };
+const MAX_CONTROLLER_TOUCH_ID = 127;
+const MAX_CONTROLLER_TOUCHES = 2;
 const BUTTON_NAME_TO_MASK = {
   cross: BUTTONS.CROSS,
   circle: BUTTONS.MOON,
@@ -274,7 +276,18 @@ let oggSerial = 0;
 let oggSeq = 0;
 let oggGranule = 0n;
 
-const controllerState = {
+type ControllerTouchSnapshot = {
+  id: number;
+  x: number;
+  y: number;
+};
+
+type ControllerStateSnapshot = NodeControllerStateSnapshot & {
+  touchIdNext: number;
+  touches: [ControllerTouchSnapshot, ControllerTouchSnapshot];
+};
+
+const controllerState: ControllerStateSnapshot = {
   buttons: 0,
   l2State: 0,
   r2State: 0,
@@ -282,6 +295,11 @@ const controllerState = {
   leftY: 0,
   rightX: 0,
   rightY: 0,
+  touchIdNext: 0,
+  touches: [
+    { id: -1, x: 0, y: 0 },
+    { id: -1, x: 0, y: 0 },
+  ],
 };
 const frontendControllerState: ControllerStateSnapshot = {
   buttons: 0,
@@ -291,8 +309,13 @@ const frontendControllerState: ControllerStateSnapshot = {
   leftY: 0,
   rightX: 0,
   rightY: 0,
+  touchIdNext: 0,
+  touches: [
+    { id: -1, x: 0, y: 0 },
+    { id: -1, x: 0, y: 0 },
+  ],
 };
-const nodeControllerState: ControllerStateSnapshot = {
+const nodeControllerState: NodeControllerStateSnapshot = {
   buttons: 0,
   l2State: 0,
   r2State: 0,
@@ -309,6 +332,11 @@ const lastSubmittedControllerState: ControllerStateSnapshot = {
   leftY: 0,
   rightX: 0,
   rightY: 0,
+  touchIdNext: 0,
+  touches: [
+    { id: -1, x: 0, y: 0 },
+    { id: -1, x: 0, y: 0 },
+  ],
 };
 let hasSubmittedControllerState = false;
 let controllerKernel: ControllerKernel = "node";
@@ -323,6 +351,8 @@ type ControllerStatePayload = {
   leftY?: unknown;
   rightX?: unknown;
   rightY?: unknown;
+  touchIdNext?: unknown;
+  touches?: unknown;
 };
 let pendingDirectControllerState: ControllerStatePayload | null = null;
 let directControllerStateFlushScheduled = false;
@@ -918,7 +948,35 @@ const clampInt = (value: unknown, min: number, max: number) => {
   return Math.trunc(numeric);
 };
 
-const resetControllerState = (state: ControllerStateSnapshot) => {
+const normalizeTouchPoint = (touch: unknown): ControllerTouchSnapshot => {
+  const rawTouch = touch && typeof touch === "object" ? (touch as Record<string, unknown>) : {};
+  const id = clampInt(rawTouch.id, -1, MAX_CONTROLLER_TOUCH_ID);
+  if (id < 0) {
+    return {
+      id: -1,
+      x: 0,
+      y: 0,
+    };
+  }
+
+  return {
+    id,
+    x: clampInt(rawTouch.x, 0, 0xffff),
+    y: clampInt(rawTouch.y, 0, 0xffff),
+  };
+};
+
+const copyTouchPoint = (target: ControllerTouchSnapshot, source: ControllerTouchSnapshot) => {
+  target.id = source.id;
+  target.x = source.x;
+  target.y = source.y;
+};
+
+const isSameTouchPoint = (left: ControllerTouchSnapshot, right: ControllerTouchSnapshot) => {
+  return left.id === right.id && left.x === right.x && left.y === right.y;
+};
+
+const resetNodeControllerState = (state: NodeControllerStateSnapshot) => {
   state.buttons = 0;
   state.l2State = 0;
   state.r2State = 0;
@@ -928,7 +986,21 @@ const resetControllerState = (state: ControllerStateSnapshot) => {
   state.rightY = 0;
 };
 
-const copyControllerState = (target: ControllerStateSnapshot, source: ControllerStateSnapshot) => {
+const resetControllerState = (state: ControllerStateSnapshot) => {
+  resetNodeControllerState(state);
+  state.touchIdNext = 0;
+  state.touches[0].id = -1;
+  state.touches[0].x = 0;
+  state.touches[0].y = 0;
+  state.touches[1].id = -1;
+  state.touches[1].x = 0;
+  state.touches[1].y = 0;
+};
+
+const copyNodeControllerState = (
+  target: NodeControllerStateSnapshot,
+  source: NodeControllerStateSnapshot
+) => {
   target.buttons = source.buttons;
   target.l2State = source.l2State;
   target.r2State = source.r2State;
@@ -938,7 +1010,17 @@ const copyControllerState = (target: ControllerStateSnapshot, source: Controller
   target.rightY = source.rightY;
 };
 
-const isSameControllerState = (left: ControllerStateSnapshot, right: ControllerStateSnapshot) => {
+const copyControllerState = (target: ControllerStateSnapshot, source: ControllerStateSnapshot) => {
+  copyNodeControllerState(target, source);
+  target.touchIdNext = source.touchIdNext;
+  copyTouchPoint(target.touches[0], source.touches[0]);
+  copyTouchPoint(target.touches[1], source.touches[1]);
+};
+
+const isSameNodeControllerState = (
+  left: NodeControllerStateSnapshot,
+  right: NodeControllerStateSnapshot
+) => {
   return (
     left.buttons === right.buttons &&
     left.l2State === right.l2State &&
@@ -950,9 +1032,18 @@ const isSameControllerState = (left: ControllerStateSnapshot, right: ControllerS
   );
 };
 
-const setNormalizedControllerState = (
-  target: ControllerStateSnapshot,
-  state: ControllerStatePayload | ControllerStateSnapshot
+const isSameControllerState = (left: ControllerStateSnapshot, right: ControllerStateSnapshot) => {
+  return (
+    isSameNodeControllerState(left, right) &&
+    left.touchIdNext === right.touchIdNext &&
+    isSameTouchPoint(left.touches[0], right.touches[0]) &&
+    isSameTouchPoint(left.touches[1], right.touches[1])
+  );
+};
+
+const setNormalizedNodeControllerState = (
+  target: NodeControllerStateSnapshot,
+  state: NodeControllerStateSnapshot | ControllerStatePayload
 ) => {
   target.buttons = clampInt((state as any).buttons, 0, 0xffffffff) >>> 0;
   target.l2State = clampInt((state as any).l2State, 0, 255);
@@ -963,13 +1054,39 @@ const setNormalizedControllerState = (
   target.rightY = clampInt((state as any).rightY, -32768, 32767);
 };
 
+const setNormalizedTouchState = (
+  target: ControllerStateSnapshot,
+  state: ControllerStatePayload | ControllerStateSnapshot
+) => {
+  target.touchIdNext = clampInt((state as any).touchIdNext, 0, MAX_CONTROLLER_TOUCH_ID);
+  const touches = Array.isArray((state as any).touches) ? (state as any).touches : [];
+  for (let i = 0; i < MAX_CONTROLLER_TOUCHES; i += 1) {
+    const slot = i as 0 | 1;
+    copyTouchPoint(target.touches[slot], normalizeTouchPoint(touches[i]));
+  }
+};
+
+const setNormalizedControllerState = (
+  target: ControllerStateSnapshot,
+  state: ControllerStatePayload | ControllerStateSnapshot
+) => {
+  setNormalizedNodeControllerState(target, state);
+  setNormalizedTouchState(target, state);
+};
+
 const mergeAxisInput = (primary: number, secondary: number) => {
   return Math.abs(primary) >= Math.abs(secondary) ? primary : secondary;
 };
 
 const buildEffectiveControllerState = (): ControllerStateSnapshot => {
   if (controllerKernel !== "node") {
-    return { ...frontendControllerState };
+    return {
+      ...frontendControllerState,
+      touches: [
+        { ...frontendControllerState.touches[0] },
+        { ...frontendControllerState.touches[1] },
+      ],
+    };
   }
 
   const merged: ControllerStateSnapshot = {
@@ -980,6 +1097,11 @@ const buildEffectiveControllerState = (): ControllerStateSnapshot => {
     leftY: mergeAxisInput(frontendControllerState.leftY, nodeControllerState.leftY),
     rightX: mergeAxisInput(frontendControllerState.rightX, nodeControllerState.rightX),
     rightY: mergeAxisInput(frontendControllerState.rightY, nodeControllerState.rightY),
+    touchIdNext: frontendControllerState.touchIdNext,
+    touches: [
+      { ...frontendControllerState.touches[0] },
+      { ...frontendControllerState.touches[1] },
+    ],
   };
 
   if (merged.l2State > 0) {
@@ -1021,8 +1143,8 @@ const applyEffectiveControllerState = (reason: string) => {
   pushControllerState(reason);
 };
 
-const applyNodeControllerState = (state: ControllerStateSnapshot, reason: string) => {
-  setNormalizedControllerState(nodeControllerState, state);
+const applyNodeControllerState = (state: NodeControllerStateSnapshot, reason: string) => {
+  setNormalizedNodeControllerState(nodeControllerState, state);
   applyEffectiveControllerState(reason);
 };
 
@@ -1037,13 +1159,13 @@ const resolveControllerKernel = (settings: StreamSessionSettings | null | undefi
 
 const stopNodeGamepadDriver = () => {
   if (!nodeGamepadDriver) {
-    resetControllerState(nodeControllerState);
+    resetNodeControllerState(nodeControllerState);
     return;
   }
 
   nodeGamepadDriver.stop();
   nodeGamepadDriver = null;
-  resetControllerState(nodeControllerState);
+  resetNodeControllerState(nodeControllerState);
 };
 
 const startNodeGamepadDriver = () => {
@@ -2134,7 +2256,7 @@ const cleanupSessionOnly = () => {
   controllerButtonRefCounts.clear();
   resetControllerState(controllerState);
   resetControllerState(frontendControllerState);
-  resetControllerState(nodeControllerState);
+  resetNodeControllerState(nodeControllerState);
   resetControllerState(lastSubmittedControllerState);
   hasSubmittedControllerState = false;
   pendingDirectControllerState = null;
