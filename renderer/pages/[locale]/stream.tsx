@@ -3202,6 +3202,7 @@ function StreamPage() {
   };
 
   const handleSessionAlertConfirm = async () => {
+    setSessionAlert(null);
     await handleDisconnect();
   };
 
