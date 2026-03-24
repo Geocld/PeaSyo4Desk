@@ -210,9 +210,18 @@ function SettingsPage() {
   }, []);
 
   const settingsMetas = useMemo(() => getSettingsMetas(t), [t]);
-  const baseMetas = settingsMetas.base || [];
   const localMetas = settingsMetas.local || [];
   const remoteMetas = settingsMetas.remote || [];
+  const visibleBaseMetas = useMemo(
+    () =>
+      (settingsMetas.base || []).filter((item: any) => {
+        if (item.linuxOnly) {
+          return showLinuxHdrHint;
+        }
+        return true;
+      }),
+    [settingsMetas, showLinuxHdrHint]
+  );
   const shouldShowFeedbackEntry = settings?.locale === "zh" || settings?.locale === "zht";
   const isWebGamepadKernel = resolveGamepadKernel(settings) === "web";
   const visibleOtherMetas = useMemo(
@@ -826,7 +835,7 @@ function SettingsPage() {
         <Tabs aria-label="Options">
           <Tab key="Base" title={t("Base")}>
             {renderAccountManagerCard()}
-            {baseMetas.map((item) => (
+            {visibleBaseMetas.map((item) => (
               <SettingItem
                 key={item.name}
                 item={item}

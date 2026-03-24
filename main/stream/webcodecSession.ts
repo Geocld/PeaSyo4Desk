@@ -767,10 +767,6 @@ const shouldUseCompressedVideoTransport = (args: StartStreamSessionArgs) => {
     return false;
   }
 
-  if (!canUseNativeStreamBinary()) {
-    return false;
-  }
-
   const transportPreference = getPlatformVideoTransportPreference();
   if (
     transportPreference === "raw" ||
@@ -789,7 +785,7 @@ const shouldUseCompressedVideoTransport = (args: StartStreamSessionArgs) => {
   }
 
   const capabilities = args.clientVideoCapabilities || {};
-  if (!capabilities.webCodecs || !capabilities.preferCompressedVideo) {
+  if (!capabilities.webCodecs) {
     return false;
   }
 
@@ -2809,9 +2805,26 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
       ? requestedBitrate
       : defaultBitrate;
   const requestedCodec = resolveCodec(args.videoProfile?.codec || settingsCodec || "H265");
-  const profileCodec = resolvePlatformCodec(requestedCodec);
+  let profileCodec = resolvePlatformCodec(requestedCodec);
   if (IS_LINUX && requestedCodec !== profileCodec) {
     log(`downgrading requested codec ${codecName(requestedCodec)} to ${codecName(profileCodec)} on Linux`);
+  }
+
+  const clientVideoCapabilities = args.clientVideoCapabilities || {};
+  const profileInputFormat = resolveInputFormat(profileCodec);
+  if (
+    clientVideoCapabilities.webCodecs &&
+    profileInputFormat === "hevc" &&
+    !clientVideoCapabilities.hevc &&
+    !!clientVideoCapabilities.h264
+  ) {
+    const fallbackCodec = resolvePlatformCodec((chiaki as any).codecs.H264);
+    if (fallbackCodec !== profileCodec) {
+      log(
+        `downgrading requested codec ${codecName(profileCodec)} to ${codecName(fallbackCodec)} for client WebCodecs support`
+      );
+      profileCodec = fallbackCodec;
+    }
   }
 
   const outputFormat = resolveOutputFormat(

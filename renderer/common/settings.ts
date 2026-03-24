@@ -69,6 +69,18 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "use_vulkan",
+        type: "radio",
+        title: t("value_vulkan_title"),
+        description: t("value_vulkan_desc"),
+        needRestart: true,
+        linuxOnly: true,
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
         name: "gamepad_kernel",
         type: "radio",
         title: t("Gamepad input kernel"),

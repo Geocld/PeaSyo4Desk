@@ -71,6 +71,11 @@ export default class Application {
       ElectronApp.commandLine.appendSwitch('enable-oop-rasterization')
       ElectronApp.commandLine.appendSwitch('enable-accelerated-video-decode')
       if (this._isLinux) {
+        ElectronApp.commandLine.appendSwitch(
+          'enable-features',
+          'VaapiIgnoreDriverChecks,VaapiVideoDecoder,PlatformHEVCDecoderSupport,CanvasOopRasterization'
+        )
+        ElectronApp.commandLine.appendSwitch('enable-zero-copy')
         ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
       }
     }

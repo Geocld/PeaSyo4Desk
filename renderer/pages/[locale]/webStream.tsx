@@ -70,8 +70,34 @@ const BRIGHTNESS_DEFAULT = 100;
 const FSR_SHARPNESS_MIN = 0;
 const FSR_SHARPNESS_MAX = 2;
 const FSR_SHARPNESS_STEP = 0.05;
-const WEBCODECS_H264_CODEC_CANDIDATES = ["avc1.640028", "avc1.4d4028", "avc1.42E01E"];
-const WEBCODECS_HEVC_CODEC_CANDIDATES = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
+const WEBCODECS_H264_CODEC_FALLBACK = "avc1.42E01E";
+const WEBCODECS_H264_CODEC_CANDIDATES = [
+  "avc1.640033",
+  "avc1.640032",
+  "avc1.64002A",
+  "avc1.640028",
+  "avc1.4d4033",
+  "avc1.4d402a",
+  "avc1.4d4028",
+  "avc1.4d401f",
+  "avc1.42E01E",
+  "avc1.42001E",
+  "avc3.640028",
+  "avc3.4d4028",
+  "avc3.42E01E",
+];
+const WEBCODECS_HEVC_CODEC_CANDIDATES = [
+  "hvc1.1.6.L186.B0",
+  "hev1.1.6.L186.B0",
+  "hvc1.1.6.L150.B0",
+  "hev1.1.6.L150.B0",
+  "hvc1.1.6.L120.B0",
+  "hev1.1.6.L120.B0",
+  "hvc1.1.6.L93.B0",
+  "hev1.1.6.L93.B0",
+  "hvc1.2.4.L120.B0",
+  "hev1.2.4.L120.B0",
+];
 const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 8;
 
 type PendingStreamConfig = {
@@ -99,6 +125,15 @@ const isLinuxRuntime = () => {
   return typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent || "");
 };
 
+const isSteamOsRuntime = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+  return /steamos|steam deck/i.test(platformText);
+};
+
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
   return format === "I010" || format === "P010";
 };
@@ -112,21 +147,35 @@ const checkWebCodecsCodecSupport = async (codecCandidates: string[]) => {
     return null;
   }
 
+  const hardwareAccelerationModes: VideoDecoderConfig["hardwareAcceleration"][] = [
+    "prefer-hardware",
+    "no-preference",
+    "prefer-software",
+  ];
+
   for (const codec of codecCandidates) {
-    try {
-      const support = await VideoDecoder.isConfigSupported({
-        codec,
-        codedWidth: 1280,
-        codedHeight: 720,
-        hardwareAcceleration: "prefer-hardware",
-        optimizeForLatency: true,
-      });
-      if (support?.supported) {
-        console.log('support codec:', codec)
-        return codec;
+    for (const hardwareAcceleration of hardwareAccelerationModes) {
+      try {
+        let support = await VideoDecoder.isConfigSupported({
+          codec,
+          codedWidth: 1280,
+          codedHeight: 720,
+          hardwareAcceleration,
+          optimizeForLatency: true,
+        });
+        if (!support?.supported) {
+          support = await VideoDecoder.isConfigSupported({
+            codec,
+            hardwareAcceleration,
+            optimizeForLatency: true,
+          });
+        }
+        if (support?.supported) {
+          return codec;
+        }
+      } catch {
+        // Ignore unsupported codec probes.
       }
-    } catch {
-      // Ignore unsupported codec probes.
     }
   }
 
@@ -141,6 +190,33 @@ const resolveRequestedStreamCodecFamily = (
     .trim()
     .toUpperCase();
   return rawCodec.includes("264") ? "h264" : "hevc";
+};
+
+const resolveNegotiatedStreamCodec = (
+  requestedCodecFamily: StreamCodecFamily,
+  capabilities: ClientVideoCapabilities
+) => {
+  if (!capabilities.webCodecs) {
+    return null;
+  }
+
+  if (requestedCodecFamily === "hevc") {
+    if (capabilities.hevc) {
+      return "H265";
+    }
+    if (capabilities.h264) {
+      return "H264";
+    }
+    return null;
+  }
+
+  if (capabilities.h264) {
+    return "H264";
+  }
+  if (capabilities.hevc) {
+    return "H265";
+  }
+  return null;
 };
 
 const detectClientVideoCapabilities = async (
@@ -159,13 +235,15 @@ const detectClientVideoCapabilities = async (
     checkWebCodecsCodecSupport(WEBCODECS_H264_CODEC_CANDIDATES),
     checkWebCodecsCodecSupport(WEBCODECS_HEVC_CODEC_CANDIDATES),
   ]);
+  const canUseSteamOsOptimisticH264 = isSteamOsRuntime() && !h264Codec;
+  const resolvedH264Codec = h264Codec || (canUseSteamOsOptimisticH264 ? WEBCODECS_H264_CODEC_FALLBACK : null);
 
   return {
     webCodecs: true,
-    preferCompressedVideo: codecFamily === "hevc" ? !!hevcCodec : !!h264Codec,
-    h264: !!h264Codec,
+    preferCompressedVideo: codecFamily === "hevc" ? !!hevcCodec || !!resolvedH264Codec : !!resolvedH264Codec,
+    h264: !!resolvedH264Codec,
     hevc: !!hevcCodec,
-    ...(h264Codec ? { h264Codec } : {}),
+    ...(resolvedH264Codec ? { h264Codec: resolvedH264Codec } : {}),
     ...(hevcCodec ? { hevcCodec } : {}),
   };
 };
@@ -3037,6 +3115,10 @@ function StreamPage() {
           !!pendingConfig?.isRemote
         );
         const clientVideoCapabilities = await detectClientVideoCapabilities(requestedCodecFamily);
+        const negotiatedStreamCodec = resolveNegotiatedStreamCodec(
+          requestedCodecFamily,
+          clientVideoCapabilities
+        );
         webCodecsCapabilitiesRef.current = clientVideoCapabilities;
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,
@@ -3045,6 +3127,13 @@ function StreamPage() {
           loginInfo: currentLoginInfo || undefined,
           sessionType: "webcodec",
           clientVideoCapabilities,
+          ...(negotiatedStreamCodec
+            ? {
+                videoProfile: {
+                  codec: negotiatedStreamCodec,
+                },
+              }
+            : {}),
         });
         if (!active) return;
 
