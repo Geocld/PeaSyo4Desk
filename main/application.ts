@@ -48,6 +48,8 @@ export default class Application {
 
     const settings: any = this._store.get('settings', defaultSettings)
 
+    const forceLinuxX11 = String(process.env.PEASYO_FORCE_X11 || "").trim() === "1";
+
     if (settings.use_vulkan) {
       ElectronApp.commandLine.appendSwitch('use-vulkan')
       ElectronApp.commandLine.appendSwitch(
@@ -61,9 +63,8 @@ export default class Application {
       ElectronApp.commandLine.appendSwitch('enable-accelerated-video-decode')
       ElectronApp.commandLine.appendSwitch('ignore-gpu-blocklist')
       ElectronApp.commandLine.appendSwitch('enable-zero-copy');
-      if (this._isLinux) {
+      if (this._isLinux && forceLinuxX11) {
         ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
-        ElectronApp.commandLine.appendSwitch('no-sandbox');
       }
     } else {
       ElectronApp.commandLine.appendSwitch('ignore-gpu-blacklist')
@@ -76,7 +77,9 @@ export default class Application {
           'VaapiIgnoreDriverChecks,VaapiVideoDecoder,PlatformHEVCDecoderSupport,CanvasOopRasterization'
         )
         ElectronApp.commandLine.appendSwitch('enable-zero-copy')
-        ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
+        if (forceLinuxX11) {
+          ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
+        }
       }
     }
 

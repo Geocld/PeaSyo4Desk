@@ -870,8 +870,42 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
   let isSyncFrame = false;
 
   const length = sampleData.length;
-  let cursor = 0;
+  const inspectNalAt = (nalOffset: number) => {
+    if (nalOffset < 0 || nalOffset >= length) {
+      return;
+    }
 
+    if (inputFormat === "hevc") {
+      if (nalOffset + 1 >= length) {
+        return;
+      }
+      const nalType = (sampleData[nalOffset] >> 1) & 0x3f;
+      if (nalType >= 0 && nalType <= 31) {
+        hasSlice = true;
+      }
+      if (nalType >= 16 && nalType <= 21) {
+        isSyncFrame = true;
+      }
+      if (nalType === 32 || nalType === 33 || nalType === 34) {
+        hasConfig = true;
+      }
+      return;
+    }
+
+    const nalType = sampleData[nalOffset] & 0x1f;
+    if (nalType === 1 || nalType === 2 || nalType === 5) {
+      hasSlice = true;
+    }
+    if (nalType === 5) {
+      isSyncFrame = true;
+    }
+    if (nalType === 7 || nalType === 8) {
+      hasConfig = true;
+    }
+  };
+
+  let foundAnnexBStartCode = false;
+  let cursor = 0;
   while (cursor + 4 <= length) {
     let start = -1;
     let nalOffset = -1;
@@ -895,35 +929,23 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
     if (start < 0 || nalOffset < 0 || nalOffset >= length) {
       break;
     }
-
-    if (inputFormat === "hevc") {
-      if (nalOffset + 1 >= length) {
-        break;
-      }
-      const nalType = (sampleData[nalOffset] >> 1) & 0x3f;
-      if (nalType >= 0 && nalType <= 31) {
-        hasSlice = true;
-      }
-      if (nalType === 19 || nalType === 20 || nalType === 21) {
-        isSyncFrame = true;
-      }
-      if (nalType === 32 || nalType === 33 || nalType === 34) {
-        hasConfig = true;
-      }
-    } else {
-      const nalType = sampleData[nalOffset] & 0x1f;
-      if (nalType === 1 || nalType === 5) {
-        hasSlice = true;
-      }
-      if (nalType === 5) {
-        isSyncFrame = true;
-      }
-      if (nalType === 7 || nalType === 8) {
-        hasConfig = true;
-      }
-    }
+    foundAnnexBStartCode = true;
+    inspectNalAt(nalOffset);
 
     cursor = nalOffset + 1;
+  }
+
+  if (!foundAnnexBStartCode) {
+    let lpCursor = 0;
+    while (lpCursor + 4 <= length) {
+      const nalSize = sampleData.readUInt32BE(lpCursor);
+      lpCursor += 4;
+      if (nalSize < 1 || lpCursor + nalSize > length) {
+        break;
+      }
+      inspectNalAt(lpCursor);
+      lpCursor += nalSize;
+    }
   }
 
   return {
@@ -950,7 +972,15 @@ const getMaxPendingVideoSampleBytes = () => {
 };
 
 const shouldResyncVideoDecoderOnBacklog = () => {
-  return !!streamVideoConfig;
+  if (!streamVideoConfig) {
+    return false;
+  }
+
+  if (IS_LINUX && streamVideoConfig.inputFormat === "hevc") {
+    return false;
+  }
+
+  return true;
 };
 
 const clearPendingVideoSampleQueue = () => {
