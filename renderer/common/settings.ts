@@ -70,6 +70,18 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "stream_webcodec_steamos_profile",
+        type: "radio",
+        title: t("SteamOS WebCodec profile"),
+        description: t("SteamOS WebCodec profile desc"),
+        linuxOnly: true,
+        data: [
+          { value: "balanced", label: t("Balanced") },
+          { value: "stable", label: t("Stable") },
+          { value: "ultra-stable", label: t("Ultra-stable") },
+        ],
+      },
+      {
         name: "gamepad_kernel",
         type: "radio",
         title: t("Gamepad input kernel"),

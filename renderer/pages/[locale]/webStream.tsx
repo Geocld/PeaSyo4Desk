@@ -99,11 +99,57 @@ const WEBCODECS_HEVC_CODEC_CANDIDATES = [
   "hev1.2.4.L120.B0",
 ];
 const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 24;
-const MAX_WEBCODECS_DECODE_QUEUE_STEAMOS = 48;
-const MAX_WEBCODECS_RENDER_QUEUE_STEAMOS = 24;
 const MAX_WEBCODECS_RENDER_QUEUE_DEFAULT = 1;
-const STEAMOS_WEBCODECS_MIN_BUFFER_FRAMES = 8;
-const STEAMOS_WEBCODECS_CLOCK_DELAY_FRAMES = 5;
+type SteamOsWebCodecsProfile = "balanced" | "stable" | "ultra-stable";
+type SteamOsWebCodecsTuning = {
+  decodeQueueLimit: number;
+  renderQueueLimit: number;
+  minBufferFrames: number;
+  clockDelayFrames: number;
+  rebufferLowFrames: number;
+  rebufferResumeFrames: number;
+  renderedFrameRetireKeep: number;
+};
+const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
+const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsWebCodecsTuning> = {
+  balanced: {
+    decodeQueueLimit: 80,
+    renderQueueLimit: 40,
+    minBufferFrames: 14,
+    clockDelayFrames: 9,
+    rebufferLowFrames: 6,
+    rebufferResumeFrames: 14,
+    renderedFrameRetireKeep: 5,
+  },
+  stable: {
+    decodeQueueLimit: 120,
+    renderQueueLimit: 56,
+    minBufferFrames: 20,
+    clockDelayFrames: 14,
+    rebufferLowFrames: 10,
+    rebufferResumeFrames: 20,
+    renderedFrameRetireKeep: 8,
+  },
+  "ultra-stable": {
+    decodeQueueLimit: 192,
+    renderQueueLimit: 96,
+    minBufferFrames: 30,
+    clockDelayFrames: 22,
+    rebufferLowFrames: 16,
+    rebufferResumeFrames: 30,
+    renderedFrameRetireKeep: 12,
+  },
+};
+
+const resolveSteamOsWebCodecsProfile = (value: unknown): SteamOsWebCodecsProfile => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "balanced" || normalized === "stable" || normalized === "ultra-stable") {
+    return normalized;
+  }
+  return STEAMOS_WEBCODECS_PROFILE_DEFAULT;
+};
 
 const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAcceleration"][] => {
   if (isSteamOsRuntime()) {
@@ -151,28 +197,6 @@ const isSteamOsRuntime = () => {
 
 const shouldDeferEncodedAckUntilFrameConsumed = () => {
   return isSteamOsRuntime();
-};
-
-const getWebCodecsDecodeQueueLimit = () => {
-  return isSteamOsRuntime() ? MAX_WEBCODECS_DECODE_QUEUE_STEAMOS : MAX_WEBCODECS_DECODE_QUEUE_SIZE;
-};
-
-const getWebCodecsRenderQueueLimit = () => {
-  return isSteamOsRuntime()
-    ? MAX_WEBCODECS_RENDER_QUEUE_STEAMOS
-    : MAX_WEBCODECS_RENDER_QUEUE_DEFAULT;
-};
-
-const shouldUseTimestampDrivenWebCodecsRender = () => {
-  return isSteamOsRuntime();
-};
-
-const getSteamOsWebCodecsMinBufferFrames = () => {
-  return STEAMOS_WEBCODECS_MIN_BUFFER_FRAMES;
-};
-
-const getSteamOsWebCodecsClockDelayFrames = () => {
-  return STEAMOS_WEBCODECS_CLOCK_DELAY_FRAMES;
 };
 
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
@@ -781,6 +805,7 @@ function StreamPage() {
   const decodedVideoFrameClockWallStartUsRef = useRef(0);
   const decodedVideoFrameClockMediaStartUsRef = useRef(0);
   const decodedVideoFrameClockPrimedRef = useRef(false);
+  const decodedVideoFrameRebufferingRef = useRef(false);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -854,6 +879,48 @@ function StreamPage() {
   const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
   const lastControllerSendAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
+
+  const steamOsRuntime = isSteamOsRuntime();
+  const steamOsWebCodecsProfile = resolveSteamOsWebCodecsProfile(
+    settings?.stream_webcodec_steamos_profile
+  );
+  const steamOsWebCodecsTuning = STEAMOS_WEBCODECS_PROFILE_TUNING[steamOsWebCodecsProfile];
+
+  const getWebCodecsDecodeQueueLimit = () => {
+    return steamOsRuntime
+      ? steamOsWebCodecsTuning.decodeQueueLimit
+      : MAX_WEBCODECS_DECODE_QUEUE_SIZE;
+  };
+
+  const getWebCodecsRenderQueueLimit = () => {
+    return steamOsRuntime
+      ? steamOsWebCodecsTuning.renderQueueLimit
+      : MAX_WEBCODECS_RENDER_QUEUE_DEFAULT;
+  };
+
+  const shouldUseTimestampDrivenWebCodecsRender = () => {
+    return steamOsRuntime;
+  };
+
+  const getSteamOsWebCodecsMinBufferFrames = () => {
+    return steamOsWebCodecsTuning.minBufferFrames;
+  };
+
+  const getSteamOsWebCodecsClockDelayFrames = () => {
+    return steamOsWebCodecsTuning.clockDelayFrames;
+  };
+
+  const getSteamOsWebCodecsRebufferLowFrames = () => {
+    return steamOsWebCodecsTuning.rebufferLowFrames;
+  };
+
+  const getSteamOsWebCodecsRebufferResumeFrames = () => {
+    return steamOsWebCodecsTuning.rebufferResumeFrames;
+  };
+
+  const getSteamOsRenderedFrameRetireKeepCount = () => {
+    return steamOsWebCodecsTuning.renderedFrameRetireKeep;
+  };
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -1379,6 +1446,7 @@ function StreamPage() {
     decodedVideoFrameClockWallStartUsRef.current = 0;
     decodedVideoFrameClockMediaStartUsRef.current = 0;
     decodedVideoFrameClockPrimedRef.current = false;
+    decodedVideoFrameRebufferingRef.current = false;
   };
 
   const getVideoFrameTimestampUs = (frame: VideoFrame) => {
@@ -1438,7 +1506,11 @@ function StreamPage() {
 
   const flushRenderedDecodedVideoFrameRetireQueue = (force = false) => {
     const queue = renderedDecodedVideoFrameRetireQueueRef.current;
-    const keepCount = force ? 0 : 2;
+    const keepCount = force
+      ? 0
+      : shouldUseTimestampDrivenWebCodecsRender()
+        ? getSteamOsRenderedFrameRetireKeepCount()
+        : 2;
     while (queue.length > keepCount) {
       const frame = queue.shift();
       if (!frame) {
@@ -1550,6 +1622,7 @@ function StreamPage() {
         queue.length >= minBufferFrames
       ) {
         syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+        decodedVideoFrameRebufferingRef.current = false;
       }
     }
 
@@ -3178,13 +3251,31 @@ function StreamPage() {
           closeDecodedVideoFrame(overflowFrame);
         }
 
-        if (!decodedVideoFrameClockPrimedRef.current) {
-          if (decodedFrameQueue.length >= getSteamOsWebCodecsMinBufferFrames()) {
+        if (
+          decodedVideoFrameClockPrimedRef.current &&
+          !decodedVideoFrameRebufferingRef.current &&
+          decodedFrameQueue.length <= getSteamOsWebCodecsRebufferLowFrames()
+        ) {
+          decodedVideoFrameRebufferingRef.current = true;
+        }
+
+        if (decodedVideoFrameRebufferingRef.current) {
+          if (decodedFrameQueue.length >= getSteamOsWebCodecsRebufferResumeFrames()) {
             syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+            decodedVideoFrameRebufferingRef.current = false;
+          } else {
+            decodedVideoFrame = null;
           }
         }
 
         if (!decodedVideoFrameClockPrimedRef.current) {
+          if (decodedFrameQueue.length >= getSteamOsWebCodecsMinBufferFrames()) {
+            syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+            decodedVideoFrameRebufferingRef.current = false;
+          }
+        }
+
+        if (!decodedVideoFrameClockPrimedRef.current || decodedVideoFrameRebufferingRef.current) {
           // Keep buffering before first present to smooth frame pacing on SteamOS.
           decodedVideoFrame = null;
         } else {

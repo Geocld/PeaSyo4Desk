@@ -68,6 +68,7 @@ export const defaultSettings = {
   fsr: false,
   fsr_sharpness: 2,
   stream_renderer: "ffmpeg",
+  stream_webcodec_steamos_profile: "stable",
   stream_brightness: 100,
   stream_disconnect_standby: false,
   stream_touchpad_position: "center",
