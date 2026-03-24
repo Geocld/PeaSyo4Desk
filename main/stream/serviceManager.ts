@@ -58,8 +58,8 @@ export const StreamSessionManager = {
   setControllerStateDirect(state: any) {
     getActiveService().setControllerStateDirect(state);
   },
-  notifyVideoFrameRendered() {
-    getActiveService().notifyVideoFrameRendered();
+  notifyVideoFrameRendered(sampleId?: number) {
+    (getActiveService() as any).notifyVideoFrameRendered(sampleId);
   },
   getPerformanceStats() {
     return getActiveService().getPerformanceStats();

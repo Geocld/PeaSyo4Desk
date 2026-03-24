@@ -69,8 +69,8 @@ export const Preload = {
         ipcRenderer.send("stream-control-state", state)
     },
 
-    sendStreamVideoFrameRendered(){
-        ipcRenderer.send("stream-video-rendered")
+    sendStreamVideoFrameRendered(sampleId?: number){
+        ipcRenderer.send("stream-video-rendered", sampleId)
     },
 
     removeListener(channel:string, listener){

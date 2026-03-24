@@ -45,6 +45,7 @@ const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const WS_BINARY_VIDEO_ENCODED = 3;
+const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
 const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
 const AUDIO_SCHEDULE_LEAD_SEC = 0.04;
@@ -876,11 +877,12 @@ function StreamPage() {
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
   );
   const nativeBinaryTransportRef = useRef(false);
-  const nativeVideoFrameRenderedAckPendingCountRef = useRef(0);
+  const nativeVideoFrameRenderedAckPendingQueueRef = useRef<Array<number | null>>([]);
   const webCodecsCapabilitiesRef = useRef<ClientVideoCapabilities | null>(null);
   const webCodecsVideoDecoderRef = useRef<VideoDecoder | null>(null);
   const webCodecsAwaitingKeyFrameRef = useRef(false);
   const webCodecsTimestampUsRef = useRef(0);
+  const webCodecsLastSampleIdRef = useRef(0);
   const webCodecsCodecStringRef = useRef("");
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
@@ -1552,6 +1554,32 @@ function StreamPage() {
     return Math.max(0, Math.trunc(timestamp));
   };
 
+  const parseEncodedVideoSamplePacket = (packetBytes: Uint8Array) => {
+    if (packetBytes.byteLength < 1) {
+      return null;
+    }
+
+    const flags = packetBytes[0];
+    if (packetBytes.byteLength < ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES) {
+      return {
+        flags,
+        sampleId: null,
+        sampleBytes: packetBytes.subarray(1),
+      };
+    }
+
+    const sampleId = new DataView(
+      packetBytes.buffer,
+      packetBytes.byteOffset + 1,
+      4
+    ).getUint32(0, true);
+    return {
+      flags,
+      sampleId,
+      sampleBytes: packetBytes.subarray(ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES),
+    };
+  };
+
   const clearDecodedVideoFrameQueue = (ackDroppedFrames = true) => {
     const queue = decodedVideoFrameQueueRef.current;
     if (queue.length < 1) {
@@ -1629,32 +1657,36 @@ function StreamPage() {
     rafRef.current = requestAnimationFrame(renderLoop);
   };
 
-  const queueNativeVideoFrameRenderedAck = () => {
+  const queueNativeVideoFrameRenderedAck = (sampleId: number | null = null) => {
     if (!nativeBinaryTransportRef.current) {
       return;
     }
 
+    const queue = nativeVideoFrameRenderedAckPendingQueueRef.current;
     const maxPendingAcks =
       videoTransportRef.current === "compressed-webcodecs" && shouldDeferEncodedAckUntilFrameConsumed()
         ? getWebCodecsDecodeQueueLimit()
         : 2048;
-    if (nativeVideoFrameRenderedAckPendingCountRef.current >= maxPendingAcks) {
+    if (queue.length >= maxPendingAcks) {
       return;
     }
 
-    nativeVideoFrameRenderedAckPendingCountRef.current += 1;
+    queue.push(sampleId);
   };
 
   const ackRenderedNativeVideoFrame = (count = 1) => {
-    while (count > 0 && nativeVideoFrameRenderedAckPendingCountRef.current > 0) {
-      nativeVideoFrameRenderedAckPendingCountRef.current -= 1;
-      Ipc.sendStreamVideoFrameRendered();
+    const queue = nativeVideoFrameRenderedAckPendingQueueRef.current;
+    while (count > 0 && queue.length > 0) {
+      const sampleId = queue.shift();
+      Ipc.sendStreamVideoFrameRendered(
+        typeof sampleId === "number" && Number.isFinite(sampleId) ? sampleId : undefined
+      );
       count -= 1;
     }
   };
 
   const ackAllRenderedNativeVideoFrames = () => {
-    ackRenderedNativeVideoFrame(nativeVideoFrameRenderedAckPendingCountRef.current);
+    ackRenderedNativeVideoFrame(nativeVideoFrameRenderedAckPendingQueueRef.current.length);
   };
 
   const destroyWebCodecsVideoDecoder = () => {
@@ -1662,6 +1694,7 @@ function StreamPage() {
     flushRenderedDecodedVideoFrameRetireQueue(true);
     webCodecsAwaitingKeyFrameRef.current = false;
     webCodecsTimestampUsRef.current = 0;
+    webCodecsLastSampleIdRef.current = 0;
     webCodecsCodecStringRef.current = "";
 
     const decoder = webCodecsVideoDecoderRef.current;
@@ -2756,17 +2789,17 @@ function StreamPage() {
   };
 
   const handleEncodedVideoSampleBytes = (packetBytes: Uint8Array) => {
-    queueNativeVideoFrameRenderedAck();
+    const encodedSamplePacket = parseEncodedVideoSamplePacket(packetBytes);
+    queueNativeVideoFrameRenderedAck(encodedSamplePacket?.sampleId ?? null);
 
-    if (packetBytes.byteLength < 2) {
+    if (!encodedSamplePacket) {
       ackRenderedNativeVideoFrame();
       return;
     }
 
-    const flags = packetBytes[0];
+    const { flags, sampleId, sampleBytes } = encodedSamplePacket;
     const isKeyFrame = (flags & 1) !== 0;
     const canStartDecode = isKeyFrame;
-    const sampleBytes = packetBytes.subarray(1);
     const inputFormat = videoInputFormatRef.current;
 
     if (sampleBytes.byteLength < 1) {
@@ -2798,11 +2831,16 @@ function StreamPage() {
       }
 
       const duration = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
+      const previousSampleId = webCodecsLastSampleIdRef.current;
+      const sampleGap =
+        sampleId !== null && previousSampleId > 0 ? Math.max(1, sampleId - previousSampleId) : 1;
       const timestamp = webCodecsTimestampUsRef.current;
-      webCodecsTimestampUsRef.current += Math.max(
-        1,
-        duration
-      );
+      webCodecsTimestampUsRef.current += Math.max(1, duration * sampleGap);
+      if (sampleId !== null) {
+        webCodecsLastSampleIdRef.current = sampleId;
+      } else if (previousSampleId > 0) {
+        webCodecsLastSampleIdRef.current = previousSampleId + sampleGap;
+      }
 
       decoder.decode(
         new EncodedVideoChunk({
@@ -3529,7 +3567,7 @@ function StreamPage() {
         fsrGpuRenderingDisabledRef.current = false;
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
-        nativeVideoFrameRenderedAckPendingCountRef.current = 0;
+        nativeVideoFrameRenderedAckPendingQueueRef.current = [];
         webCodecsCapabilitiesRef.current = null;
         videoTransportRef.current = "ffmpeg-rawvideo";
         videoInputFormatRef.current = "hevc";
@@ -3614,6 +3652,7 @@ function StreamPage() {
           loginInfo: currentLoginInfo || undefined,
           sessionType: "webcodec",
           clientVideoCapabilities,
+          steamOsWebCodecsProfile: steamOsRuntime ? steamOsWebCodecsProfile : undefined,
           ...(negotiatedStreamCodec
             ? {
                 videoProfile: {
@@ -3823,7 +3862,7 @@ function StreamPage() {
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
-      nativeVideoFrameRenderedAckPendingCountRef.current = 0;
+      nativeVideoFrameRenderedAckPendingQueueRef.current = [];
       webCodecsCapabilitiesRef.current = null;
       videoTransportRef.current = "ffmpeg-rawvideo";
       videoInputFormatRef.current = "hevc";

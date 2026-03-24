@@ -30,6 +30,13 @@ const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 1;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
 const NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = IS_WINDOWS ? 350 : IS_LINUX ? 500 : 500;
 const STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = 1200;
+type SteamOsWebCodecsProfile = "balanced" | "stable" | "ultra-stable";
+const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
+const STEAMOS_NATIVE_ENCODED_VIDEO_SAMPLES_IN_FLIGHT: Record<SteamOsWebCodecsProfile, number> = {
+  balanced: 16,
+  stable: 24,
+  "ultra-stable": 48,
+};
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LINUX ? 512 * 1024 : 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
@@ -163,6 +170,7 @@ type StartStreamSessionArgs = {
   };
   targetWebContents?: WebContents | null;
   clientVideoCapabilities?: ClientVideoCapabilities;
+  steamOsWebCodecsProfile?: SteamOsWebCodecsProfile;
   consoleInfo?: {
     rpRegistKey?: string;
     rpKey?: string;
@@ -201,10 +209,16 @@ type VideoDecoderPlan = {
 };
 
 type QueuedVideoSample = {
+  id: number;
   data: Buffer;
   isSyncFrame: boolean;
   hasConfig: boolean;
   hasSlice: boolean;
+};
+
+type InFlightEncodedVideoSample = {
+  id: number;
+  sentAtMs: number;
 };
 
 type VideoTransportMode = "ffmpeg-rawvideo" | "compressed-webcodecs";
@@ -258,11 +272,11 @@ let pendingVideoBroadcastFrame: Buffer | null = null;
 let videoBroadcastFlushScheduled = false;
 let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
-let nativeEncodedVideoSampleInFlight = false;
-let nativeEncodedVideoSampleInFlightAtMs = 0;
 let activeClientIsSteamOs = false;
+let activeSteamOsWebCodecsProfile: SteamOsWebCodecsProfile = STEAMOS_WEBCODECS_PROFILE_DEFAULT;
 const pendingEncodedVideoSamples: QueuedVideoSample[] = [];
 let pendingEncodedVideoSampleBytes = 0;
+const nativeEncodedVideoSamplesInFlight: InFlightEncodedVideoSample[] = [];
 let waitingForVideoSyncFrame = false;
 let cachedVideoConfigSample: Buffer | null = null;
 let cachedLinuxVaapiDevicePath: string | null | undefined;
@@ -276,6 +290,7 @@ let decodedFrameIntervalTotalMs = 0;
 let decodedFrameIntervalCount = 0;
 let lastDecodedFrameAtMs = 0;
 const MAX_DECODE_COST_WINDOW = 240;
+let queuedVideoSampleIdNext = 1;
 
 let audioHeaderInfo: null | {
   channels: number;
@@ -574,6 +589,28 @@ const wait = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+const resolveSteamOsWebCodecsProfile = (value: unknown): SteamOsWebCodecsProfile => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (
+    normalized === "balanced" ||
+    normalized === "stable" ||
+    normalized === "ultra-stable"
+  ) {
+    return normalized;
+  }
+  return STEAMOS_WEBCODECS_PROFILE_DEFAULT;
+};
+
+const getNativeEncodedVideoSamplesInFlightLimit = () => {
+  if (!activeClientIsSteamOs) {
+    return 1;
+  }
+
+  return STEAMOS_NATIVE_ENCODED_VIDEO_SAMPLES_IN_FLIGHT[activeSteamOsWebCodecsProfile];
+};
 
 const resolvePsnAccountId = (loginInfo: Record<string, any> | undefined) => {
   return String(
@@ -1029,6 +1066,7 @@ const inspectVideoSample = (sampleData: Buffer): QueuedVideoSample => {
   }
 
   return {
+    id: queuedVideoSampleIdNext++,
     data: sampleData,
     isSyncFrame,
     hasConfig,
@@ -1116,6 +1154,7 @@ const recreateVideoDecodePipelineForSync = (reason: string) => {
 
   if (cachedVideoConfigSample && (nextQueue.length < 1 || !nextQueue[0].hasConfig)) {
     enqueueVideoSample({
+      id: queuedVideoSampleIdNext++,
       data: Buffer.from(cachedVideoConfigSample),
       isSyncFrame: false,
       hasConfig: true,
@@ -1156,6 +1195,7 @@ const fallbackVideoDecoderToSoftware = (reason: string) => {
 
   if (cachedVideoConfigSample && (nextQueue.length < 1 || !nextQueue[0].hasConfig)) {
     enqueueVideoSample({
+      id: queuedVideoSampleIdNext++,
       data: Buffer.from(cachedVideoConfigSample),
       isSyncFrame: false,
       hasConfig: true,
@@ -1945,8 +1985,7 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
   streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
-  nativeEncodedVideoSampleInFlight = false;
-  nativeEncodedVideoSampleInFlightAtMs = 0;
+  nativeEncodedVideoSamplesInFlight.length = 0;
   pendingEncodedVideoSamples.length = 0;
   pendingEncodedVideoSampleBytes = 0;
 };
@@ -1959,8 +1998,7 @@ const destroyVideoPipeline = () => {
   videoBroadcastFlushScheduled = false;
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
-  nativeEncodedVideoSampleInFlight = false;
-  nativeEncodedVideoSampleInFlightAtMs = 0;
+  nativeEncodedVideoSamplesInFlight.length = 0;
   pendingEncodedVideoSamples.length = 0;
   pendingEncodedVideoSampleBytes = 0;
   ffmpegInputBlocked = false;
@@ -2003,9 +2041,10 @@ const buildEncodedVideoSamplePacket = (sample: QueuedVideoSample) => {
     payload = Buffer.concat([cachedVideoConfigSample, sample.data]);
   }
 
-  const packet = Buffer.allocUnsafe(1 + payload.length);
+  const packet = Buffer.allocUnsafe(5 + payload.length);
   packet[0] = (sample.isSyncFrame ? 1 : 0) | (sample.hasConfig ? 2 : 0);
-  payload.copy(packet, 1);
+  packet.writeUInt32LE(sample.id >>> 0, 1);
+  payload.copy(packet, 5);
   return packet;
 };
 
@@ -2058,46 +2097,79 @@ const trimPendingEncodedVideoSampleQueue = () => {
   resyncEncodedVideoQueueForBacklog("compressed sample backlog");
 };
 
-const flushPendingEncodedVideoSample = () => {
-  if (pendingEncodedVideoSamples.length < 1) {
-    return;
+const consumeInFlightEncodedVideoSample = (sampleId?: number) => {
+  if (nativeEncodedVideoSamplesInFlight.length < 1) {
+    return false;
   }
 
+  const numericSampleId = Number(sampleId);
+  if (!Number.isFinite(numericSampleId) || numericSampleId < 1) {
+    nativeEncodedVideoSamplesInFlight.shift();
+    return true;
+  }
+
+  const normalizedSampleId = Math.trunc(numericSampleId);
+  const inFlightIndex = nativeEncodedVideoSamplesInFlight.findIndex(
+    (entry) => entry.id === normalizedSampleId
+  );
+  if (inFlightIndex < 0) {
+    return false;
+  }
+
+  nativeEncodedVideoSamplesInFlight.splice(inFlightIndex, 1);
+  return true;
+};
+
+const flushPendingEncodedVideoSample = () => {
   const now = Date.now();
   const shouldUseNativeAck = canUseNativeStreamBinary();
   const encodedAckTimeoutMs = activeClientIsSteamOs
     ? STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS
     : NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS;
+  const oldestInFlightSample = nativeEncodedVideoSamplesInFlight[0] || null;
   if (
     shouldUseNativeAck &&
-    nativeEncodedVideoSampleInFlight &&
-    now - nativeEncodedVideoSampleInFlightAtMs > encodedAckTimeoutMs
+    oldestInFlightSample &&
+    now - oldestInFlightSample.sentAtMs > encodedAckTimeoutMs
   ) {
     if (activeClientIsSteamOs) {
       resyncEncodedVideoQueueForBacklog("encoded sample ack timeout");
     }
-    nativeEncodedVideoSampleInFlight = false;
-    nativeEncodedVideoSampleInFlightAtMs = 0;
+    nativeEncodedVideoSamplesInFlight.length = 0;
   }
 
-  if (shouldUseNativeAck && nativeEncodedVideoSampleInFlight) {
+  if (pendingEncodedVideoSamples.length < 1) {
     return;
   }
 
-  const sample = pendingEncodedVideoSamples[0];
-  if (!sample) {
+  if (!shouldUseNativeAck) {
+    const sample = pendingEncodedVideoSamples[0];
+    if (!sample) {
+      return;
+    }
+
+    if (broadcastTypedBinary(WS_BINARY_VIDEO_ENCODED, buildEncodedVideoSamplePacket(sample))) {
+      shiftPendingEncodedVideoSample();
+    }
     return;
   }
 
-  if (broadcastTypedBinary(WS_BINARY_VIDEO_ENCODED, buildEncodedVideoSamplePacket(sample))) {
+  const maxInFlightSamples = Math.max(1, getNativeEncodedVideoSamplesInFlightLimit());
+  while (nativeEncodedVideoSamplesInFlight.length < maxInFlightSamples) {
+    const sample = pendingEncodedVideoSamples[0];
+    if (!sample) {
+      break;
+    }
+
+    if (!broadcastTypedBinary(WS_BINARY_VIDEO_ENCODED, buildEncodedVideoSamplePacket(sample))) {
+      break;
+    }
+
     shiftPendingEncodedVideoSample();
-  } else {
-    return;
-  }
-
-  if (shouldUseNativeAck && canUseNativeStreamBinary()) {
-    nativeEncodedVideoSampleInFlight = true;
-    nativeEncodedVideoSampleInFlightAtMs = now;
+    nativeEncodedVideoSamplesInFlight.push({
+      id: sample.id,
+      sentAtMs: Date.now(),
+    });
   }
 };
 
@@ -2123,8 +2195,7 @@ const dispatchEncodedVideoSample = (sample: QueuedVideoSample) => {
 const activateCompressedVideoTransport = () => {
   destroyVideoPipeline();
   activeVideoTransportMode = "compressed-webcodecs";
-  nativeEncodedVideoSampleInFlight = false;
-  nativeEncodedVideoSampleInFlightAtMs = 0;
+  nativeEncodedVideoSamplesInFlight.length = 0;
   clearPendingEncodedVideoSampleQueue();
   waitingForVideoSyncFrame = false;
 };
@@ -2180,10 +2251,11 @@ const queueVideoBroadcastFrame = (frame: Buffer) => {
   flushPendingVideoBroadcastFrame();
 };
 
-const notifyVideoFrameRendered = () => {
+const notifyVideoFrameRendered = (sampleId?: number) => {
   if (isCompressedVideoTransportActive()) {
-    nativeEncodedVideoSampleInFlight = false;
-    nativeEncodedVideoSampleInFlightAtMs = 0;
+    if (!consumeInFlightEncodedVideoSample(sampleId)) {
+      return;
+    }
     flushPendingEncodedVideoSample();
     return;
   }
@@ -2799,10 +2871,12 @@ const cleanupSessionOnly = () => {
   streamWebContents = null;
   streamVideoConfig = null;
   activeClientIsSteamOs = false;
+  activeSteamOsWebCodecsProfile = STEAMOS_WEBCODECS_PROFILE_DEFAULT;
 
   destroyVideoPipeline();
   cachedVideoConfigSample = null;
   waitingForVideoSyncFrame = false;
+  queuedVideoSampleIdNext = 1;
   destroyAudioPipeline();
   audioHeaderInfo = null;
 };
@@ -3050,6 +3124,7 @@ const startSession = async (args: StartStreamSessionArgs) => {
     await stopSession(false);
   }
 
+  activeSteamOsWebCodecsProfile = resolveSteamOsWebCodecsProfile(args.steamOsWebCodecsProfile);
   configureControllerKernel(args.settings);
   const sessionOptions = buildSessionOptions(args);
   if (shouldUseCompressedVideoTransport(args)) {

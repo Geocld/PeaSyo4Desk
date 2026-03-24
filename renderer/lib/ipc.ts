@@ -61,13 +61,13 @@ export default {
     return false;
   },
 
-  sendStreamVideoFrameRendered() {
+  sendStreamVideoFrameRendered(sampleId?: number) {
     if (window.PeaSyo === undefined) {
       window.PeaSyo = this.websocketFallbackApi();
     }
 
     if (typeof window.PeaSyo.sendStreamVideoFrameRendered === "function") {
-      window.PeaSyo.sendStreamVideoFrameRendered();
+      window.PeaSyo.sendStreamVideoFrameRendered(sampleId);
       return true;
     }
 

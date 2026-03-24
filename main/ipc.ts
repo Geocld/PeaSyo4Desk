@@ -34,8 +34,8 @@ export default class Ipc {
             StreamSessionManager.setControllerStateDirect(state)
         })
 
-        ipcMain.on("stream-video-rendered", () => {
-            StreamSessionManager.notifyVideoFrameRendered()
+        ipcMain.on("stream-video-rendered", (_event, sampleId) => {
+            StreamSessionManager.notifyVideoFrameRendered(sampleId)
         })
         
     }
