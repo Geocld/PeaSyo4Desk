@@ -122,6 +122,7 @@ const checkWebCodecsCodecSupport = async (codecCandidates: string[]) => {
         optimizeForLatency: true,
       });
       if (support?.supported) {
+        console.log('support codec:', codec)
         return codec;
       }
     } catch {
