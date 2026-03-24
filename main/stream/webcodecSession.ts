@@ -28,6 +28,7 @@ const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 1;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
+const NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = IS_WINDOWS ? 350 : IS_LINUX ? 450 : 500;
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LINUX ? 512 * 1024 : 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
@@ -1974,7 +1975,7 @@ const flushPendingEncodedVideoSample = () => {
   const now = Date.now();
   if (
     nativeEncodedVideoSampleInFlight &&
-    now - nativeEncodedVideoSampleInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
+    now - nativeEncodedVideoSampleInFlightAtMs > NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS
   ) {
     nativeEncodedVideoSampleInFlight = false;
     nativeEncodedVideoSampleInFlightAtMs = 0;

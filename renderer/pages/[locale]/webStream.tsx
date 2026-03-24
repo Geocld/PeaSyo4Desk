@@ -72,6 +72,7 @@ const FSR_SHARPNESS_MAX = 2;
 const FSR_SHARPNESS_STEP = 0.05;
 const WEBCODECS_H264_CODEC_CANDIDATES = ["avc1.640028", "avc1.4d4028", "avc1.42E01E"];
 const WEBCODECS_HEVC_CODEC_CANDIDATES = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
+const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 1;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -708,7 +709,7 @@ function StreamPage() {
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
   );
   const nativeBinaryTransportRef = useRef(false);
-  const nativeVideoFrameRenderedAckPendingRef = useRef(false);
+  const nativeVideoFrameRenderedAckPendingCountRef = useRef(0);
   const webCodecsCapabilitiesRef = useRef<ClientVideoCapabilities | null>(null);
   const webCodecsVideoDecoderRef = useRef<VideoDecoder | null>(null);
   const webCodecsAwaitingKeyFrameRef = useRef(false);
@@ -1255,6 +1256,35 @@ function StreamPage() {
     }
   };
 
+  const scheduleRenderLoop = () => {
+    if (renderLoopScheduledRef.current) {
+      return;
+    }
+
+    renderLoopScheduledRef.current = true;
+    rafRef.current = requestAnimationFrame(renderLoop);
+  };
+
+  const queueNativeVideoFrameRenderedAck = () => {
+    if (!nativeBinaryTransportRef.current) {
+      return;
+    }
+
+    nativeVideoFrameRenderedAckPendingCountRef.current += 1;
+  };
+
+  const ackRenderedNativeVideoFrame = (count = 1) => {
+    while (count > 0 && nativeVideoFrameRenderedAckPendingCountRef.current > 0) {
+      nativeVideoFrameRenderedAckPendingCountRef.current -= 1;
+      Ipc.sendStreamVideoFrameRendered();
+      count -= 1;
+    }
+  };
+
+  const ackAllRenderedNativeVideoFrames = () => {
+    ackRenderedNativeVideoFrame(nativeVideoFrameRenderedAckPendingCountRef.current);
+  };
+
   const destroyWebCodecsVideoDecoder = () => {
     clearLatestDecodedVideoFrame();
     webCodecsAwaitingKeyFrameRef.current = false;
@@ -1274,6 +1304,13 @@ function StreamPage() {
     }
   };
 
+  const recoverWebCodecsDecoder = (reason: string) => {
+    console.warn(`[webStream] resetting WebCodecs decoder: ${reason}`);
+    destroyWebCodecsVideoDecoder();
+    webCodecsAwaitingKeyFrameRef.current = true;
+    ackAllRenderedNativeVideoFrames();
+  };
+
   const enqueueDecodedVideoFrame = (frame: VideoFrame) => {
     receivedFramesRef.current += 1;
     if (!sessionConnectedRef.current) {
@@ -1285,13 +1322,11 @@ function StreamPage() {
     if (latestDecodedVideoFrameRef.current) {
       droppedFramesRef.current += 1;
       clearLatestDecodedVideoFrame();
+      ackRenderedNativeVideoFrame();
     }
 
     latestDecodedVideoFrameRef.current = frame;
-    if (!renderLoopScheduledRef.current) {
-      renderLoopScheduledRef.current = true;
-      rafRef.current = requestAnimationFrame(renderLoop);
-    }
+    scheduleRenderLoop();
   };
 
   const resolveWebCodecsCodecString = (inputFormat: string) => {
@@ -1322,14 +1357,7 @@ function StreamPage() {
         enqueueDecodedVideoFrame(frame);
       },
       error: (error) => {
-        destroyWebCodecsVideoDecoder();
-        openSessionAlert(
-          [
-            "WebCodecs video decoder failed.",
-            getErrorMessage(error, "Linux native video decoder initialization failed."),
-          ].join("\n"),
-          t("HdrRendererErrorStatus")
-        );
+        recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs decoder error."));
       },
     });
 
@@ -2305,19 +2333,8 @@ function StreamPage() {
     }
   };
 
-  const ackRenderedNativeVideoFrame = () => {
-    if (!nativeVideoFrameRenderedAckPendingRef.current) {
-      return;
-    }
-
-    nativeVideoFrameRenderedAckPendingRef.current = false;
-    Ipc.sendStreamVideoFrameRendered();
-  };
-
   const handleEncodedVideoSampleBytes = (packetBytes: Uint8Array) => {
-    if (nativeBinaryTransportRef.current) {
-      nativeVideoFrameRenderedAckPendingRef.current = true;
-    }
+    queueNativeVideoFrameRenderedAck();
 
     if (packetBytes.byteLength < 2) {
       ackRenderedNativeVideoFrame();
@@ -2345,9 +2362,8 @@ function StreamPage() {
         decoder = ensureWebCodecsDecoder(inputFormat);
       }
 
-      if (decoder.decodeQueueSize > 2) {
-        destroyWebCodecsVideoDecoder();
-        webCodecsAwaitingKeyFrameRef.current = true;
+      if (decoder.decodeQueueSize > MAX_WEBCODECS_DECODE_QUEUE_SIZE) {
+        recoverWebCodecsDecoder(`decode queue backlog (${decoder.decodeQueueSize})`);
         if (!isKeyFrame) {
           ackRenderedNativeVideoFrame();
           return;
@@ -2372,18 +2388,9 @@ function StreamPage() {
           data: sampleBytes,
         })
       );
-      ackRenderedNativeVideoFrame();
     } catch (error) {
-      destroyWebCodecsVideoDecoder();
-      webCodecsAwaitingKeyFrameRef.current = true;
+      recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs video decode failed."));
       ackRenderedNativeVideoFrame();
-      openSessionAlert(
-        [
-          "WebCodecs video decode failed.",
-          getErrorMessage(error, "Linux native video decode failed."),
-        ].join("\n"),
-        t("HdrRendererErrorStatus")
-      );
     }
   };
 
@@ -2401,16 +2408,12 @@ function StreamPage() {
     receivedFramesRef.current += 1;
     if (latestFrameRef.current) {
       droppedFramesRef.current += 1;
+      ackRenderedNativeVideoFrame();
     }
 
     latestFrameRef.current = frameBytes;
-    if (nativeBinaryTransportRef.current) {
-      nativeVideoFrameRenderedAckPendingRef.current = true;
-    }
-    if (!renderLoopScheduledRef.current) {
-      renderLoopScheduledRef.current = true;
-      rafRef.current = requestAnimationFrame(renderLoop);
-    }
+    queueNativeVideoFrameRenderedAck();
+    scheduleRenderLoop();
   };
 
   const handleBinaryPacket = (packetBytes: Uint8Array) => {
@@ -2868,7 +2871,11 @@ function StreamPage() {
           setVideoReady(true);
           showConnectedToastThenEnableAudio();
         }
+
+        ackRenderedNativeVideoFrame();
       } catch (error) {
+        recoverWebCodecsDecoder(getErrorMessage(error, "Failed to render the decoded video frame."));
+        ackRenderedNativeVideoFrame();
         openSessionAlert(
           [
             "Linux native video rendering failed.",
@@ -2959,7 +2966,7 @@ function StreamPage() {
         fsrGpuRenderingDisabledRef.current = false;
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
-        nativeVideoFrameRenderedAckPendingRef.current = false;
+        nativeVideoFrameRenderedAckPendingCountRef.current = 0;
         webCodecsCapabilitiesRef.current = null;
         videoTransportRef.current = "ffmpeg-rawvideo";
         videoInputFormatRef.current = "hevc";
@@ -3254,7 +3261,7 @@ function StreamPage() {
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
-      nativeVideoFrameRenderedAckPendingRef.current = false;
+      nativeVideoFrameRenderedAckPendingCountRef.current = 0;
       webCodecsCapabilitiesRef.current = null;
       videoTransportRef.current = "ffmpeg-rawvideo";
       videoInputFormatRef.current = "hevc";
