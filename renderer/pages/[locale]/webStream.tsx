@@ -98,7 +98,7 @@ const WEBCODECS_HEVC_CODEC_CANDIDATES = [
   "hvc1.2.4.L120.B0",
   "hev1.2.4.L120.B0",
 ];
-const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 8;
+const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 16;
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -2453,8 +2453,14 @@ function StreamPage() {
         decoder = ensureWebCodecsDecoder(inputFormat);
       }
 
-      if (decoder.decodeQueueSize > MAX_WEBCODECS_DECODE_QUEUE_SIZE) {
-        recoverWebCodecsDecoder(`decode queue backlog (${decoder.decodeQueueSize})`);
+      const decodeQueueSize = decoder.decodeQueueSize;
+      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE && !canStartDecode) {
+        droppedFramesRef.current += 1;
+        ackRenderedNativeVideoFrame();
+        return;
+      }
+      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE * 3) {
+        recoverWebCodecsDecoder(`decode queue overflow (${decodeQueueSize})`);
         if (!canStartDecode) {
           ackRenderedNativeVideoFrame();
           return;
@@ -2488,6 +2494,9 @@ function StreamPage() {
 
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
     if (frameBytes.byteLength !== frameSizeRef.current) {
+      if (nativeBinaryTransportRef.current) {
+        Ipc.sendStreamVideoFrameRendered();
+      }
       return;
     }
 
@@ -3180,6 +3189,9 @@ function StreamPage() {
           requestedCodecFamily,
           clientVideoCapabilities
         );
+        if (negotiatedStreamCodec) {
+          videoInputFormatRef.current = negotiatedStreamCodec === "H264" ? "h264" : "hevc";
+        }
         webCodecsCapabilitiesRef.current = clientVideoCapabilities;
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,

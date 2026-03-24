@@ -2103,6 +2103,9 @@ function StreamPage() {
 
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
     if (frameBytes.byteLength !== frameSizeRef.current) {
+      if (nativeBinaryTransportRef.current) {
+        Ipc.sendStreamVideoFrameRendered();
+      }
       return;
     }
 

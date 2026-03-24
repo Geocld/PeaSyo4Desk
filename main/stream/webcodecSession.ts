@@ -2093,7 +2093,7 @@ const flushPendingEncodedVideoSample = () => {
 };
 
 const dispatchEncodedVideoSample = (sample: QueuedVideoSample) => {
-  if (!sample.data || sample.data.length < 1) {
+  if (!sample.hasSlice) {
     return;
   }
 
