@@ -33,6 +33,7 @@ const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LI
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_SECONDS = IS_WINDOWS ? 0.2 : IS_LINUX ? 0.16 : 0.22;
+const MAX_PENDING_ENCODED_VIDEO_SAMPLE_BYTES_MIN = 512 * 1024;
 const SDR_STREAM_FORMAT = "NV12";
 const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
 const SDR_PIXEL_FORMAT = "nv12";
@@ -257,7 +258,8 @@ let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
 let nativeEncodedVideoSampleInFlight = false;
 let nativeEncodedVideoSampleInFlightAtMs = 0;
-let pendingEncodedVideoSample: QueuedVideoSample | null = null;
+const pendingEncodedVideoSamples: QueuedVideoSample[] = [];
+let pendingEncodedVideoSampleBytes = 0;
 let waitingForVideoSyncFrame = false;
 let cachedVideoConfigSample: Buffer | null = null;
 let cachedLinuxVaapiDevicePath: string | null | undefined;
@@ -1907,7 +1909,8 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
   nativeVideoFrameInFlightAtMs = 0;
   nativeEncodedVideoSampleInFlight = false;
   nativeEncodedVideoSampleInFlightAtMs = 0;
-  pendingEncodedVideoSample = null;
+  pendingEncodedVideoSamples.length = 0;
+  pendingEncodedVideoSampleBytes = 0;
 };
 
 const destroyVideoPipeline = () => {
@@ -1920,7 +1923,8 @@ const destroyVideoPipeline = () => {
   nativeVideoFrameInFlightAtMs = 0;
   nativeEncodedVideoSampleInFlight = false;
   nativeEncodedVideoSampleInFlightAtMs = 0;
-  pendingEncodedVideoSample = null;
+  pendingEncodedVideoSamples.length = 0;
+  pendingEncodedVideoSampleBytes = 0;
   ffmpegInputBlocked = false;
   decodedFrameCount = 0;
   framesLostCount = 0;
@@ -1967,13 +1971,72 @@ const buildEncodedVideoSamplePacket = (sample: QueuedVideoSample) => {
   return packet;
 };
 
+const getMaxPendingEncodedVideoSampleBytes = () => {
+  return Math.max(MAX_PENDING_ENCODED_VIDEO_SAMPLE_BYTES_MIN, getMaxPendingVideoSampleBytes());
+};
+
+const clearPendingEncodedVideoSampleQueue = () => {
+  pendingEncodedVideoSamples.length = 0;
+  pendingEncodedVideoSampleBytes = 0;
+};
+
+const enqueuePendingEncodedVideoSample = (sample: QueuedVideoSample) => {
+  pendingEncodedVideoSamples.push(sample);
+  pendingEncodedVideoSampleBytes += sample.data.length;
+};
+
+const shiftPendingEncodedVideoSample = () => {
+  const sample = pendingEncodedVideoSamples.shift() || null;
+  if (sample) {
+    pendingEncodedVideoSampleBytes -= sample.data.length;
+    if (pendingEncodedVideoSampleBytes < 0) {
+      pendingEncodedVideoSampleBytes = 0;
+    }
+  }
+  return sample;
+};
+
+const resyncEncodedVideoQueueForBacklog = (reason: string) => {
+  const keptSamples = pendingEncodedVideoSamples.slice();
+  let syncIndex = -1;
+  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
+    if (keptSamples[i].isSyncFrame) {
+      syncIndex = i;
+      break;
+    }
+  }
+
+  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+  clearPendingEncodedVideoSampleQueue();
+  for (const sample of nextQueue) {
+    enqueuePendingEncodedVideoSample(sample);
+  }
+
+  waitingForVideoSyncFrame = nextQueue.length < 1;
+  log(
+    waitingForVideoSyncFrame
+      ? `encoded video queue resync requested (${reason}), waiting for next sync frame`
+      : `encoded video queue trimmed to latest sync frame (${reason})`
+  );
+};
+
+const trimPendingEncodedVideoSampleQueue = () => {
+  if (pendingEncodedVideoSampleBytes <= getMaxPendingEncodedVideoSampleBytes()) {
+    return;
+  }
+
+  resyncEncodedVideoQueueForBacklog("compressed sample backlog");
+};
+
 const flushPendingEncodedVideoSample = () => {
-  if (!pendingEncodedVideoSample) {
+  if (pendingEncodedVideoSamples.length < 1) {
     return;
   }
 
   const now = Date.now();
+  const shouldUseNativeAck = canUseNativeStreamBinary();
   if (
+    shouldUseNativeAck &&
     nativeEncodedVideoSampleInFlight &&
     now - nativeEncodedVideoSampleInFlightAtMs > NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS
   ) {
@@ -1981,13 +2044,22 @@ const flushPendingEncodedVideoSample = () => {
     nativeEncodedVideoSampleInFlightAtMs = 0;
   }
 
-  if (nativeEncodedVideoSampleInFlight) {
+  if (shouldUseNativeAck && nativeEncodedVideoSampleInFlight) {
     return;
   }
 
-  const sample = pendingEncodedVideoSample;
-  pendingEncodedVideoSample = null;
+  const sample = pendingEncodedVideoSamples[0];
+  if (!sample) {
+    return;
+  }
+
   if (broadcastTypedBinary(WS_BINARY_VIDEO_ENCODED, buildEncodedVideoSamplePacket(sample))) {
+    shiftPendingEncodedVideoSample();
+  } else {
+    return;
+  }
+
+  if (shouldUseNativeAck && canUseNativeStreamBinary()) {
     nativeEncodedVideoSampleInFlight = true;
     nativeEncodedVideoSampleInFlightAtMs = now;
   }
@@ -2006,16 +2078,9 @@ const dispatchEncodedVideoSample = (sample: QueuedVideoSample) => {
     waitingForVideoSyncFrame = false;
   }
 
-  if (nativeEncodedVideoSampleInFlight && pendingEncodedVideoSample) {
-    pendingEncodedVideoSample = null;
-    waitingForVideoSyncFrame = true;
-    if (!sample.isSyncFrame) {
-      return;
-    }
-    waitingForVideoSyncFrame = false;
-  }
+  enqueuePendingEncodedVideoSample(sample);
+  trimPendingEncodedVideoSampleQueue();
 
-  pendingEncodedVideoSample = sample;
   flushPendingEncodedVideoSample();
 };
 
@@ -2024,7 +2089,7 @@ const activateCompressedVideoTransport = () => {
   activeVideoTransportMode = "compressed-webcodecs";
   nativeEncodedVideoSampleInFlight = false;
   nativeEncodedVideoSampleInFlightAtMs = 0;
-  pendingEncodedVideoSample = null;
+  clearPendingEncodedVideoSampleQueue();
   waitingForVideoSyncFrame = false;
 };
 

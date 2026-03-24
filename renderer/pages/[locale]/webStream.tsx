@@ -72,7 +72,7 @@ const FSR_SHARPNESS_MAX = 2;
 const FSR_SHARPNESS_STEP = 0.05;
 const WEBCODECS_H264_CODEC_CANDIDATES = ["avc1.640028", "avc1.4d4028", "avc1.42E01E"];
 const WEBCODECS_HEVC_CODEC_CANDIDATES = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
-const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 1;
+const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 8;
 
 type PendingStreamConfig = {
   streamHost?: string;
