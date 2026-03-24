@@ -1015,8 +1015,10 @@ function StreamPage() {
   ]);
 
   useEffect(() => {
-    fsrEnabledRef.current = !!settings?.fsr;
-    if (!settings?.fsr) {
+    const canEnableFsr = !isLinuxRuntime();
+    const shouldEnableFsr = !!settings?.fsr && canEnableFsr;
+    fsrEnabledRef.current = shouldEnableFsr;
+    if (!shouldEnableFsr) {
       setShowFsrModal(false);
     }
   }, [settings?.fsr]);
@@ -1027,8 +1029,10 @@ function StreamPage() {
   }, [settings?.fsr_sharpness]);
 
   useEffect(() => {
-    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && !!settings?.use_vulkan;
-  }, [settings?.use_vulkan]);
+    const renderer = String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase();
+    const linuxAutoVulkan = isLinuxRuntime() && renderer === "webcodec";
+    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && linuxAutoVulkan;
+  }, [settings?.stream_renderer]);
 
   useEffect(() => {
     fsrSharpnessRef.current = fsrSharpness;
@@ -2432,8 +2436,7 @@ function StreamPage() {
 
     const flags = packetBytes[0];
     const isKeyFrame = (flags & 1) !== 0;
-    const hasConfig = (flags & 2) !== 0;
-    const canStartDecode = isKeyFrame || hasConfig;
+    const canStartDecode = isKeyFrame;
     const sampleBytes = packetBytes.subarray(1);
     const inputFormat = videoInputFormatRef.current;
 
@@ -2485,7 +2488,12 @@ function StreamPage() {
           data: sampleBytes,
         })
       );
-      ackRenderedNativeVideoFrame();
+      // Apply mild backpressure when decode queue grows to keep playback stable.
+      const shouldAckImmediately =
+        decoder.decodeQueueSize < Math.max(2, Math.floor(MAX_WEBCODECS_DECODE_QUEUE_SIZE / 2));
+      if (shouldAckImmediately) {
+        ackRenderedNativeVideoFrame();
+      }
     } catch (error) {
       recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs video decode failed."));
       ackRenderedNativeVideoFrame();

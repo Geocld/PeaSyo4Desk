@@ -868,8 +868,10 @@ function StreamPage() {
   }, [settings?.fsr_sharpness]);
 
   useEffect(() => {
-    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && !!settings?.use_vulkan;
-  }, [settings?.use_vulkan]);
+    const renderer = String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase();
+    const linuxAutoVulkan = isLinuxRuntime() && renderer === "webcodec";
+    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && linuxAutoVulkan;
+  }, [settings?.stream_renderer]);
 
   useEffect(() => {
     fsrSharpnessRef.current = fsrSharpness;

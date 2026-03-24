@@ -47,10 +47,21 @@ export default class Application {
     this._log = Debug("peasyo");
 
     const settings: any = this._store.get('settings', defaultSettings)
+    const selectedStreamRenderer = String(
+      settings?.stream_renderer || defaultSettings.stream_renderer || "ffmpeg"
+    )
+      .trim()
+      .toLowerCase();
+    // Linux uses stream renderer selection to implicitly choose Vulkan mode:
+    // - ffmpeg => disable Vulkan
+    // - webcodec => enable Vulkan
+    const useVulkan = this._isLinux
+      ? selectedStreamRenderer === "webcodec"
+      : !!settings?.use_vulkan;
 
     const forceLinuxX11 = String(process.env.PEASYO_FORCE_X11 || "").trim() === "1";
 
-    if (settings.use_vulkan) {
+    if (useVulkan) {
       ElectronApp.commandLine.appendSwitch('use-vulkan')
       ElectronApp.commandLine.appendSwitch(
         'enable-features',
