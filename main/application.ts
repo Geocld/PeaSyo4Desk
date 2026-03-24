@@ -58,19 +58,27 @@ export default class Application {
     const useVulkan = this._isLinux
       ? selectedStreamRenderer === "webcodec"
       : !!settings?.use_vulkan;
+    const isLinuxWebCodecVulkanRoute =
+      this._isLinux && useVulkan && selectedStreamRenderer === "webcodec";
 
     const forceLinuxX11 = String(process.env.PEASYO_FORCE_X11 || "").trim() === "1";
 
     if (useVulkan) {
       ElectronApp.commandLine.appendSwitch('use-vulkan')
+      const linuxVulkanFeatures = isLinuxWebCodecVulkanRoute
+        // SteamOS/WebCodec path can present partial-frame flicker with Canvas OOP rasterization.
+        ? 'Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,VaapiIgnoreDriverChecks,VaapiVideoDecoder,PlatformHEVCDecoderSupport'
+        : 'Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,VaapiIgnoreDriverChecks,VaapiVideoDecoder,PlatformHEVCDecoderSupport,CanvasOopRasterization'
       ElectronApp.commandLine.appendSwitch(
         'enable-features',
         this._isLinux
-          ? 'Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,VaapiIgnoreDriverChecks,VaapiVideoDecoder,PlatformHEVCDecoderSupport,CanvasOopRasterization'
+          ? linuxVulkanFeatures
           : 'Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,PlatformHEVCDecoderSupport,CanvasOopRasterization'
       )
       ElectronApp.commandLine.appendSwitch('enable-gpu-rasterization')
-      ElectronApp.commandLine.appendSwitch('enable-oop-rasterization')
+      if (!isLinuxWebCodecVulkanRoute) {
+        ElectronApp.commandLine.appendSwitch('enable-oop-rasterization')
+      }
       ElectronApp.commandLine.appendSwitch('enable-accelerated-video-decode')
       ElectronApp.commandLine.appendSwitch('ignore-gpu-blocklist')
       ElectronApp.commandLine.appendSwitch('enable-zero-copy');

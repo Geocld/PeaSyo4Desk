@@ -1448,6 +1448,8 @@ function StreamPage() {
 
     const hardwareAccelerationModes = getWebCodecsHardwareAccelerationModes();
     let lastError: unknown = null;
+    // Linux + optimizeForLatency has a higher chance to trigger compositor tearing on SteamOS.
+    const optimizeForLatency = !isLinuxRuntime();
 
     for (const hardwareAcceleration of hardwareAccelerationModes) {
       const decoder = new VideoDecoder({
@@ -1465,7 +1467,7 @@ function StreamPage() {
           codedWidth: widthRef.current,
           codedHeight: heightRef.current,
           hardwareAcceleration,
-          optimizeForLatency: true,
+          optimizeForLatency,
         });
 
         webCodecsCodecStringRef.current = codec;
@@ -2483,13 +2485,11 @@ function StreamPage() {
       }
 
       const decodeQueueSize = decoder.decodeQueueSize;
-      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE * 4) {
-        recoverWebCodecsDecoder(`decode queue overflow (${decodeQueueSize})`);
-        if (!canStartDecode) {
-          ackRenderedNativeVideoFrame();
-          return;
-        }
-        decoder = ensureWebCodecsDecoder(inputFormat);
+      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE && !canStartDecode) {
+        // Keep decoder stable under transient burst by dropping overflow delta chunks.
+        droppedFramesRef.current += 1;
+        ackRenderedNativeVideoFrame();
+        return;
       }
 
       if (webCodecsAwaitingKeyFrameRef.current && canStartDecode) {
@@ -2509,12 +2509,7 @@ function StreamPage() {
           data: sampleBytes,
         })
       );
-      // Apply mild backpressure when decode queue grows to keep playback stable.
-      const shouldAckImmediately =
-        !videoReadyRef.current || decoder.decodeQueueSize <= 2;
-      if (shouldAckImmediately) {
-        ackRenderedNativeVideoFrame();
-      }
+      ackRenderedNativeVideoFrame();
     } catch (error) {
       recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs video decode failed."));
       ackRenderedNativeVideoFrame();
@@ -3030,10 +3025,13 @@ function StreamPage() {
 
         let ctx = ctxRef.current;
         if (!ctx) {
-          ctx = canvas.getContext("2d", { alpha: false });
+          ctx = canvas.getContext("2d", { alpha: false, desynchronized: false });
           if (!ctx) {
             throw new Error("Failed to acquire a 2D video context.");
           }
+          // Force full-surface replace to avoid partial dirty-region artifacts on Linux compositors.
+          ctx.globalCompositeOperation = "copy";
+          ctx.imageSmoothingEnabled = false;
           ctxRef.current = ctx;
         }
 
