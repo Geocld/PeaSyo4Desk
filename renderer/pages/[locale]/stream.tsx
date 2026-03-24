@@ -2124,6 +2124,54 @@ function StreamPage() {
     }
   };
 
+  const resolveRawBinaryMessageToPacket = (message: any): Uint8Array | null => {
+    if (message instanceof ArrayBuffer) {
+      return message.byteLength > 1 ? new Uint8Array(message) : null;
+    }
+
+    if (ArrayBuffer.isView(message)) {
+      const view = message as ArrayBufferView;
+      return view.byteLength > 1
+        ? new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
+        : null;
+    }
+
+    const kind = Number(message?.kind || 0) & 0xff;
+    const buffer = message?.buffer;
+    const byteOffset = Number(message?.byteOffset || 0);
+    const byteLength = Number(message?.byteLength || 0);
+    if (kind < 1 || byteLength < 1) {
+      return null;
+    }
+
+    let payloadBytes: Uint8Array | null = null;
+    if (buffer instanceof ArrayBuffer) {
+      const start = Math.max(0, Math.min(byteOffset, buffer.byteLength));
+      const available = Math.max(0, buffer.byteLength - start);
+      const length = Math.max(0, Math.min(byteLength, available));
+      if (length > 0) {
+        payloadBytes = new Uint8Array(buffer, start, length);
+      }
+    } else if (ArrayBuffer.isView(buffer)) {
+      const view = buffer as ArrayBufferView;
+      const start = Math.max(0, Math.min(byteOffset, view.byteLength));
+      const available = Math.max(0, view.byteLength - start);
+      const length = Math.max(0, Math.min(byteLength, available));
+      if (length > 0) {
+        payloadBytes = new Uint8Array(view.buffer, view.byteOffset + start, length);
+      }
+    }
+
+    if (!payloadBytes || payloadBytes.byteLength < 1) {
+      return null;
+    }
+
+    const packet = new Uint8Array(1 + payloadBytes.byteLength);
+    packet[0] = kind;
+    packet.set(payloadBytes, 1);
+    return packet;
+  };
+
   const ensureAudioContext = async (flushPending = false) => {
     if (!audioAvailableRef.current) {
       return;
@@ -2683,45 +2731,13 @@ function StreamPage() {
             return;
           }
 
+          const packet = resolveRawBinaryMessageToPacket(message);
+          if (!packet || packet.byteLength < 2) {
+            return;
+          }
+
           nativeBinaryTransportRef.current = true;
-
-          const kind = Number(message?.kind || 0);
-          const buffer = message?.buffer;
-          const byteOffset = Number(message?.byteOffset || 0);
-          const byteLength = Number(message?.byteLength || 0);
-          if (byteLength < 1) {
-            return;
-          }
-
-          let packet: Uint8Array | null = null;
-          if (buffer instanceof ArrayBuffer) {
-            const start = Math.max(0, Math.min(byteOffset, buffer.byteLength));
-            const available = Math.max(0, buffer.byteLength - start);
-            const length = Math.max(0, Math.min(byteLength, available));
-            if (length > 0) {
-              packet = new Uint8Array(buffer, start, length);
-            }
-          } else if (ArrayBuffer.isView(buffer)) {
-            const view = buffer as ArrayBufferView;
-            const start = Math.max(0, Math.min(byteOffset, view.byteLength));
-            const available = Math.max(0, view.byteLength - start);
-            const length = Math.max(0, Math.min(byteLength, available));
-            if (length > 0) {
-              packet = new Uint8Array(view.buffer, view.byteOffset + start, length);
-            }
-          }
-
-          if (!packet) {
-            return;
-          }
-
-          if (kind === WS_BINARY_VIDEO) {
-            handleVideoFrameBytes(packet);
-            return;
-          }
-          if (kind === WS_BINARY_AUDIO) {
-            handleAudioFrameBytes(packet);
-          }
+          handleBinaryPacket(packet);
         });
 
         const socket = new WebSocket(url);
