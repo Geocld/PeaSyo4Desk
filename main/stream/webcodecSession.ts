@@ -1627,17 +1627,36 @@ const postNativeTypedBinary = (kind: number, payload: Buffer) => {
 
   try {
     const webContents = streamWebContents as WebContents;
-    const transferBuffer = payload.buffer as any;
-    webContents.postMessage(
-      "stream-binary",
-      {
-        kind,
-        buffer: transferBuffer,
-        byteOffset: payload.byteOffset,
-        byteLength: payload.byteLength,
-      },
-      [transferBuffer]
-    );
+    const transferBuffer = payload.buffer as ArrayBuffer;
+    const canTransferWholeBuffer =
+      payload.byteOffset === 0 &&
+      payload.byteLength === transferBuffer.byteLength;
+
+    if (canTransferWholeBuffer) {
+      try {
+        webContents.postMessage(
+          "stream-binary",
+          {
+            kind,
+            buffer: transferBuffer,
+            byteOffset: 0,
+            byteLength: payload.byteLength,
+          },
+          [transferBuffer as any]
+        );
+        return true;
+      } catch {
+        // Fall through to a clone-based postMessage path.
+      }
+    }
+
+    const clonedPayload = new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+    webContents.postMessage("stream-binary", {
+      kind,
+      buffer: clonedPayload,
+      byteOffset: 0,
+      byteLength: clonedPayload.byteLength,
+    });
     return true;
   } catch (error) {
     log("native stream binary postMessage failed:", (error as any)?.message || String(error));

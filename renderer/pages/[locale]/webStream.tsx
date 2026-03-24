@@ -3156,11 +3156,32 @@ function StreamPage() {
           const buffer = message?.buffer;
           const byteOffset = Number(message?.byteOffset || 0);
           const byteLength = Number(message?.byteLength || 0);
-          if (!(buffer instanceof ArrayBuffer) || byteLength < 1) {
+          if (byteLength < 1) {
             return;
           }
 
-          const packet = new Uint8Array(buffer, byteOffset, byteLength);
+          let packet: Uint8Array | null = null;
+          if (buffer instanceof ArrayBuffer) {
+            const start = Math.max(0, Math.min(byteOffset, buffer.byteLength));
+            const available = Math.max(0, buffer.byteLength - start);
+            const length = Math.max(0, Math.min(byteLength, available));
+            if (length > 0) {
+              packet = new Uint8Array(buffer, start, length);
+            }
+          } else if (ArrayBuffer.isView(buffer)) {
+            const view = buffer as ArrayBufferView;
+            const start = Math.max(0, Math.min(byteOffset, view.byteLength));
+            const available = Math.max(0, view.byteLength - start);
+            const length = Math.max(0, Math.min(byteLength, available));
+            if (length > 0) {
+              packet = new Uint8Array(view.buffer, view.byteOffset + start, length);
+            }
+          }
+
+          if (!packet) {
+            return;
+          }
+
           if (kind === WS_BINARY_VIDEO) {
             handleVideoFrameBytes(packet);
             return;
