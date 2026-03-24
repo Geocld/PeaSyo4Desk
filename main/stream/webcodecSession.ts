@@ -705,9 +705,14 @@ const getSoftwareVideoDecoderInputOptions = () => {
   const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
   const inputFormat = streamVideoConfig?.inputFormat;
 
-  if (IS_WINDOWS || (IS_LINUX && inputFormat === "hevc")) {
+  if (IS_WINDOWS) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
     options.push("-threads 1");
+  }
+
+  if (IS_LINUX && inputFormat === "hevc") {
+    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
+    options.push("-threads 0");
   }
 
   return options;
@@ -1035,6 +1040,14 @@ const getMaxPendingVideoSampleBytes = () => {
     : MAX_PENDING_VIDEO_SAMPLE_SECONDS;
   const targetBytes =
     bitrateMbps > 0 ? Math.round((bitrateMbps * 1024 * 1024) * targetSeconds / 8) : 0;
+  if (IS_LINUX && streamVideoConfig?.inputFormat === "hevc") {
+    const linuxHevcMinBytes = 160 * 1024;
+    const linuxHevcMaxBytes = 384 * 1024;
+    return Math.max(
+      linuxHevcMinBytes,
+      Math.min(linuxHevcMaxBytes, targetBytes || linuxHevcMinBytes)
+    );
+  }
   const maxBytes = IS_LINUX && streamVideoConfig?.isHdr ? 1024 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX;
   const minBytes = IS_LINUX && streamVideoConfig?.isHdr ? 256 * 1024 : MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN;
   return Math.max(
@@ -1044,15 +1057,7 @@ const getMaxPendingVideoSampleBytes = () => {
 };
 
 const shouldResyncVideoDecoderOnBacklog = () => {
-  if (!streamVideoConfig) {
-    return false;
-  }
-
-  if (IS_LINUX && streamVideoConfig.inputFormat === "hevc") {
-    return false;
-  }
-
-  return true;
+  return !!streamVideoConfig;
 };
 
 const clearPendingVideoSampleQueue = () => {
@@ -1077,17 +1082,29 @@ const shiftPendingVideoSample = () => {
   return sample;
 };
 
-const recreateVideoDecodePipelineForSync = (reason: string) => {
-  const keptSamples = pendingVideoSamples.slice();
+const keepSamplesFromLatestSyncOrTail = (samples: QueuedVideoSample[], tailCount = 16) => {
   let syncIndex = -1;
-  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
-    if (keptSamples[i].isSyncFrame) {
+  for (let i = samples.length - 1; i >= 0; i -= 1) {
+    if (samples[i].isSyncFrame) {
       syncIndex = i;
       break;
     }
   }
 
-  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+  if (syncIndex >= 0) {
+    return samples.slice(syncIndex);
+  }
+
+  if (samples.length <= tailCount) {
+    return samples.slice();
+  }
+
+  return samples.slice(samples.length - tailCount);
+};
+
+const recreateVideoDecodePipelineForSync = (reason: string) => {
+  const keptSamples = pendingVideoSamples.slice();
+  const nextQueue = keepSamplesFromLatestSyncOrTail(keptSamples);
 
   destroyVideoPipeline();
   createVideoDecodePipeline();
@@ -1123,15 +1140,7 @@ const fallbackVideoDecoderToSoftware = (reason: string) => {
   videoDecoderRecoveryInProgress = true;
   const failedPlan = activeVideoDecoderPlanName;
   const keptSamples = pendingVideoSamples.slice();
-  let syncIndex = -1;
-  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
-    if (keptSamples[i].isSyncFrame) {
-      syncIndex = i;
-      break;
-    }
-  }
-
-  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+  const nextQueue = keepSamplesFromLatestSyncOrTail(keptSamples);
   disabledVideoDecoderPlans.add(failedPlan);
   log(
     `video decoder '${failedPlan}' failed (${reason}), falling back to software decode`
@@ -2024,15 +2033,7 @@ const shiftPendingEncodedVideoSample = () => {
 
 const resyncEncodedVideoQueueForBacklog = (reason: string) => {
   const keptSamples = pendingEncodedVideoSamples.slice();
-  let syncIndex = -1;
-  for (let i = keptSamples.length - 1; i >= 0; i -= 1) {
-    if (keptSamples[i].isSyncFrame) {
-      syncIndex = i;
-      break;
-    }
-  }
-
-  const nextQueue = syncIndex >= 0 ? keptSamples.slice(syncIndex) : [];
+  const nextQueue = keepSamplesFromLatestSyncOrTail(keptSamples);
   clearPendingEncodedVideoSampleQueue();
   for (const sample of nextQueue) {
     enqueuePendingEncodedVideoSample(sample);
@@ -2092,7 +2093,7 @@ const flushPendingEncodedVideoSample = () => {
 };
 
 const dispatchEncodedVideoSample = (sample: QueuedVideoSample) => {
-  if (!sample.hasSlice) {
+  if (!sample.data || sample.data.length < 1) {
     return;
   }
 

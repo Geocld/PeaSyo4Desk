@@ -95,6 +95,15 @@ const isLinuxRuntime = () => {
   return typeof navigator !== "undefined" && /Linux/i.test(navigator.userAgent || "");
 };
 
+const isSteamOsRuntime = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+  return /steamos|steam deck/i.test(platformText);
+};
+
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
   return format === "I010" || format === "P010";
 };
@@ -578,6 +587,7 @@ function StreamPage() {
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
   const sdrGpuRenderingDisabledRef = useRef(false);
+  const forceSdrCpuRenderingRef = useRef(false);
   const hdrRendererRef = useRef<HdrWebglRenderer | null>(null);
   const fsrRendererRef = useRef<FsrWebglRenderer | null>(null);
   const fsrGpuRenderingDisabledRef = useRef(false);
@@ -856,6 +866,10 @@ function StreamPage() {
     const nextSharpness = normalizeFsrSharpness(settings?.fsr_sharpness);
     setFsrSharpness(nextSharpness);
   }, [settings?.fsr_sharpness]);
+
+  useEffect(() => {
+    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && !!settings?.use_vulkan;
+  }, [settings?.use_vulkan]);
 
   useEffect(() => {
     fsrSharpnessRef.current = fsrSharpness;
@@ -1564,6 +1578,11 @@ function StreamPage() {
   };
 
   const ensureSdrRenderer = () => {
+    if (forceSdrCpuRenderingRef.current) {
+      destroySdrRenderer();
+      return null;
+    }
+
     if (sdrGpuRenderingDisabledRef.current) {
       return null;
     }

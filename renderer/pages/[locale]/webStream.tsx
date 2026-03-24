@@ -741,6 +741,7 @@ function StreamPage() {
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
   const sdrGpuRenderingDisabledRef = useRef(false);
+  const forceSdrCpuRenderingRef = useRef(false);
   const hdrRendererRef = useRef<HdrWebglRenderer | null>(null);
   const fsrRendererRef = useRef<FsrWebglRenderer | null>(null);
   const fsrGpuRenderingDisabledRef = useRef(false);
@@ -1024,6 +1025,10 @@ function StreamPage() {
     const nextSharpness = normalizeFsrSharpness(settings?.fsr_sharpness);
     setFsrSharpness(nextSharpness);
   }, [settings?.fsr_sharpness]);
+
+  useEffect(() => {
+    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && !!settings?.use_vulkan;
+  }, [settings?.use_vulkan]);
 
   useEffect(() => {
     fsrSharpnessRef.current = fsrSharpness;
@@ -1903,6 +1908,11 @@ function StreamPage() {
   };
 
   const ensureSdrRenderer = () => {
+    if (forceSdrCpuRenderingRef.current) {
+      destroySdrRenderer();
+      return null;
+    }
+
     if (sdrGpuRenderingDisabledRef.current) {
       return null;
     }
@@ -2422,6 +2432,8 @@ function StreamPage() {
 
     const flags = packetBytes[0];
     const isKeyFrame = (flags & 1) !== 0;
+    const hasConfig = (flags & 2) !== 0;
+    const canStartDecode = isKeyFrame || hasConfig;
     const sampleBytes = packetBytes.subarray(1);
     const inputFormat = videoInputFormatRef.current;
 
@@ -2430,7 +2442,7 @@ function StreamPage() {
       return;
     }
 
-    if (webCodecsAwaitingKeyFrameRef.current && !isKeyFrame) {
+    if (webCodecsAwaitingKeyFrameRef.current && !canStartDecode) {
       ackRenderedNativeVideoFrame();
       return;
     }
@@ -2443,14 +2455,14 @@ function StreamPage() {
 
       if (decoder.decodeQueueSize > MAX_WEBCODECS_DECODE_QUEUE_SIZE) {
         recoverWebCodecsDecoder(`decode queue backlog (${decoder.decodeQueueSize})`);
-        if (!isKeyFrame) {
+        if (!canStartDecode) {
           ackRenderedNativeVideoFrame();
           return;
         }
         decoder = ensureWebCodecsDecoder(inputFormat);
       }
 
-      if (webCodecsAwaitingKeyFrameRef.current && isKeyFrame) {
+      if (webCodecsAwaitingKeyFrameRef.current && canStartDecode) {
         webCodecsAwaitingKeyFrameRef.current = false;
       }
 
@@ -2462,11 +2474,12 @@ function StreamPage() {
 
       decoder.decode(
         new EncodedVideoChunk({
-          type: isKeyFrame ? "key" : "delta",
+          type: canStartDecode ? "key" : "delta",
           timestamp,
           data: sampleBytes,
         })
       );
+      ackRenderedNativeVideoFrame();
     } catch (error) {
       recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs video decode failed."));
       ackRenderedNativeVideoFrame();
