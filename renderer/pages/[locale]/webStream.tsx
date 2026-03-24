@@ -98,7 +98,17 @@ const WEBCODECS_HEVC_CODEC_CANDIDATES = [
   "hvc1.2.4.L120.B0",
   "hev1.2.4.L120.B0",
 ];
-const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 16;
+const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 24;
+
+const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAcceleration"][] => {
+  if (isSteamOsRuntime()) {
+    return ["prefer-software", "no-preference", "prefer-hardware"];
+  }
+  if (isLinuxRuntime()) {
+    return ["no-preference", "prefer-hardware", "prefer-software"];
+  }
+  return ["prefer-hardware", "no-preference", "prefer-software"];
+};
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -147,11 +157,7 @@ const checkWebCodecsCodecSupport = async (codecCandidates: string[]) => {
     return null;
   }
 
-  const hardwareAccelerationModes: VideoDecoderConfig["hardwareAcceleration"][] = [
-    "prefer-hardware",
-    "no-preference",
-    "prefer-software",
-  ];
+  const hardwareAccelerationModes = getWebCodecsHardwareAccelerationModes();
 
   for (const codec of codecCandidates) {
     for (const hardwareAcceleration of hardwareAccelerationModes) {
@@ -1440,26 +1446,46 @@ function StreamPage() {
       throw new Error(`No supported WebCodecs codec was detected for ${inputFormat}.`);
     }
 
-    const decoder = new VideoDecoder({
-      output: (frame) => {
-        enqueueDecodedVideoFrame(frame);
-      },
-      error: (error) => {
-        recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs decoder error."));
-      },
-    });
+    const hardwareAccelerationModes = getWebCodecsHardwareAccelerationModes();
+    let lastError: unknown = null;
 
-    decoder.configure({
-      codec,
-      codedWidth: widthRef.current,
-      codedHeight: heightRef.current,
-      hardwareAcceleration: "prefer-hardware",
-      optimizeForLatency: true,
-    });
+    for (const hardwareAcceleration of hardwareAccelerationModes) {
+      const decoder = new VideoDecoder({
+        output: (frame) => {
+          enqueueDecodedVideoFrame(frame);
+        },
+        error: (error) => {
+          recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs decoder error."));
+        },
+      });
 
-    webCodecsCodecStringRef.current = codec;
-    webCodecsVideoDecoderRef.current = decoder;
-    return decoder;
+      try {
+        decoder.configure({
+          codec,
+          codedWidth: widthRef.current,
+          codedHeight: heightRef.current,
+          hardwareAcceleration,
+          optimizeForLatency: true,
+        });
+
+        webCodecsCodecStringRef.current = codec;
+        webCodecsVideoDecoderRef.current = decoder;
+        return decoder;
+      } catch (error) {
+        lastError = error;
+        try {
+          decoder.close();
+        } catch {
+          // Ignore configure teardown failures.
+        }
+      }
+    }
+
+    throw (
+      lastError instanceof Error
+        ? lastError
+        : new Error(`Failed to configure WebCodecs decoder for codec ${codec}.`)
+    );
   };
 
   const ensureWebCodecsDecoder = (inputFormat: string) => {
@@ -2457,12 +2483,7 @@ function StreamPage() {
       }
 
       const decodeQueueSize = decoder.decodeQueueSize;
-      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE && !canStartDecode) {
-        droppedFramesRef.current += 1;
-        ackRenderedNativeVideoFrame();
-        return;
-      }
-      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE * 3) {
+      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE * 4) {
         recoverWebCodecsDecoder(`decode queue overflow (${decodeQueueSize})`);
         if (!canStartDecode) {
           ackRenderedNativeVideoFrame();
@@ -2490,7 +2511,7 @@ function StreamPage() {
       );
       // Apply mild backpressure when decode queue grows to keep playback stable.
       const shouldAckImmediately =
-        decoder.decodeQueueSize < Math.max(2, Math.floor(MAX_WEBCODECS_DECODE_QUEUE_SIZE / 2));
+        !videoReadyRef.current || decoder.decodeQueueSize <= 2;
       if (shouldAckImmediately) {
         ackRenderedNativeVideoFrame();
       }
