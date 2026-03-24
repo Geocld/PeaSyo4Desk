@@ -109,6 +109,10 @@ type SteamOsWebCodecsTuning = {
   rebufferLowFrames: number;
   rebufferResumeFrames: number;
   renderedFrameRetireKeep: number;
+  rebufferProtectionIncrementFrames: number;
+  rebufferProtectionMaxExtraFrames: number;
+  rebufferProtectionDecayRenderedFrames: number;
+  rebufferProtectionDecayStepFrames: number;
 };
 const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
 const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsWebCodecsTuning> = {
@@ -120,6 +124,10 @@ const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsW
     rebufferLowFrames: 6,
     rebufferResumeFrames: 14,
     renderedFrameRetireKeep: 5,
+    rebufferProtectionIncrementFrames: 0,
+    rebufferProtectionMaxExtraFrames: 0,
+    rebufferProtectionDecayRenderedFrames: 0,
+    rebufferProtectionDecayStepFrames: 0,
   },
   stable: {
     decodeQueueLimit: 120,
@@ -129,15 +137,23 @@ const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsW
     rebufferLowFrames: 10,
     rebufferResumeFrames: 20,
     renderedFrameRetireKeep: 8,
+    rebufferProtectionIncrementFrames: 0,
+    rebufferProtectionMaxExtraFrames: 0,
+    rebufferProtectionDecayRenderedFrames: 0,
+    rebufferProtectionDecayStepFrames: 0,
   },
   "ultra-stable": {
-    decodeQueueLimit: 192,
-    renderQueueLimit: 96,
-    minBufferFrames: 30,
-    clockDelayFrames: 22,
-    rebufferLowFrames: 16,
-    rebufferResumeFrames: 30,
-    renderedFrameRetireKeep: 12,
+    decodeQueueLimit: 256,
+    renderQueueLimit: 128,
+    minBufferFrames: 40,
+    clockDelayFrames: 30,
+    rebufferLowFrames: 22,
+    rebufferResumeFrames: 40,
+    renderedFrameRetireKeep: 16,
+    rebufferProtectionIncrementFrames: 10,
+    rebufferProtectionMaxExtraFrames: 120,
+    rebufferProtectionDecayRenderedFrames: 180,
+    rebufferProtectionDecayStepFrames: 1,
   },
 };
 
@@ -806,6 +822,8 @@ function StreamPage() {
   const decodedVideoFrameClockMediaStartUsRef = useRef(0);
   const decodedVideoFrameClockPrimedRef = useRef(false);
   const decodedVideoFrameRebufferingRef = useRef(false);
+  const decodedVideoFrameDynamicDelayFramesRef = useRef(0);
+  const decodedVideoFrameStableRenderFramesRef = useRef(0);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -921,6 +939,28 @@ function StreamPage() {
   const getSteamOsRenderedFrameRetireKeepCount = () => {
     return steamOsWebCodecsTuning.renderedFrameRetireKeep;
   };
+
+  const getSteamOsRebufferProtectionIncrementFrames = () => {
+    return steamOsWebCodecsTuning.rebufferProtectionIncrementFrames;
+  };
+
+  const getSteamOsRebufferProtectionMaxExtraFrames = () => {
+    return steamOsWebCodecsTuning.rebufferProtectionMaxExtraFrames;
+  };
+
+  const getSteamOsRebufferProtectionDecayRenderedFrames = () => {
+    return steamOsWebCodecsTuning.rebufferProtectionDecayRenderedFrames;
+  };
+
+  const getSteamOsRebufferProtectionDecayStepFrames = () => {
+    return steamOsWebCodecsTuning.rebufferProtectionDecayStepFrames;
+  };
+
+  useEffect(() => {
+    // Reset dynamic rebuffer delay when SteamOS profile changes.
+    decodedVideoFrameDynamicDelayFramesRef.current = 0;
+    decodedVideoFrameStableRenderFramesRef.current = 0;
+  }, [steamOsRuntime, steamOsWebCodecsProfile]);
 
   const isSessionConnected = connectState === "connected";
   const shouldShowVideo = isSessionConnected && videoReady;
@@ -1449,6 +1489,61 @@ function StreamPage() {
     decodedVideoFrameRebufferingRef.current = false;
   };
 
+  const getSteamOsEffectiveWebCodecsClockDelayFrames = () => {
+    if (!shouldUseTimestampDrivenWebCodecsRender()) {
+      return 0;
+    }
+    return (
+      getSteamOsWebCodecsClockDelayFrames() + decodedVideoFrameDynamicDelayFramesRef.current
+    );
+  };
+
+  const increaseSteamOsDynamicRebufferProtection = () => {
+    if (!shouldUseTimestampDrivenWebCodecsRender()) {
+      return;
+    }
+
+    const incrementFrames = Math.max(0, getSteamOsRebufferProtectionIncrementFrames());
+    const maxExtraFrames = Math.max(0, getSteamOsRebufferProtectionMaxExtraFrames());
+    if (incrementFrames < 1 || maxExtraFrames < 1) {
+      return;
+    }
+
+    decodedVideoFrameDynamicDelayFramesRef.current = Math.min(
+      maxExtraFrames,
+      decodedVideoFrameDynamicDelayFramesRef.current + incrementFrames
+    );
+    decodedVideoFrameStableRenderFramesRef.current = 0;
+  };
+
+  const relaxSteamOsDynamicRebufferProtectionAfterRender = () => {
+    if (!shouldUseTimestampDrivenWebCodecsRender() || decodedVideoFrameRebufferingRef.current) {
+      return;
+    }
+
+    const currentExtraFrames = decodedVideoFrameDynamicDelayFramesRef.current;
+    if (currentExtraFrames < 1) {
+      return;
+    }
+
+    const decayRenderedFrames = Math.max(0, getSteamOsRebufferProtectionDecayRenderedFrames());
+    const decayStepFrames = Math.max(0, getSteamOsRebufferProtectionDecayStepFrames());
+    if (decayRenderedFrames < 1 || decayStepFrames < 1) {
+      return;
+    }
+
+    decodedVideoFrameStableRenderFramesRef.current += 1;
+    if (decodedVideoFrameStableRenderFramesRef.current < decayRenderedFrames) {
+      return;
+    }
+
+    decodedVideoFrameStableRenderFramesRef.current = 0;
+    decodedVideoFrameDynamicDelayFramesRef.current = Math.max(
+      0,
+      currentExtraFrames - decayStepFrames
+    );
+  };
+
   const getVideoFrameTimestampUs = (frame: VideoFrame) => {
     const timestamp = Number((frame as any)?.timestamp);
     if (!Number.isFinite(timestamp)) {
@@ -1621,7 +1716,7 @@ function StreamPage() {
         !decodedVideoFrameClockPrimedRef.current &&
         queue.length >= minBufferFrames
       ) {
-        syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+        syncDecodedVideoFrameClockToHead(getSteamOsEffectiveWebCodecsClockDelayFrames());
         decodedVideoFrameRebufferingRef.current = false;
       }
     }
@@ -3257,11 +3352,12 @@ function StreamPage() {
           decodedFrameQueue.length <= getSteamOsWebCodecsRebufferLowFrames()
         ) {
           decodedVideoFrameRebufferingRef.current = true;
+          increaseSteamOsDynamicRebufferProtection();
         }
 
         if (decodedVideoFrameRebufferingRef.current) {
           if (decodedFrameQueue.length >= getSteamOsWebCodecsRebufferResumeFrames()) {
-            syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+            syncDecodedVideoFrameClockToHead(getSteamOsEffectiveWebCodecsClockDelayFrames());
             decodedVideoFrameRebufferingRef.current = false;
           } else {
             decodedVideoFrame = null;
@@ -3270,7 +3366,7 @@ function StreamPage() {
 
         if (!decodedVideoFrameClockPrimedRef.current) {
           if (decodedFrameQueue.length >= getSteamOsWebCodecsMinBufferFrames()) {
-            syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+            syncDecodedVideoFrameClockToHead(getSteamOsEffectiveWebCodecsClockDelayFrames());
             decodedVideoFrameRebufferingRef.current = false;
           }
         }
@@ -3281,7 +3377,7 @@ function StreamPage() {
         } else {
         const frameIntervalUs = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
         if (decodedVideoFrameClockWallStartUsRef.current < 1) {
-          syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+          syncDecodedVideoFrameClockToHead(getSteamOsEffectiveWebCodecsClockDelayFrames());
         }
 
         const mediaNowUs =
@@ -3335,6 +3431,7 @@ function StreamPage() {
           drawFsrFrame();
         }
         renderedFramesRef.current += 1;
+        relaxSteamOsDynamicRebufferProtectionAfterRender();
 
         if (!videoReadyRef.current) {
           videoReadyRef.current = true;
