@@ -99,6 +99,8 @@ const WEBCODECS_HEVC_CODEC_CANDIDATES = [
   "hev1.2.4.L120.B0",
 ];
 const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 24;
+const MAX_WEBCODECS_RENDER_QUEUE_STEAMOS = 8;
+const MAX_WEBCODECS_RENDER_QUEUE_DEFAULT = 1;
 
 const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAcceleration"][] => {
   if (isSteamOsRuntime()) {
@@ -142,6 +144,24 @@ const isSteamOsRuntime = () => {
 
   const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
   return /steamos|steam deck/i.test(platformText);
+};
+
+const shouldDeferEncodedAckUntilFrameConsumed = () => {
+  return isSteamOsRuntime();
+};
+
+const getWebCodecsDecodeQueueLimit = () => {
+  return isSteamOsRuntime() ? 8 : MAX_WEBCODECS_DECODE_QUEUE_SIZE;
+};
+
+const getWebCodecsRenderQueueLimit = () => {
+  return isSteamOsRuntime()
+    ? MAX_WEBCODECS_RENDER_QUEUE_STEAMOS
+    : MAX_WEBCODECS_RENDER_QUEUE_DEFAULT;
+};
+
+const shouldUseTimestampDrivenWebCodecsRender = () => {
+  return isSteamOsRuntime();
 };
 
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
@@ -234,6 +254,7 @@ const detectClientVideoCapabilities = async (
       preferCompressedVideo: false,
       h264: false,
       hevc: false,
+      isSteamOs: isSteamOsRuntime(),
     };
   }
 
@@ -249,6 +270,7 @@ const detectClientVideoCapabilities = async (
     preferCompressedVideo: codecFamily === "hevc" ? !!hevcCodec || !!resolvedH264Codec : !!resolvedH264Codec,
     h264: !!resolvedH264Codec,
     hevc: !!hevcCodec,
+    isSteamOs: isSteamOsRuntime(),
     ...(resolvedH264Codec ? { h264Codec: resolvedH264Codec } : {}),
     ...(hevcCodec ? { hevcCodec } : {}),
   };
@@ -327,6 +349,7 @@ type ClientVideoCapabilities = {
   preferCompressedVideo: boolean;
   h264: boolean;
   hevc: boolean;
+  isSteamOs?: boolean;
   h264Codec?: string;
   hevcCodec?: string;
 };
@@ -742,7 +765,9 @@ function StreamPage() {
   const videoTransportRef = useRef<StreamVideoTransportMode>("ffmpeg-rawvideo");
   const videoInputFormatRef = useRef<StreamCodecFamily>("hevc");
   const latestFrameRef = useRef<Uint8Array | null>(null);
-  const latestDecodedVideoFrameRef = useRef<VideoFrame | null>(null);
+  const decodedVideoFrameQueueRef = useRef<VideoFrame[]>([]);
+  const decodedVideoFrameClockWallStartUsRef = useRef(0);
+  const decodedVideoFrameClockMediaStartUsRef = useRef(0);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -1096,6 +1121,7 @@ function StreamPage() {
     setVideoFormat(format);
     imageDataRef.current = null;
     ctxRef.current = null;
+    clearDecodedVideoFrameQueue();
 
     const canvas = canvasRef.current;
     if (canvas) {
@@ -1336,13 +1362,55 @@ function StreamPage() {
     fsrRendererRef.current = null;
   };
 
-  const clearLatestDecodedVideoFrame = () => {
-    const frame = latestDecodedVideoFrameRef.current;
-    if (!frame) {
+  const resetDecodedVideoFrameClock = () => {
+    decodedVideoFrameClockWallStartUsRef.current = 0;
+    decodedVideoFrameClockMediaStartUsRef.current = 0;
+  };
+
+  const getVideoFrameTimestampUs = (frame: VideoFrame) => {
+    const timestamp = Number((frame as any)?.timestamp);
+    if (!Number.isFinite(timestamp)) {
+      return null;
+    }
+    return Math.max(0, Math.trunc(timestamp));
+  };
+
+  const clearDecodedVideoFrameQueue = (ackDroppedFrames = true) => {
+    const queue = decodedVideoFrameQueueRef.current;
+    if (queue.length < 1) {
+      resetDecodedVideoFrameClock();
       return;
     }
 
-    latestDecodedVideoFrameRef.current = null;
+    while (queue.length > 0) {
+      const frame = queue.shift();
+      if (!frame) {
+        continue;
+      }
+      if (ackDroppedFrames) {
+        ackRenderedNativeVideoFrame();
+      }
+      try {
+        frame.close();
+      } catch {
+        // Ignore stale frame cleanup errors.
+      }
+    }
+
+    resetDecodedVideoFrameClock();
+  };
+
+  const syncDecodedVideoFrameClockToHead = () => {
+    const headFrame = decodedVideoFrameQueueRef.current[0];
+    if (!headFrame) {
+      resetDecodedVideoFrameClock();
+      return;
+    }
+    decodedVideoFrameClockWallStartUsRef.current = performance.now() * 1000;
+    decodedVideoFrameClockMediaStartUsRef.current = getVideoFrameTimestampUs(headFrame) || 0;
+  };
+
+  const closeDecodedVideoFrame = (frame: VideoFrame) => {
     try {
       frame.close();
     } catch {
@@ -1364,6 +1432,14 @@ function StreamPage() {
       return;
     }
 
+    const maxPendingAcks =
+      videoTransportRef.current === "compressed-webcodecs" && shouldDeferEncodedAckUntilFrameConsumed()
+        ? getWebCodecsDecodeQueueLimit()
+        : 2048;
+    if (nativeVideoFrameRenderedAckPendingCountRef.current >= maxPendingAcks) {
+      return;
+    }
+
     nativeVideoFrameRenderedAckPendingCountRef.current += 1;
   };
 
@@ -1380,7 +1456,7 @@ function StreamPage() {
   };
 
   const destroyWebCodecsVideoDecoder = () => {
-    clearLatestDecodedVideoFrame();
+    clearDecodedVideoFrameQueue();
     webCodecsAwaitingKeyFrameRef.current = false;
     webCodecsTimestampUsRef.current = 0;
     webCodecsCodecStringRef.current = "";
@@ -1413,13 +1489,24 @@ function StreamPage() {
       setStatus(t("Connected"));
     }
 
-    if (latestDecodedVideoFrameRef.current) {
+    const queue = decodedVideoFrameQueueRef.current;
+    queue.push(frame);
+
+    const renderQueueLimit = getWebCodecsRenderQueueLimit();
+    while (queue.length > renderQueueLimit) {
+      const droppedFrame = queue.shift();
+      if (!droppedFrame) {
+        break;
+      }
       droppedFramesRef.current += 1;
-      clearLatestDecodedVideoFrame();
       ackRenderedNativeVideoFrame();
+      closeDecodedVideoFrame(droppedFrame);
     }
 
-    latestDecodedVideoFrameRef.current = frame;
+    if (queue.length === 1 || decodedVideoFrameClockWallStartUsRef.current < 1) {
+      syncDecodedVideoFrameClockToHead();
+    }
+
     scheduleRenderLoop();
   };
 
@@ -2485,7 +2572,7 @@ function StreamPage() {
       }
 
       const decodeQueueSize = decoder.decodeQueueSize;
-      if (decodeQueueSize >= MAX_WEBCODECS_DECODE_QUEUE_SIZE && !canStartDecode) {
+      if (decodeQueueSize >= getWebCodecsDecodeQueueLimit() && !canStartDecode) {
         // Keep decoder stable under transient burst by dropping overflow delta chunks.
         droppedFramesRef.current += 1;
         ackRenderedNativeVideoFrame();
@@ -2496,20 +2583,24 @@ function StreamPage() {
         webCodecsAwaitingKeyFrameRef.current = false;
       }
 
+      const duration = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
       const timestamp = webCodecsTimestampUsRef.current;
       webCodecsTimestampUsRef.current += Math.max(
         1,
-        Math.round(1000000 / Math.max(1, fpsRef.current))
+        duration
       );
 
       decoder.decode(
         new EncodedVideoChunk({
           type: canStartDecode ? "key" : "delta",
           timestamp,
+          duration,
           data: sampleBytes,
         })
       );
-      ackRenderedNativeVideoFrame();
+      if (!shouldDeferEncodedAckUntilFrameConsumed()) {
+        ackRenderedNativeVideoFrame();
+      }
     } catch (error) {
       recoverWebCodecsDecoder(getErrorMessage(error, "WebCodecs video decode failed."));
       ackRenderedNativeVideoFrame();
@@ -3014,9 +3105,64 @@ function StreamPage() {
     rafRef.current = null;
     renderLoopScheduledRef.current = false;
 
-    const decodedVideoFrame = latestDecodedVideoFrameRef.current;
+    let decodedVideoFrame: VideoFrame | null = null;
+    const decodedFrameQueue = decodedVideoFrameQueueRef.current;
+    if (decodedFrameQueue.length > 0) {
+      if (!shouldUseTimestampDrivenWebCodecsRender()) {
+        while (decodedFrameQueue.length > 1) {
+          const staleFrame = decodedFrameQueue.shift();
+          if (!staleFrame) {
+            break;
+          }
+          droppedFramesRef.current += 1;
+          ackRenderedNativeVideoFrame();
+          closeDecodedVideoFrame(staleFrame);
+        }
+        decodedVideoFrame = decodedFrameQueue.shift() || null;
+      } else {
+        const frameIntervalUs = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
+        if (decodedVideoFrameClockWallStartUsRef.current < 1) {
+          syncDecodedVideoFrameClockToHead();
+        }
+
+        const mediaNowUs =
+          decodedVideoFrameClockMediaStartUsRef.current +
+          (performance.now() * 1000 - decodedVideoFrameClockWallStartUsRef.current);
+
+        while (decodedFrameQueue.length > 1) {
+          const nextFrame = decodedFrameQueue[1];
+          const nextFrameTimestampUs = getVideoFrameTimestampUs(nextFrame);
+          const shouldDropStaleFrame =
+            decodedFrameQueue.length > getWebCodecsRenderQueueLimit() ||
+            (nextFrameTimestampUs !== null && nextFrameTimestampUs <= mediaNowUs + frameIntervalUs / 2);
+          if (!shouldDropStaleFrame) {
+            break;
+          }
+
+          const staleFrame = decodedFrameQueue.shift();
+          if (!staleFrame) {
+            break;
+          }
+          droppedFramesRef.current += 1;
+          ackRenderedNativeVideoFrame();
+          closeDecodedVideoFrame(staleFrame);
+        }
+
+        const headFrame = decodedFrameQueue[0];
+        if (headFrame) {
+          const headFrameTimestampUs = getVideoFrameTimestampUs(headFrame);
+          const shouldRenderNow =
+            decodedFrameQueue.length > getWebCodecsRenderQueueLimit() ||
+            headFrameTimestampUs === null ||
+            headFrameTimestampUs <= mediaNowUs + frameIntervalUs / 2;
+          if (shouldRenderNow) {
+            decodedVideoFrame = decodedFrameQueue.shift() || null;
+          }
+        }
+      }
+    }
+
     if (decodedVideoFrame) {
-      latestDecodedVideoFrameRef.current = null;
       try {
         const canvas = canvasRef.current;
         if (!canvas) {
@@ -3060,11 +3206,7 @@ function StreamPage() {
           t("HdrRendererErrorStatus")
         );
       } finally {
-        try {
-          decodedVideoFrame.close();
-        } catch {
-          // Ignore already-closed frame handles.
-        }
+        closeDecodedVideoFrame(decodedVideoFrame);
       }
     }
 
@@ -3116,7 +3258,7 @@ function StreamPage() {
     }
 
     if (
-      (latestFrameRef.current || latestDecodedVideoFrameRef.current) &&
+      (latestFrameRef.current || decodedVideoFrameQueueRef.current.length > 0) &&
       !renderLoopScheduledRef.current
     ) {
       renderLoopScheduledRef.current = true;
@@ -3465,6 +3607,7 @@ function StreamPage() {
       videoReadyRef.current = false;
       sessionErrorHandledRef.current = false;
       latestFrameRef.current = null;
+      clearDecodedVideoFrameQueue(false);
       destroyWebCodecsVideoDecoder();
       videoFormatRef.current = "NV12";
       setVideoFormat("NV12");

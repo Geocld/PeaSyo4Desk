@@ -81,7 +81,12 @@ export default class Application {
       }
       ElectronApp.commandLine.appendSwitch('enable-accelerated-video-decode')
       ElectronApp.commandLine.appendSwitch('ignore-gpu-blocklist')
-      ElectronApp.commandLine.appendSwitch('enable-zero-copy');
+      if (isLinuxWebCodecVulkanRoute) {
+        // Avoid zero-copy decode surface reuse on SteamOS WebCodec path to reduce partial-frame artifacts.
+        ElectronApp.commandLine.appendSwitch('disable-zero-copy');
+      } else {
+        ElectronApp.commandLine.appendSwitch('enable-zero-copy');
+      }
       if (this._isLinux && forceLinuxX11) {
         ElectronApp.commandLine.appendSwitch('ozone-platform-hint', 'x11')
       }

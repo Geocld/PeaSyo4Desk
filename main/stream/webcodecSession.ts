@@ -28,7 +28,8 @@ const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 1;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
-const NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = IS_WINDOWS ? 350 : IS_LINUX ? 900 : 500;
+const NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = IS_WINDOWS ? 350 : IS_LINUX ? 500 : 500;
+const STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = 1200;
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LINUX ? 512 * 1024 : 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
@@ -136,6 +137,7 @@ type ClientVideoCapabilities = {
   preferCompressedVideo?: boolean;
   h264?: boolean;
   hevc?: boolean;
+  isSteamOs?: boolean;
 };
 
 type ControllerKernel = "web" | "node";
@@ -258,6 +260,7 @@ let nativeVideoFramesInFlight = 0;
 let nativeVideoFrameInFlightAtMs = 0;
 let nativeEncodedVideoSampleInFlight = false;
 let nativeEncodedVideoSampleInFlightAtMs = 0;
+let activeClientIsSteamOs = false;
 const pendingEncodedVideoSamples: QueuedVideoSample[] = [];
 let pendingEncodedVideoSampleBytes = 0;
 let waitingForVideoSyncFrame = false;
@@ -2062,11 +2065,17 @@ const flushPendingEncodedVideoSample = () => {
 
   const now = Date.now();
   const shouldUseNativeAck = canUseNativeStreamBinary();
+  const encodedAckTimeoutMs = activeClientIsSteamOs
+    ? STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS
+    : NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS;
   if (
     shouldUseNativeAck &&
     nativeEncodedVideoSampleInFlight &&
-    now - nativeEncodedVideoSampleInFlightAtMs > NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS
+    now - nativeEncodedVideoSampleInFlightAtMs > encodedAckTimeoutMs
   ) {
+    if (activeClientIsSteamOs) {
+      resyncEncodedVideoQueueForBacklog("encoded sample ack timeout");
+    }
     nativeEncodedVideoSampleInFlight = false;
     nativeEncodedVideoSampleInFlightAtMs = 0;
   }
@@ -2789,6 +2798,7 @@ const cleanupSessionOnly = () => {
   streamSessionStarted = false;
   streamWebContents = null;
   streamVideoConfig = null;
+  activeClientIsSteamOs = false;
 
   destroyVideoPipeline();
   cachedVideoConfigSample = null;
@@ -3034,6 +3044,7 @@ const startSession = async (args: StartStreamSessionArgs) => {
   ensureInitialized();
   attachStreamWebContents(args.targetWebContents);
   const wsInfo = await startSocketServer();
+  activeClientIsSteamOs = !!args.clientVideoCapabilities?.isSteamOs;
 
   if (streamSession || streamSessionStarted) {
     await stopSession(false);
