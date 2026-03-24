@@ -150,6 +150,8 @@
   "value_vulkan_title": "使用Vulkan渲染",
   "value_vulkan_desc": "启用Vulkan渲染，可以提升部分设备的渲染性能，但可能会导致不稳定(比如黑屏等)",
   "FSR": "FSR",
+  "Stream renderer": "串流渲染方案",
+  "Stream renderer desc": "选择串流使用的视频解码与渲染链路。FFmpeg 使用现有 rawvideo 路径，WebCodec 使用浏览器原生解码与渲染。",
   "FSR started": "FSR 已启动",
   "FSR_desc": "启用FSR(FidelityFX Super Resolution)实现超分辨率，可以在不增加带宽的情况下提升画面清晰度，但会增加CPU/GPU负载",
   "fsr_sharpness_title": "FSR锐度",

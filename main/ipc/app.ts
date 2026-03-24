@@ -8,7 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import chiaki from "chiaki-lib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
-import { StreamSessionService } from "../stream/session";
+import { StreamSessionManager } from "../stream/serviceManager";
 
 const WAKEUP_PORT = 9302;
 const DDP_CLIENT_TYPE = "vr";
@@ -1233,16 +1233,16 @@ export default class IpcApp extends IpcBase {
   }
 
   startStreamWebSocketServer() {
-    return StreamSessionService.startSocketServer();
+    return StreamSessionManager.startSocketServer();
   }
 
   stopStreamWebSocketServer() {
-    return StreamSessionService.stopSocketServer();
+    return StreamSessionManager.stopSocketServer();
   }
 
   startStreamSession(data: any) {
     const settings = this.getSettings();
-    return StreamSessionService.startSession({
+    return StreamSessionManager.startSession({
       ...data,
       settings,
       targetWebContents: this._application._mainWindow?.webContents || null,
@@ -1250,15 +1250,15 @@ export default class IpcApp extends IpcBase {
   }
 
   stopStreamSession() {
-    return StreamSessionService.stopSession(true);
+    return StreamSessionManager.stopSession(true);
   }
 
   getStreamPerformanceStats() {
-    return Promise.resolve(StreamSessionService.getPerformanceStats());
+    return Promise.resolve(StreamSessionManager.getPerformanceStats());
   }
 
   gotoBedAndStopStreamSession() {
-    return StreamSessionService.gotoBedAndStop(true);
+    return StreamSessionManager.gotoBedAndStop(true);
   }
 
   resetAutoConnect() {

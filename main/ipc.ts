@@ -1,7 +1,7 @@
 import Application from './application'
 import IpcApp from './ipc/app'
 import IpcSettings from './ipc/settings'
-import { StreamSessionService } from './stream/session'
+import { StreamSessionManager } from './stream/serviceManager'
 
 import { ipcMain } from 'electron'
 
@@ -31,11 +31,11 @@ export default class Ipc {
         }
 
         ipcMain.on("stream-control-state", (_event, state) => {
-            StreamSessionService.setControllerStateDirect(state)
+            StreamSessionManager.setControllerStateDirect(state)
         })
 
         ipcMain.on("stream-video-rendered", () => {
-            StreamSessionService.notifyVideoFrameRendered()
+            StreamSessionManager.notifyVideoFrameRendered()
         })
         
     }

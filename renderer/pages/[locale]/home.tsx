@@ -21,6 +21,7 @@ import Layout from "../../components/Layout";
 import Nav from "../../components/Nav";
 import PsnLoginModals from "../../components/PsnLoginModals";
 import StartStreamModals from "../../components/StartStreamModals";
+import { useSettings } from "../../context/userContext";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
 import {
@@ -37,6 +38,7 @@ function Home() {
   const { t: tCommon } = useTranslation("common");
   const router = useRouter();
   const { setTheme } = useTheme();
+  const { settings } = useSettings();
   const [isLogined, setIsLogined] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [consoles, setConsoles] = useState<ConsoleCacheItem[]>([]);
@@ -240,7 +242,11 @@ function Home() {
       PENDING_STREAM_STORAGE_KEY,
       JSON.stringify(pendingConfig)
     );
-    router.push(`/${locale}/stream`);
+    const streamRoute =
+      String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase() === "webcodec"
+        ? "webStream"
+        : "stream";
+    router.push(`/${locale}/${streamRoute}`);
   };
 
   return (

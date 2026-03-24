@@ -156,6 +156,8 @@
   "value_vulkan_title": "Use Vulkan Rendering",
   "value_vulkan_desc": "Enabling Vulkan rendering can improve rendering performance on some devices, but may lead to instability (such as black screen, etc.)",
   "FSR": "FSR",
+  "Stream renderer": "Stream renderer",
+  "Stream renderer desc": "Choose the video decode and render pipeline used for Remote Play. FFmpeg uses the existing rawvideo path. WebCodec uses the browser-native decoder and renderer.",
   "FSR started": "FSR started",
   "FSR_desc": "Enable FSR (FidelityFX Super Resolution) to achieve super-resolution, which can improve image clarity without increasing bandwidth, but will increase CPU/GPU load",
   "fsr_sharpness_title": "FSR Sharpness",

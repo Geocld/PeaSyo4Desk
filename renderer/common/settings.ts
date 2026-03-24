@@ -59,6 +59,16 @@ const getSettingsMetas = (t) => {
         ],
       },
       {
+        name: "stream_renderer",
+        type: "radio",
+        title: t("Stream renderer"),
+        description: t("Stream renderer desc"),
+        data: [
+          { value: "ffmpeg", label: "FFmpeg" },
+          { value: "webcodec", label: "WebCodec" },
+        ],
+      },
+      {
         name: "gamepad_kernel",
         type: "radio",
         title: t("Gamepad input kernel"),

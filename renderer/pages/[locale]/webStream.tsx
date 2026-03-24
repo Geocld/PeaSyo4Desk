@@ -44,6 +44,7 @@ import type {
 const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
+const WS_BINARY_VIDEO_ENCODED = 3;
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
 const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
 const AUDIO_SCHEDULE_LEAD_SEC = 0.04;
@@ -69,6 +70,8 @@ const BRIGHTNESS_DEFAULT = 100;
 const FSR_SHARPNESS_MIN = 0;
 const FSR_SHARPNESS_MAX = 2;
 const FSR_SHARPNESS_STEP = 0.05;
+const WEBCODECS_H264_CODEC_CANDIDATES = ["avc1.640028", "avc1.4d4028", "avc1.42E01E"];
+const WEBCODECS_HEVC_CODEC_CANDIDATES = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
 
 type PendingStreamConfig = {
   streamHost?: string;
@@ -97,6 +100,72 @@ const isLinuxRuntime = () => {
 
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
   return format === "I010" || format === "P010";
+};
+
+const isWebCodecsVideoDecoderAvailable = () => {
+  return typeof VideoDecoder === "function";
+};
+
+const checkWebCodecsCodecSupport = async (codecCandidates: string[]) => {
+  if (!isWebCodecsVideoDecoderAvailable()) {
+    return null;
+  }
+
+  for (const codec of codecCandidates) {
+    try {
+      const support = await VideoDecoder.isConfigSupported({
+        codec,
+        codedWidth: 1280,
+        codedHeight: 720,
+        hardwareAcceleration: "prefer-hardware",
+        optimizeForLatency: true,
+      });
+      if (support?.supported) {
+        return codec;
+      }
+    } catch {
+      // Ignore unsupported codec probes.
+    }
+  }
+
+  return null;
+};
+
+const resolveRequestedStreamCodecFamily = (
+  settings: Record<string, any> | null | undefined,
+  isRemote: boolean
+): StreamCodecFamily => {
+  const rawCodec = String(isRemote ? settings?.remote_codec : settings?.codec || "H265")
+    .trim()
+    .toUpperCase();
+  return rawCodec.includes("264") ? "h264" : "hevc";
+};
+
+const detectClientVideoCapabilities = async (
+  codecFamily: StreamCodecFamily
+): Promise<ClientVideoCapabilities> => {
+  if (!isWebCodecsVideoDecoderAvailable()) {
+    return {
+      webCodecs: false,
+      preferCompressedVideo: false,
+      h264: false,
+      hevc: false,
+    };
+  }
+
+  const [h264Codec, hevcCodec] = await Promise.all([
+    checkWebCodecsCodecSupport(WEBCODECS_H264_CODEC_CANDIDATES),
+    checkWebCodecsCodecSupport(WEBCODECS_HEVC_CODEC_CANDIDATES),
+  ]);
+
+  return {
+    webCodecs: true,
+    preferCompressedVideo: codecFamily === "hevc" ? !!hevcCodec : !!h264Codec,
+    h264: !!h264Codec,
+    hevc: !!hevcCodec,
+    ...(h264Codec ? { h264Codec } : {}),
+    ...(hevcCodec ? { hevcCodec } : {}),
+  };
 };
 
 const GAMEPAD_DEADZONE = 0.12;
@@ -164,6 +233,17 @@ type ControllerStatePayload = {
 type VideoDisplayFormat = "default" | "stretch" | "zoom";
 type ControllerInputKernel = "web" | "node";
 type TouchpadVerticalPosition = "top" | "center" | "bottom";
+type StreamCodecFamily = "h264" | "hevc";
+type StreamVideoTransportMode = "ffmpeg-rawvideo" | "compressed-webcodecs";
+
+type ClientVideoCapabilities = {
+  webCodecs: boolean;
+  preferCompressedVideo: boolean;
+  h264: boolean;
+  hevc: boolean;
+  h264Codec?: string;
+  hevcCodec?: string;
+};
 
 const resolveControllerInputKernel = (settings: Record<string, any> | null | undefined): ControllerInputKernel => {
   const direct = String(settings?.gamepad_kernel || "")
@@ -573,7 +653,10 @@ function StreamPage() {
   const fpsRef = useRef(60);
   const frameSizeRef = useRef(Math.floor((1280 * 720 * 3) / 2));
   const videoFormatRef = useRef<VideoFrameFormat>("NV12");
+  const videoTransportRef = useRef<StreamVideoTransportMode>("ffmpeg-rawvideo");
+  const videoInputFormatRef = useRef<StreamCodecFamily>("hevc");
   const latestFrameRef = useRef<Uint8Array | null>(null);
+  const latestDecodedVideoFrameRef = useRef<VideoFrame | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -626,6 +709,11 @@ function StreamPage() {
   );
   const nativeBinaryTransportRef = useRef(false);
   const nativeVideoFrameRenderedAckPendingRef = useRef(false);
+  const webCodecsCapabilitiesRef = useRef<ClientVideoCapabilities | null>(null);
+  const webCodecsVideoDecoderRef = useRef<VideoDecoder | null>(null);
+  const webCodecsAwaitingKeyFrameRef = useRef(false);
+  const webCodecsTimestampUsRef = useRef(0);
+  const webCodecsCodecStringRef = useRef("");
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
     resolveControllerPollingIntervalMs(defaultSettings.polling_rate)
@@ -884,6 +972,13 @@ function StreamPage() {
     const width = Number(config?.width || widthRef.current);
     const height = Number(config?.height || heightRef.current);
     const fps = Number(config?.fps || fpsRef.current);
+    const transport: StreamVideoTransportMode =
+      config?.transport === "compressed-webcodecs"
+        ? "compressed-webcodecs"
+        : "ffmpeg-rawvideo";
+    const inputFormat = String(config?.inputFormat || "h264")
+      .trim()
+      .toLowerCase();
     const format =
       config?.format === "I010"
         ? "I010"
@@ -901,6 +996,8 @@ function StreamPage() {
     fpsRef.current = fps;
     frameSizeRef.current = frameSize;
     videoFormatRef.current = format;
+    videoTransportRef.current = transport;
+    videoInputFormatRef.current = inputFormat === "hevc" ? "hevc" : "h264";
     setVideoFormat(format);
     imageDataRef.current = null;
     ctxRef.current = null;
@@ -926,6 +1023,25 @@ function StreamPage() {
     updateFsrFrameRendered(false);
     destroyFsrRenderer();
     fsrGpuRenderingDisabledRef.current = false;
+
+    if (transport === "compressed-webcodecs") {
+      destroyHdrRenderer();
+      destroySdrRenderer();
+      try {
+        ensureWebCodecsDecoder(inputFormat);
+      } catch (error) {
+        openSessionAlert(
+          [
+            "WebCodecs video decoder initialization failed.",
+            getErrorMessage(error, "Linux native video decoder initialization failed."),
+          ].join("\n"),
+          t("HdrRendererErrorStatus")
+        );
+      }
+      return;
+    }
+
+    destroyWebCodecsVideoDecoder();
 
     if (!isHdrVideoFormat(format)) {
       destroyHdrRenderer();
@@ -1123,6 +1239,122 @@ function StreamPage() {
     gl.deleteVertexArray(renderer.vertexArray);
     gl.deleteProgram(renderer.program);
     fsrRendererRef.current = null;
+  };
+
+  const clearLatestDecodedVideoFrame = () => {
+    const frame = latestDecodedVideoFrameRef.current;
+    if (!frame) {
+      return;
+    }
+
+    latestDecodedVideoFrameRef.current = null;
+    try {
+      frame.close();
+    } catch {
+      // Ignore stale frame cleanup errors.
+    }
+  };
+
+  const destroyWebCodecsVideoDecoder = () => {
+    clearLatestDecodedVideoFrame();
+    webCodecsAwaitingKeyFrameRef.current = false;
+    webCodecsTimestampUsRef.current = 0;
+    webCodecsCodecStringRef.current = "";
+
+    const decoder = webCodecsVideoDecoderRef.current;
+    webCodecsVideoDecoderRef.current = null;
+    if (!decoder) {
+      return;
+    }
+
+    try {
+      decoder.close();
+    } catch {
+      // Ignore teardown failures from partially initialized decoders.
+    }
+  };
+
+  const enqueueDecodedVideoFrame = (frame: VideoFrame) => {
+    receivedFramesRef.current += 1;
+    if (!sessionConnectedRef.current) {
+      sessionConnectedRef.current = true;
+      setConnectState("connected");
+      setStatus(t("Connected"));
+    }
+
+    if (latestDecodedVideoFrameRef.current) {
+      droppedFramesRef.current += 1;
+      clearLatestDecodedVideoFrame();
+    }
+
+    latestDecodedVideoFrameRef.current = frame;
+    if (!renderLoopScheduledRef.current) {
+      renderLoopScheduledRef.current = true;
+      rafRef.current = requestAnimationFrame(renderLoop);
+    }
+  };
+
+  const resolveWebCodecsCodecString = (inputFormat: string) => {
+    const capabilities = webCodecsCapabilitiesRef.current;
+    if (!capabilities) {
+      return "";
+    }
+
+    if (inputFormat === "hevc") {
+      return capabilities.hevcCodec || "";
+    }
+
+    return capabilities.h264Codec || "";
+  };
+
+  const createWebCodecsDecoder = (inputFormat: string) => {
+    if (!isWebCodecsVideoDecoderAvailable()) {
+      throw new Error("WebCodecs VideoDecoder is not available.");
+    }
+
+    const codec = resolveWebCodecsCodecString(inputFormat);
+    if (!codec) {
+      throw new Error(`No supported WebCodecs codec was detected for ${inputFormat}.`);
+    }
+
+    const decoder = new VideoDecoder({
+      output: (frame) => {
+        enqueueDecodedVideoFrame(frame);
+      },
+      error: (error) => {
+        destroyWebCodecsVideoDecoder();
+        openSessionAlert(
+          [
+            "WebCodecs video decoder failed.",
+            getErrorMessage(error, "Linux native video decoder initialization failed."),
+          ].join("\n"),
+          t("HdrRendererErrorStatus")
+        );
+      },
+    });
+
+    decoder.configure({
+      codec,
+      codedWidth: widthRef.current,
+      codedHeight: heightRef.current,
+      hardwareAcceleration: "prefer-hardware",
+      optimizeForLatency: true,
+    });
+
+    webCodecsCodecStringRef.current = codec;
+    webCodecsVideoDecoderRef.current = decoder;
+    return decoder;
+  };
+
+  const ensureWebCodecsDecoder = (inputFormat: string) => {
+    const codec = resolveWebCodecsCodecString(inputFormat);
+    const currentDecoder = webCodecsVideoDecoderRef.current;
+    if (currentDecoder && webCodecsCodecStringRef.current === codec) {
+      return currentDecoder;
+    }
+
+    destroyWebCodecsVideoDecoder();
+    return createWebCodecsDecoder(inputFormat);
   };
 
   const compileWebglShader = (
@@ -2082,6 +2314,79 @@ function StreamPage() {
     Ipc.sendStreamVideoFrameRendered();
   };
 
+  const handleEncodedVideoSampleBytes = (packetBytes: Uint8Array) => {
+    if (nativeBinaryTransportRef.current) {
+      nativeVideoFrameRenderedAckPendingRef.current = true;
+    }
+
+    if (packetBytes.byteLength < 2) {
+      ackRenderedNativeVideoFrame();
+      return;
+    }
+
+    const flags = packetBytes[0];
+    const isKeyFrame = (flags & 1) !== 0;
+    const sampleBytes = packetBytes.subarray(1);
+    const inputFormat = videoInputFormatRef.current;
+
+    if (sampleBytes.byteLength < 1) {
+      ackRenderedNativeVideoFrame();
+      return;
+    }
+
+    if (webCodecsAwaitingKeyFrameRef.current && !isKeyFrame) {
+      ackRenderedNativeVideoFrame();
+      return;
+    }
+
+    try {
+      let decoder = webCodecsVideoDecoderRef.current;
+      if (!decoder || webCodecsCodecStringRef.current !== resolveWebCodecsCodecString(inputFormat)) {
+        decoder = ensureWebCodecsDecoder(inputFormat);
+      }
+
+      if (decoder.decodeQueueSize > 2) {
+        destroyWebCodecsVideoDecoder();
+        webCodecsAwaitingKeyFrameRef.current = true;
+        if (!isKeyFrame) {
+          ackRenderedNativeVideoFrame();
+          return;
+        }
+        decoder = ensureWebCodecsDecoder(inputFormat);
+      }
+
+      if (webCodecsAwaitingKeyFrameRef.current && isKeyFrame) {
+        webCodecsAwaitingKeyFrameRef.current = false;
+      }
+
+      const timestamp = webCodecsTimestampUsRef.current;
+      webCodecsTimestampUsRef.current += Math.max(
+        1,
+        Math.round(1000000 / Math.max(1, fpsRef.current))
+      );
+
+      decoder.decode(
+        new EncodedVideoChunk({
+          type: isKeyFrame ? "key" : "delta",
+          timestamp,
+          data: sampleBytes,
+        })
+      );
+      ackRenderedNativeVideoFrame();
+    } catch (error) {
+      destroyWebCodecsVideoDecoder();
+      webCodecsAwaitingKeyFrameRef.current = true;
+      ackRenderedNativeVideoFrame();
+      openSessionAlert(
+        [
+          "WebCodecs video decode failed.",
+          getErrorMessage(error, "Linux native video decode failed."),
+        ].join("\n"),
+        t("HdrRendererErrorStatus")
+      );
+    }
+  };
+
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
     if (frameBytes.byteLength !== frameSizeRef.current) {
       return;
@@ -2117,6 +2422,10 @@ function StreamPage() {
     const payload = packetBytes.subarray(1);
     if (kind === WS_BINARY_VIDEO) {
       handleVideoFrameBytes(payload);
+      return;
+    }
+    if (kind === WS_BINARY_VIDEO_ENCODED) {
+      handleEncodedVideoSampleBytes(payload);
       return;
     }
     if (kind === WS_BINARY_AUDIO) {
@@ -2529,6 +2838,53 @@ function StreamPage() {
     rafRef.current = null;
     renderLoopScheduledRef.current = false;
 
+    const decodedVideoFrame = latestDecodedVideoFrameRef.current;
+    if (decodedVideoFrame) {
+      latestDecodedVideoFrameRef.current = null;
+      try {
+        const canvas = canvasRef.current;
+        if (!canvas) {
+          throw new Error("Video canvas is not available.");
+        }
+
+        let ctx = ctxRef.current;
+        if (!ctx) {
+          ctx = canvas.getContext("2d", { alpha: false });
+          if (!ctx) {
+            throw new Error("Failed to acquire a 2D video context.");
+          }
+          ctxRef.current = ctx;
+        }
+
+        ctx.drawImage(decodedVideoFrame, 0, 0, canvas.width, canvas.height);
+
+        if (fsrEnabledRef.current) {
+          drawFsrFrame();
+        }
+        renderedFramesRef.current += 1;
+
+        if (!videoReadyRef.current) {
+          videoReadyRef.current = true;
+          setVideoReady(true);
+          showConnectedToastThenEnableAudio();
+        }
+      } catch (error) {
+        openSessionAlert(
+          [
+            "Linux native video rendering failed.",
+            getErrorMessage(error, "Failed to render the decoded video frame."),
+          ].join("\n"),
+          t("HdrRendererErrorStatus")
+        );
+      } finally {
+        try {
+          decodedVideoFrame.close();
+        } catch {
+          // Ignore already-closed frame handles.
+        }
+      }
+    }
+
     const frame = latestFrameRef.current;
     if (frame) {
       latestFrameRef.current = null;
@@ -2576,7 +2932,10 @@ function StreamPage() {
       }
     }
 
-    if (latestFrameRef.current && !renderLoopScheduledRef.current) {
+    if (
+      (latestFrameRef.current || latestDecodedVideoFrameRef.current) &&
+      !renderLoopScheduledRef.current
+    ) {
       renderLoopScheduledRef.current = true;
       rafRef.current = requestAnimationFrame(renderLoop);
     }
@@ -2601,6 +2960,10 @@ function StreamPage() {
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
         nativeVideoFrameRenderedAckPendingRef.current = false;
+        webCodecsCapabilitiesRef.current = null;
+        videoTransportRef.current = "ffmpeg-rawvideo";
+        videoInputFormatRef.current = "hevc";
+        destroyWebCodecsVideoDecoder();
         controlTransportReadyRef.current = false;
         lastSentControllerStateRef.current = createIdleControllerState();
         lastControllerSendAtRef.current = 0;
@@ -2661,12 +3024,19 @@ function StreamPage() {
         const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
           () => null
         );
+        const requestedCodecFamily = resolveRequestedStreamCodecFamily(
+          settings as Record<string, any>,
+          !!pendingConfig?.isRemote
+        );
+        const clientVideoCapabilities = await detectClientVideoCapabilities(requestedCodecFamily);
+        webCodecsCapabilitiesRef.current = clientVideoCapabilities;
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,
           isRemote: !!pendingConfig?.isRemote,
           consoleInfo: pendingConfig?.consoleInfo || {},
           loginInfo: currentLoginInfo || undefined,
-          sessionType: "ffmpeg",
+          sessionType: "webcodec",
+          clientVideoCapabilities,
         });
         if (!active) return;
 
@@ -2696,6 +3066,10 @@ function StreamPage() {
           const packet = new Uint8Array(buffer, byteOffset, byteLength);
           if (kind === WS_BINARY_VIDEO) {
             handleVideoFrameBytes(packet);
+            return;
+          }
+          if (kind === WS_BINARY_VIDEO_ENCODED) {
+            handleEncodedVideoSampleBytes(packet);
             return;
           }
           if (kind === WS_BINARY_AUDIO) {
@@ -2881,6 +3255,9 @@ function StreamPage() {
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
       nativeVideoFrameRenderedAckPendingRef.current = false;
+      webCodecsCapabilitiesRef.current = null;
+      videoTransportRef.current = "ffmpeg-rawvideo";
+      videoInputFormatRef.current = "hevc";
       if (cleanupRawListener) {
         cleanupRawListener();
         cleanupRawListener = null;
@@ -2906,6 +3283,7 @@ function StreamPage() {
       videoReadyRef.current = false;
       sessionErrorHandledRef.current = false;
       latestFrameRef.current = null;
+      destroyWebCodecsVideoDecoder();
       videoFormatRef.current = "NV12";
       setVideoFormat("NV12");
       setFsrFrameRendered(false);
