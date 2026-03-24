@@ -99,8 +99,11 @@ const WEBCODECS_HEVC_CODEC_CANDIDATES = [
   "hev1.2.4.L120.B0",
 ];
 const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 24;
-const MAX_WEBCODECS_RENDER_QUEUE_STEAMOS = 8;
+const MAX_WEBCODECS_DECODE_QUEUE_STEAMOS = 48;
+const MAX_WEBCODECS_RENDER_QUEUE_STEAMOS = 24;
 const MAX_WEBCODECS_RENDER_QUEUE_DEFAULT = 1;
+const STEAMOS_WEBCODECS_MIN_BUFFER_FRAMES = 8;
+const STEAMOS_WEBCODECS_CLOCK_DELAY_FRAMES = 5;
 
 const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAcceleration"][] => {
   if (isSteamOsRuntime()) {
@@ -151,7 +154,7 @@ const shouldDeferEncodedAckUntilFrameConsumed = () => {
 };
 
 const getWebCodecsDecodeQueueLimit = () => {
-  return isSteamOsRuntime() ? 8 : MAX_WEBCODECS_DECODE_QUEUE_SIZE;
+  return isSteamOsRuntime() ? MAX_WEBCODECS_DECODE_QUEUE_STEAMOS : MAX_WEBCODECS_DECODE_QUEUE_SIZE;
 };
 
 const getWebCodecsRenderQueueLimit = () => {
@@ -162,6 +165,14 @@ const getWebCodecsRenderQueueLimit = () => {
 
 const shouldUseTimestampDrivenWebCodecsRender = () => {
   return isSteamOsRuntime();
+};
+
+const getSteamOsWebCodecsMinBufferFrames = () => {
+  return STEAMOS_WEBCODECS_MIN_BUFFER_FRAMES;
+};
+
+const getSteamOsWebCodecsClockDelayFrames = () => {
+  return STEAMOS_WEBCODECS_CLOCK_DELAY_FRAMES;
 };
 
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
@@ -766,8 +777,10 @@ function StreamPage() {
   const videoInputFormatRef = useRef<StreamCodecFamily>("hevc");
   const latestFrameRef = useRef<Uint8Array | null>(null);
   const decodedVideoFrameQueueRef = useRef<VideoFrame[]>([]);
+  const renderedDecodedVideoFrameRetireQueueRef = useRef<VideoFrame[]>([]);
   const decodedVideoFrameClockWallStartUsRef = useRef(0);
   const decodedVideoFrameClockMediaStartUsRef = useRef(0);
+  const decodedVideoFrameClockPrimedRef = useRef(false);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -1365,6 +1378,7 @@ function StreamPage() {
   const resetDecodedVideoFrameClock = () => {
     decodedVideoFrameClockWallStartUsRef.current = 0;
     decodedVideoFrameClockMediaStartUsRef.current = 0;
+    decodedVideoFrameClockPrimedRef.current = false;
   };
 
   const getVideoFrameTimestampUs = (frame: VideoFrame) => {
@@ -1400,14 +1414,18 @@ function StreamPage() {
     resetDecodedVideoFrameClock();
   };
 
-  const syncDecodedVideoFrameClockToHead = () => {
+  const syncDecodedVideoFrameClockToHead = (delayFrames = 0) => {
     const headFrame = decodedVideoFrameQueueRef.current[0];
     if (!headFrame) {
       resetDecodedVideoFrameClock();
       return;
     }
+    const frameIntervalUs = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
+    const headTimestampUs = getVideoFrameTimestampUs(headFrame) || 0;
+    const delayUs = Math.max(0, delayFrames) * frameIntervalUs;
     decodedVideoFrameClockWallStartUsRef.current = performance.now() * 1000;
-    decodedVideoFrameClockMediaStartUsRef.current = getVideoFrameTimestampUs(headFrame) || 0;
+    decodedVideoFrameClockMediaStartUsRef.current = Math.max(0, headTimestampUs - delayUs);
+    decodedVideoFrameClockPrimedRef.current = true;
   };
 
   const closeDecodedVideoFrame = (frame: VideoFrame) => {
@@ -1416,6 +1434,23 @@ function StreamPage() {
     } catch {
       // Ignore stale frame cleanup errors.
     }
+  };
+
+  const flushRenderedDecodedVideoFrameRetireQueue = (force = false) => {
+    const queue = renderedDecodedVideoFrameRetireQueueRef.current;
+    const keepCount = force ? 0 : 2;
+    while (queue.length > keepCount) {
+      const frame = queue.shift();
+      if (!frame) {
+        continue;
+      }
+      closeDecodedVideoFrame(frame);
+    }
+  };
+
+  const retireRenderedDecodedVideoFrame = (frame: VideoFrame) => {
+    renderedDecodedVideoFrameRetireQueueRef.current.push(frame);
+    flushRenderedDecodedVideoFrameRetireQueue(false);
   };
 
   const scheduleRenderLoop = () => {
@@ -1457,6 +1492,7 @@ function StreamPage() {
 
   const destroyWebCodecsVideoDecoder = () => {
     clearDecodedVideoFrameQueue();
+    flushRenderedDecodedVideoFrameRetireQueue(true);
     webCodecsAwaitingKeyFrameRef.current = false;
     webCodecsTimestampUsRef.current = 0;
     webCodecsCodecStringRef.current = "";
@@ -1503,8 +1539,18 @@ function StreamPage() {
       closeDecodedVideoFrame(droppedFrame);
     }
 
-    if (queue.length === 1 || decodedVideoFrameClockWallStartUsRef.current < 1) {
-      syncDecodedVideoFrameClockToHead();
+    if (!shouldUseTimestampDrivenWebCodecsRender()) {
+      if (queue.length === 1) {
+        resetDecodedVideoFrameClock();
+      }
+    } else {
+      const minBufferFrames = getSteamOsWebCodecsMinBufferFrames();
+      if (
+        !decodedVideoFrameClockPrimedRef.current &&
+        queue.length >= minBufferFrames
+      ) {
+        syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+      }
     }
 
     scheduleRenderLoop();
@@ -3104,6 +3150,7 @@ function StreamPage() {
   const renderLoop = () => {
     rafRef.current = null;
     renderLoopScheduledRef.current = false;
+    flushRenderedDecodedVideoFrameRetireQueue(false);
 
     let decodedVideoFrame: VideoFrame | null = null;
     const decodedFrameQueue = decodedVideoFrameQueueRef.current;
@@ -3120,46 +3167,56 @@ function StreamPage() {
         }
         decodedVideoFrame = decodedFrameQueue.shift() || null;
       } else {
+        const renderQueueLimit = getWebCodecsRenderQueueLimit();
+        while (decodedFrameQueue.length > renderQueueLimit) {
+          const overflowFrame = decodedFrameQueue.shift();
+          if (!overflowFrame) {
+            break;
+          }
+          droppedFramesRef.current += 1;
+          ackRenderedNativeVideoFrame();
+          closeDecodedVideoFrame(overflowFrame);
+        }
+
+        if (!decodedVideoFrameClockPrimedRef.current) {
+          if (decodedFrameQueue.length >= getSteamOsWebCodecsMinBufferFrames()) {
+            syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
+          }
+        }
+
+        if (!decodedVideoFrameClockPrimedRef.current) {
+          // Keep buffering before first present to smooth frame pacing on SteamOS.
+          decodedVideoFrame = null;
+        } else {
         const frameIntervalUs = Math.max(1, Math.round(1000000 / Math.max(1, fpsRef.current)));
         if (decodedVideoFrameClockWallStartUsRef.current < 1) {
-          syncDecodedVideoFrameClockToHead();
+          syncDecodedVideoFrameClockToHead(getSteamOsWebCodecsClockDelayFrames());
         }
 
         const mediaNowUs =
           decodedVideoFrameClockMediaStartUsRef.current +
           (performance.now() * 1000 - decodedVideoFrameClockWallStartUsRef.current);
 
-        while (decodedFrameQueue.length > 1) {
-          const nextFrame = decodedFrameQueue[1];
-          const nextFrameTimestampUs = getVideoFrameTimestampUs(nextFrame);
-          const shouldDropStaleFrame =
-            decodedFrameQueue.length > getWebCodecsRenderQueueLimit() ||
-            (nextFrameTimestampUs !== null && nextFrameTimestampUs <= mediaNowUs + frameIntervalUs / 2);
-          if (!shouldDropStaleFrame) {
-            break;
-          }
-
-          const staleFrame = decodedFrameQueue.shift();
-          if (!staleFrame) {
-            break;
-          }
-          droppedFramesRef.current += 1;
-          ackRenderedNativeVideoFrame();
-          closeDecodedVideoFrame(staleFrame);
-        }
-
         const headFrame = decodedFrameQueue[0];
         if (headFrame) {
           const headFrameTimestampUs = getVideoFrameTimestampUs(headFrame);
           const shouldRenderNow =
-            decodedFrameQueue.length > getWebCodecsRenderQueueLimit() ||
             headFrameTimestampUs === null ||
             headFrameTimestampUs <= mediaNowUs + frameIntervalUs / 2;
           if (shouldRenderNow) {
             decodedVideoFrame = decodedFrameQueue.shift() || null;
           }
         }
+        }
       }
+    }
+    if (
+      shouldUseTimestampDrivenWebCodecsRender() &&
+      decodedFrameQueue.length < 1 &&
+      !decodedVideoFrame &&
+      decodedVideoFrameClockPrimedRef.current
+    ) {
+      resetDecodedVideoFrameClock();
     }
 
     if (decodedVideoFrame) {
@@ -3206,7 +3263,7 @@ function StreamPage() {
           t("HdrRendererErrorStatus")
         );
       } finally {
-        closeDecodedVideoFrame(decodedVideoFrame);
+        retireRenderedDecodedVideoFrame(decodedVideoFrame);
       }
     }
 
