@@ -740,8 +740,16 @@ const resolveInputFormat = (codec: number) => {
 };
 
 const getSoftwareVideoDecoderInputOptions = () => {
-  const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
   const inputFormat = streamVideoConfig?.inputFormat;
+  const options: string[] = IS_LINUX && inputFormat === "hevc"
+    ? [
+        "-fflags +genpts+nobuffer",
+        "-avioflags direct",
+        "-probesize 32",
+        "-analyzeduration 0",
+        "-flags low_delay",
+      ]
+    : ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
 
   if (IS_WINDOWS) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
@@ -749,7 +757,9 @@ const getSoftwareVideoDecoderInputOptions = () => {
   }
 
   if (IS_LINUX && inputFormat === "hevc") {
-    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
+    // Favor slice threading on Linux HEVC so FFmpeg keeps throughput without
+    // building extra frame-thread latency inside the software decoder.
+    options.push("-thread_type slice");
     options.push("-threads 0");
   }
 
