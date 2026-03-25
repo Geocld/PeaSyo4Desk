@@ -1,3 +1,10 @@
+(deck@steamdeck Downloads)$ flatpak run io.github.Geocld.PeaSyo4Desk
+[3:0325/181322.339133:ERROR:dbus/bus.cc:408] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: 没有那个文件或目录
+/app/main/resources/app.asar/app/background.js[constructor()] Starting PeaSyo v1.0.2
+Prevent sleep state:true
+Gtk-Message: 18:13:22.876: Failed to load module "canberra-gtk-module"
+[3:0325/181322.931157:ERROR:dbus/bus.cc:408] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: 没有那个文件或目录
+[3:0325/181322.931301:ERROR:dbus/bus.cc:408] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: 没有那个文件或目录
 application.ts settings: {
   locale: 'en',
   fullscreen: false,
@@ -98,7 +105,7 @@ application.ts settings: {
 [stream-service] [session:1] attach stream webContents { attached: true, webContentsId: 1 }
 [stream-service] controller kernel: web
 [stream-service] [session:1] resolved ffmpeg session options {
-  wsPort: 43415,
+  wsPort: 43777,
   wsReused: false,
   host: '2408:8256:348b:135c::1',
   resolution: '1920x1080',
@@ -148,7 +155,7 @@ Error parsing global options: Invalid argument
 Failed to set value '/dev/dri/renderD128' for option 'vaapi_device': Invalid argument
 Error parsing global options: Invalid argument
 ), falling back to software decode
-[stream-service] ffmpeg video decoder started (software): ffmpeg -f hevc -fflags +genpts -probesize 32 -analyzeduration 0 -threads 0 -i pipe:0 -fflags nobuffer -flags low_delay -vsync 0 -an -sn -dn -pix_fmt yuv420p -f rawvideo -vcodec rawvideo pipe:1
+[stream-service] ffmpeg video decoder started (software): ffmpeg -f hevc -fflags +genpts+nobuffer -avioflags direct -probesize 32 -analyzeduration 0 -flags low_delay -thread_type slice -threads 0 -i pipe:0 -fflags nobuffer -flags low_delay -vsync 0 -an -sn -dn -pix_fmt yuv420p -f rawvideo -vcodec rawvideo pipe:1
 [stream-service] ffmpeg audio decoder started: ffmpeg -f ogg -fflags +genpts -i pipe:0 -ac 2 -ar 48000 -acodec pcm_f32le -fflags nobuffer -flags low_delay -vn -sn -dn -f f32le pipe:1
 [stream-service] [session:1] send audio config to client {
   sendCount: 2,
@@ -162,800 +169,125 @@ Error parsing global options: Invalid argument
 [stream-service] [session:1] cached video config sample { cacheCount: 1, sampleBytes: 92, inputFormat: 'hevc' }
 [stream-service] [session:1] drop video sample while waiting for next sync frame { dropCount: 1, sampleBytes: 92, hasConfig: true, hasSlice: false }
 [stream-service] [session:1] received sync frame while waiting for decoder resync {
-  sampleBytes: 102370,
+  sampleBytes: 100646,
   hasConfig: false,
   hasSlice: true,
   pendingSampleBytes: 0
 }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1,
-  bytes: 3110400,
-  inFlight: 0,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] posted native video frame {
-  postCount: 3,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 2,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 3,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 3, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 1,
-  pendingVideoSampleCount: 0,
-  pendingVideoSampleBytes: 0,
-  ffmpegBufferedBytes: 182060,
-  estimatedQueuedVideoInputMs: 24,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 2,
-  pendingVideoSampleCount: 0,
-  pendingVideoSampleBytes: 0,
-  ffmpegBufferedBytes: 162922,
-  estimatedQueuedVideoInputMs: 21,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 3,
-  pendingVideoSampleCount: 0,
-  pendingVideoSampleBytes: 0,
-  ffmpegBufferedBytes: 172935,
-  estimatedQueuedVideoInputMs: 23,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 60,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 120,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 120,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 120, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 120,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 60,
-  pendingVideoSampleCount: 19,
-  pendingVideoSampleBytes: 1050610,
-  ffmpegBufferedBytes: 179725,
-  estimatedQueuedVideoInputMs: 162,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 240,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 180,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 240,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 240, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 240,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 360,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 300,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 120,
-  pendingVideoSampleCount: 18,
-  pendingVideoSampleBytes: 1025320,
-  ffmpegBufferedBytes: 164292,
-  estimatedQueuedVideoInputMs: 156,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 360,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 360, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 480,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 360,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 420,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 180,
-  pendingVideoSampleCount: 4,
-  pendingVideoSampleBytes: 281530,
-  ffmpegBufferedBytes: 139278,
-  estimatedQueuedVideoInputMs: 55,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 600,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 480,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 480, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 480,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 720,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 240,
-  pendingVideoSampleCount: 5,
-  pendingVideoSampleBytes: 372840,
-  ffmpegBufferedBytes: 146396,
-  estimatedQueuedVideoInputMs: 68,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 600,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 600, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 540,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 840,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 600,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 720,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 720, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 300,
-  pendingVideoSampleCount: 0,
-  pendingVideoSampleBytes: 0,
-  ffmpegBufferedBytes: 145890,
-  estimatedQueuedVideoInputMs: 19,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 660,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 960,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 840,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 840, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1080,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 720,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 780,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 960,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 960, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1200,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 360,
-  pendingVideoSampleCount: 3,
-  pendingVideoSampleBytes: 223316,
-  ffmpegBufferedBytes: 153639,
-  estimatedQueuedVideoInputMs: 50,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1320,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1080,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1080, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 840,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1440,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 420,
-  pendingVideoSampleCount: 11,
-  pendingVideoSampleBytes: 878198,
-  ffmpegBufferedBytes: 160127,
-  estimatedQueuedVideoInputMs: 137,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1200,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1200, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 900,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 960,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1560,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 480,
-  pendingVideoSampleCount: 0,
-  pendingVideoSampleBytes: 0,
-  ffmpegBufferedBytes: 160383,
-  estimatedQueuedVideoInputMs: 21,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1320,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1320, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1020,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1680,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1080,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1440,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1440, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1800,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1140,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 540,
-  pendingVideoSampleCount: 8,
-  pendingVideoSampleBytes: 647152,
-  ffmpegBufferedBytes: 196157,
-  estimatedQueuedVideoInputMs: 111,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1200,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1560,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1560, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 1920,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1260,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 600,
-  pendingVideoSampleCount: 2,
-  pendingVideoSampleBytes: 99140,
-  ffmpegBufferedBytes: 155944,
-  estimatedQueuedVideoInputMs: 34,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2040,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1680,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1680, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1320,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1380,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2160,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1800,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1800, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1440,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2280,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 1920,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 1920, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1500,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2400,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1560,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2040,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2040, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2520,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1620,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2160,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2160, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1680,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2640,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1740,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2280,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2280, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2760,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1800,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 2880,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2400,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2400, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1860,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 660,
-  pendingVideoSampleCount: 5,
-  pendingVideoSampleBytes: 389400,
-  ffmpegBufferedBytes: 156678,
-  estimatedQueuedVideoInputMs: 72,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3000,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2520,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2520, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1920,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 720,
-  pendingVideoSampleCount: 5,
-  pendingVideoSampleBytes: 427116,
-  ffmpegBufferedBytes: 164644,
-  estimatedQueuedVideoInputMs: 78,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3120,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2640,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2640, inFlight: 1, hasPendingBroadcastFrame: true }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 1980,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 780,
-  pendingVideoSampleCount: 4,
-  pendingVideoSampleBytes: 318422,
-  ffmpegBufferedBytes: 165175,
-  estimatedQueuedVideoInputMs: 64,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3240,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 2040,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2760,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2760, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 840,
-  pendingVideoSampleCount: 6,
-  pendingVideoSampleBytes: 444885,
-  ffmpegBufferedBytes: 154953,
-  estimatedQueuedVideoInputMs: 79,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3360,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 2100,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] posted native video frame {
-  postCount: 2880,
-  bytes: 3110400,
-  inFlight: 1,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] ffmpeg video input backpressure {
-  count: 900,
-  pendingVideoSampleCount: 7,
-  pendingVideoSampleBytes: 549545,
-  ffmpegBufferedBytes: 155204,
-  estimatedQueuedVideoInputMs: 93,
-  decoderPlan: 'software',
-  highWaterMark: 131072
-}
-[stream-service] [session:1] received native video frame rendered ack { ackCount: 2880, inFlight: 1, hasPendingBroadcastFrame: false }
-[stream-service] [session:1] native video frame blocked by in-flight limit {
-  blockedCount: 2160,
-  inFlight: 2,
-  maxFramesInFlight: 2,
-  pendingBroadcastFrameBytes: 3110400
-}
-[stream-service] [session:1] decoded video frame ready for broadcast {
-  frameCount: 3480,
-  frameBytes: 3110400,
-  pendingDecodedBytes: 0,
-  decoderPlan: 'software'
-}
 [stream-service] [session:1] stopSession requested {
   closeSocketServer: true,
   wsClientCount: 1,
-  nativeVideoFramesInFlight: 2,
-  pendingVideoSampleBytes: 718711,
-  pendingDecodedBytes: 1966080
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
 }
 [stream-service] [session:1] cleanup session resources {
   wsClientCount: 1,
   streamSessionStarted: true,
-  nativeVideoFramesInFlight: 2,
-  pendingVideoSampleBytes: 718711,
-  pendingDecodedBytes: 1966080
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
 }
 [stream-service] [session:1] session event { name: 'quit', reason: 'Stopped' }
+[stream-service] [session:1] drop video sample because decoder input is not writable {
+  dropCount: 1,
+  sampleBytes: 69487,
+  hasFfmpegInput: false,
+  ffmpegInputWritable: false
+}
+[stream-service] ffmpeg audio decoder error: ffmpeg was killed with signal SIGKILL
+[stream-service] [session:1] stopSession requested {
+  closeSocketServer: true,
+  wsClientCount: 0,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}
+[stream-service] [session:1] cleanup session resources {
+  wsClientCount: 0,
+  streamSessionStarted: false,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}
+[stream-service] [session:2] startSession requested {
+  streamHost: '2408:8256:348b:135c::1',
+  isRemote: true,
+  targetWebContentsAttached: true,
+  existingSessionStarted: false
+}
+[stream-service] [session:2] attach stream webContents { attached: true, webContentsId: 1 }
+[stream-service] controller kernel: web
+[stream-service] [session:2] resolved ffmpeg session options {
+  wsPort: 42753,
+  wsReused: false,
+  host: '2408:8256:348b:135c::1',
+  resolution: '1920x1080',
+  fps: 60,
+  bitrate: 58000,
+  codec: 'H265',
+  inputFormat: 'hevc',
+  outputFormat: 'I420',
+  frameSize: 3110400,
+  nativeBinaryAvailable: true
+}
+[stream-service] ffmpeg video decoder started (software): ffmpeg -f hevc -fflags +genpts+nobuffer -avioflags direct -probesize 32 -analyzeduration 0 -flags low_delay -thread_type slice -threads 0 -i pipe:0 -fflags nobuffer -flags low_delay -vsync 0 -an -sn -dn -pix_fmt yuv420p -f rawvideo -vcodec rawvideo pipe:1
+[stream-service] [session:2] websocket client connected {
+  connectionCount: 1,
+  clientCount: 1,
+  hasVideoConfig: true,
+  hasAudioConfig: false,
+  nativeBinaryAvailable: true
+}
+[stream-service] [session:2] send video config to client {
+  sendCount: 1,
+  clientCount: 1,
+  width: 1920,
+  height: 1080,
+  fps: 60,
+  format: 'I420',
+  frameSize: 3110400,
+  inputFormat: 'hevc'
+}
+[stream-service] [session:2] send audio config to client { sendCount: 1, clientCount: 1, enabled: false }
+[stream-service] ffmpeg audio decoder started: ffmpeg -f ogg -fflags +genpts -i pipe:0 -ac 2 -ar 48000 -acodec pcm_f32le -fflags nobuffer -flags low_delay -vn -sn -dn -f f32le pipe:1
+[stream-service] [session:2] send audio config to client {
+  sendCount: 2,
+  clientCount: 1,
+  enabled: true,
+  channels: 2,
+  rate: 48000,
+  frameSamples: 480
+}
+[stream-service] [session:2] session event { name: 'connected', reason: '' }
+[stream-service] [session:2] cached video config sample { cacheCount: 1, sampleBytes: 92, inputFormat: 'hevc' }
+[stream-service] [session:2] stopSession requested {
+  closeSocketServer: true,
+  wsClientCount: 1,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}
+[stream-service] [session:2] cleanup session resources {
+  wsClientCount: 1,
+  streamSessionStarted: true,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}
+[stream-service] [session:2] session event { name: 'quit', reason: 'Stopped' }
+[stream-service] ffmpeg audio decoder error: ffmpeg was killed with signal SIGKILL
+[stream-service] [session:2] stopSession requested {
+  closeSocketServer: true,
+  wsClientCount: 0,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}
+[stream-service] [session:2] cleanup session resources {
+  wsClientCount: 0,
+  streamSessionStarted: false,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 0
+}

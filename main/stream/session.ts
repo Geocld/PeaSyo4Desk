@@ -741,15 +741,7 @@ const resolveInputFormat = (codec: number) => {
 
 const getSoftwareVideoDecoderInputOptions = () => {
   const inputFormat = streamVideoConfig?.inputFormat;
-  const options: string[] = IS_LINUX && inputFormat === "hevc"
-    ? [
-        "-fflags +genpts+nobuffer",
-        "-avioflags direct",
-        "-probesize 32",
-        "-analyzeduration 0",
-        "-flags low_delay",
-      ]
-    : ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
+  const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
 
   if (IS_WINDOWS) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
@@ -757,9 +749,7 @@ const getSoftwareVideoDecoderInputOptions = () => {
   }
 
   if (IS_LINUX && inputFormat === "hevc") {
-    // Favor slice threading on Linux HEVC so FFmpeg keeps throughput without
-    // building extra frame-thread latency inside the software decoder.
-    options.push("-thread_type slice");
+    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
     options.push("-threads 0");
   }
 
@@ -2102,6 +2092,24 @@ const destroyVideoPipeline = () => {
   videoDecoderRecoveryInProgress = false;
 };
 
+const getMaxNativeVideoFramesInFlight = () => {
+  if (streamVideoConfig?.isHdr) {
+    return 1;
+  }
+
+  if (!IS_LINUX || activeVideoDecoderPlanName !== "software") {
+    return MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT;
+  }
+
+  const decoderInputBacklogBytes =
+    pendingVideoSampleBytes + (ffmpegInput?.writableLength || 0);
+
+  // Prefer a single frame in steady state to shave display latency on Linux
+  // software decode, but temporarily allow a second in-flight frame once the
+  // compressed decoder input backlog is clearly building.
+  return decoderInputBacklogBytes > 512 * 1024 ? 2 : 1;
+};
+
 const flushPendingVideoBroadcastFrame = () => {
   videoBroadcastFlushScheduled = false;
   const frame = pendingVideoBroadcastFrame;
@@ -2112,9 +2120,7 @@ const flushPendingVideoBroadcastFrame = () => {
 
   if (canUseNativeStreamBinary()) {
     const now = Date.now();
-    const maxFramesInFlight = streamVideoConfig?.isHdr
-      ? 1
-      : MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT;
+    const maxFramesInFlight = getMaxNativeVideoFramesInFlight();
     if (
       nativeVideoFramesInFlight > 0 &&
       now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
