@@ -29,13 +29,13 @@ const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
 const MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT = 1;
 const NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS = IS_WINDOWS ? 100 : IS_LINUX ? 120 : 250;
 const NATIVE_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = IS_WINDOWS ? 350 : IS_LINUX ? 500 : 500;
-const STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = 500;
+const STEAMOS_ENCODED_VIDEO_SAMPLE_ACK_TIMEOUT_MS = 700;
 type SteamOsWebCodecsProfile = "balanced" | "stable" | "ultra-stable";
 const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
 const STEAMOS_NATIVE_ENCODED_VIDEO_SAMPLES_IN_FLIGHT: Record<SteamOsWebCodecsProfile, number> = {
-  balanced: 3,
-  stable: 4,
-  "ultra-stable": 6,
+  balanced: 8,
+  stable: 12,
+  "ultra-stable": 16,
 };
 const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LINUX ? 512 * 1024 : 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;

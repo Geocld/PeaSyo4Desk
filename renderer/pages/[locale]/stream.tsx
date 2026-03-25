@@ -582,7 +582,9 @@ function StreamPage() {
   const fpsRef = useRef(60);
   const frameSizeRef = useRef(Math.floor((1280 * 720 * 3) / 2));
   const videoFormatRef = useRef<VideoFrameFormat>("NV12");
+  const videoConfigReceivedRef = useRef(false);
   const latestFrameRef = useRef<Uint8Array | null>(null);
+  const pendingNativeVideoFrameBeforeConfigRef = useRef<Uint8Array | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const sdrRendererRef = useRef<SdrWebglRenderer | null>(null);
@@ -917,6 +919,7 @@ function StreamPage() {
     fpsRef.current = fps;
     frameSizeRef.current = frameSize;
     videoFormatRef.current = format;
+    videoConfigReceivedRef.current = true;
     setVideoFormat(format);
     imageDataRef.current = null;
     ctxRef.current = null;
@@ -951,6 +954,20 @@ function StreamPage() {
 
     if (isHdrVideoFormat(format) && !window.WebGL2RenderingContext) {
       openSessionAlert(t("HdrWebgl2Required"));
+    }
+
+    if (isLinuxRuntime()) {
+      const pendingFrame = pendingNativeVideoFrameBeforeConfigRef.current;
+      if (pendingFrame && pendingFrame.byteLength === frameSize) {
+        pendingNativeVideoFrameBeforeConfigRef.current = null;
+        latestFrameRef.current = pendingFrame;
+        if (!renderLoopScheduledRef.current) {
+          renderLoopScheduledRef.current = true;
+          rafRef.current = requestAnimationFrame(renderLoop);
+        }
+      } else if (pendingFrame) {
+        pendingNativeVideoFrameBeforeConfigRef.current = null;
+      }
     }
   };
 
@@ -2104,6 +2121,15 @@ function StreamPage() {
   };
 
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
+    const shouldUseLinuxImmediateNativeAck =
+      isLinuxRuntime() && nativeBinaryTransportRef.current;
+
+    if (shouldUseLinuxImmediateNativeAck && !videoConfigReceivedRef.current) {
+      pendingNativeVideoFrameBeforeConfigRef.current = new Uint8Array(frameBytes);
+      Ipc.sendStreamVideoFrameRendered();
+      return;
+    }
+
     if (frameBytes.byteLength !== frameSizeRef.current) {
       if (nativeBinaryTransportRef.current) {
         Ipc.sendStreamVideoFrameRendered();
@@ -2124,7 +2150,11 @@ function StreamPage() {
 
     latestFrameRef.current = frameBytes;
     if (nativeBinaryTransportRef.current) {
-      nativeVideoFrameRenderedAckPendingRef.current = true;
+      if (shouldUseLinuxImmediateNativeAck) {
+        Ipc.sendStreamVideoFrameRendered();
+      } else {
+        nativeVideoFrameRenderedAckPendingRef.current = true;
+      }
     }
     if (!renderLoopScheduledRef.current) {
       renderLoopScheduledRef.current = true;
@@ -2664,6 +2694,7 @@ function StreamPage() {
         connectedToastShownRef.current = false;
         sessionConnectedRef.current = false;
         videoReadyRef.current = false;
+        videoConfigReceivedRef.current = false;
         sessionErrorHandledRef.current = false;
         audioPlaybackEnabledRef.current = false;
         nextAudioTimeRef.current = 0;
@@ -2693,6 +2724,8 @@ function StreamPage() {
         setAudioMutedState(false);
         setAudioAvailable(false);
         audioAvailableRef.current = false;
+        latestFrameRef.current = null;
+        pendingNativeVideoFrameBeforeConfigRef.current = null;
         setSessionAlert(null);
 
         const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
@@ -2972,8 +3005,10 @@ function StreamPage() {
       clearPressedKeyboardKeys();
       sessionConnectedRef.current = false;
       videoReadyRef.current = false;
+      videoConfigReceivedRef.current = false;
       sessionErrorHandledRef.current = false;
       latestFrameRef.current = null;
+      pendingNativeVideoFrameBeforeConfigRef.current = null;
       videoFormatRef.current = "NV12";
       setVideoFormat("NV12");
       setFsrFrameRendered(false);
