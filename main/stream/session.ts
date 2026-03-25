@@ -237,6 +237,7 @@ let streamVideoConfig: VideoConfig | null = null;
 let ffmpegInput: PassThrough | null = null;
 let ffmpegCommand: any = null;
 let ffmpegOutput: any = null;
+let activeVideoPipelineGeneration = 0;
 let ffmpegInputBlocked = false;
 let activeVideoDecoderPlanName: VideoDecoderPlan["name"] = "software";
 let videoDecoderRecoveryInProgress = false;
@@ -2015,6 +2016,8 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
 };
 
 const destroyVideoPipeline = () => {
+  activeVideoPipelineGeneration += 1;
+  const outputToDestroy = ffmpegOutput;
   clearPendingVideoSampleQueue();
   pendingChunks.length = 0;
   pendingBytes = 0;
@@ -2050,6 +2053,18 @@ const destroyVideoPipeline = () => {
   }
 
   ffmpegOutput = null;
+  if (outputToDestroy) {
+    try {
+      outputToDestroy.removeAllListeners?.();
+    } catch {
+      // ignore
+    }
+    try {
+      outputToDestroy.destroy?.();
+    } catch {
+      // ignore
+    }
+  }
   activeVideoDecoderPlanName = "software";
   videoDecoderRecoveryInProgress = false;
 };
@@ -2297,6 +2312,7 @@ const createVideoDecodePipeline = () => {
   }
 
   destroyVideoPipeline();
+  const pipelineGeneration = activeVideoPipelineGeneration;
   const decoderPlan = buildVideoDecoderPlan();
   activeVideoDecoderPlanName = decoderPlan.name;
 
@@ -2316,21 +2332,42 @@ const createVideoDecodePipeline = () => {
     .outputOptions("-pix_fmt", streamVideoConfig.outputPixelFormat)
     .outputOptions("-f", "rawvideo")
     .outputOptions("-vcodec", "rawvideo")
-    .on("start", (cmd) => log(`ffmpeg video decoder started (${decoderPlan.name}):`, cmd))
+    .on("start", (cmd) => {
+      if (pipelineGeneration !== activeVideoPipelineGeneration) {
+        return;
+      }
+      log(`ffmpeg video decoder started (${decoderPlan.name}):`, cmd);
+    })
     .on("error", (error) => {
+      if (pipelineGeneration !== activeVideoPipelineGeneration) {
+        return;
+      }
       const message = error?.message || String(error);
       log("ffmpeg video decoder error:", message);
       fallbackVideoDecoderToSoftware(message);
     })
-    .on("end", () => log("ffmpeg video decoder ended"));
+    .on("end", () => {
+      if (pipelineGeneration !== activeVideoPipelineGeneration) {
+        return;
+      }
+      log("ffmpeg video decoder ended");
+    });
 
   if (decoderPlan.filterGraph) {
     ffmpegCommand.outputOptions("-vf", decoderPlan.filterGraph);
   }
 
   ffmpegOutput = ffmpegCommand.pipe();
-  ffmpegOutput.on("data", handleDecodedVideoChunk);
+  ffmpegOutput.on("data", (chunk: Buffer) => {
+    if (pipelineGeneration !== activeVideoPipelineGeneration) {
+      return;
+    }
+    handleDecodedVideoChunk(chunk);
+  });
   ffmpegOutput.on("error", (error) => {
+    if (pipelineGeneration !== activeVideoPipelineGeneration) {
+      return;
+    }
     log("ffmpeg video output error:", error?.message || String(error));
   });
 };
