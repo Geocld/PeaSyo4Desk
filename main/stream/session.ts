@@ -854,7 +854,11 @@ const getVideoDecoderInputHighWatermarkBytes = () => {
       return 512 * 1024;
     }
 
-    return streamVideoConfig.inputFormat === "hevc" ? 256 * 1024 : 192 * 1024;
+    // Keep the Linux HEVC decoder pipe shallow so backlog stays visible in
+    // pendingVideoSamples instead of accumulating invisibly inside the
+    // PassThrough/ffmpeg stdin buffer, which otherwise adds latency before the
+    // sync-trim recovery logic can react.
+    return streamVideoConfig.inputFormat === "hevc" ? 128 * 1024 : 192 * 1024;
   }
 
   return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
@@ -1060,6 +1064,20 @@ const shouldResyncVideoDecoderOnBacklog = () => {
   return true;
 };
 
+const getEstimatedQueuedVideoInputMs = (queuedBytes: number) => {
+  const bitrateMbps = Number(streamVideoConfig?.bitrate || 0) / 1000;
+  if (!(bitrateMbps > 0) || queuedBytes < 1) {
+    return 0;
+  }
+
+  const bytesPerSecond = (bitrateMbps * 1024 * 1024) / 8;
+  if (!(bytesPerSecond > 0)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((queuedBytes / bytesPerSecond) * 1000));
+};
+
 const clearPendingVideoSampleQueue = () => {
   pendingVideoSamples.length = 0;
   pendingVideoSampleBytes = 0;
@@ -1107,10 +1125,15 @@ const keepSamplesFromLatestSync = (samples: QueuedVideoSample[]): VideoSampleSyn
 const recreateVideoDecodePipelineForSync = (reason: string) => {
   const keptSamples = pendingVideoSamples.slice();
   const { samples: nextQueue, hasSyncFrame } = keepSamplesFromLatestSync(keptSamples);
+  const ffmpegBufferedBytes = ffmpegInput?.writableLength || 0;
   streamDebugLog("recreate video decode pipeline for sync", {
     reason,
     keptSampleCount: keptSamples.length,
     keptSampleBytes: pendingVideoSampleBytes,
+    ffmpegBufferedBytes,
+    estimatedQueuedVideoInputMs: getEstimatedQueuedVideoInputMs(
+      pendingVideoSampleBytes + ffmpegBufferedBytes
+    ),
     nextQueueCount: nextQueue.length,
     hasSyncFrame,
     hasCachedConfig: !!cachedVideoConfigSample,
@@ -2387,6 +2410,7 @@ const flushPendingVideoSamples = () => {
     if (!ok) {
       ffmpegInputBlocked = true;
       streamDebugCounters.videoInputBackpressureCount += 1;
+      const ffmpegBufferedBytes = ffmpegInput.writableLength;
       if (
         streamDebugCounters.videoInputBackpressureCount <= 3 ||
         streamDebugCounters.videoInputBackpressureCount % 60 === 0
@@ -2395,6 +2419,10 @@ const flushPendingVideoSamples = () => {
           count: streamDebugCounters.videoInputBackpressureCount,
           pendingVideoSampleCount: pendingVideoSamples.length,
           pendingVideoSampleBytes,
+          ffmpegBufferedBytes,
+          estimatedQueuedVideoInputMs: getEstimatedQueuedVideoInputMs(
+            pendingVideoSampleBytes + ffmpegBufferedBytes
+          ),
           decoderPlan: activeVideoDecoderPlanName,
           highWaterMark: ffmpegInput.writableHighWaterMark,
         });
