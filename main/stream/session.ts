@@ -31,9 +31,10 @@ const VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES = IS_WINDOWS ? 256 * 1024 : IS_LI
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MIN = 256 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_BYTES_MAX = 8 * 1024 * 1024;
 const MAX_PENDING_VIDEO_SAMPLE_SECONDS = IS_WINDOWS ? 0.2 : IS_LINUX ? 0.16 : 0.22;
-const SDR_STREAM_FORMAT = "NV12";
+type SdrStreamFormat = "I420" | "NV12";
+const SDR_STREAM_FORMAT: SdrStreamFormat = IS_LINUX ? "I420" : "NV12";
 const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
-const SDR_PIXEL_FORMAT = "nv12";
+const SDR_PIXEL_FORMAT: "yuv420p" | "nv12" = IS_LINUX ? "yuv420p" : "nv12";
 const HDR_PIXEL_FORMAT: "p010le" | "yuv420p10le" = "yuv420p10le";
 
 const BUTTONS = (chiaki as any).controllerButtons || {
@@ -130,7 +131,7 @@ type StreamSessionSettings = {
 
 type ControllerKernel = "web" | "node";
 
-type StreamPixelFormat = typeof SDR_STREAM_FORMAT | typeof HDR_STREAM_FORMAT;
+type StreamPixelFormat = SdrStreamFormat | typeof HDR_STREAM_FORMAT;
 
 type StartStreamSessionArgs = {
   streamHost?: string;
@@ -684,17 +685,25 @@ const resolveInputFormat = (codec: number) => {
 };
 
 const getSoftwareVideoDecoderInputOptions = () => {
+  if (IS_LINUX) {
+    return [
+      "-fflags +genpts+nobuffer",
+      "-avioflags direct",
+      "-probesize 32",
+      "-analyzeduration 0",
+      "-flags low_delay",
+      // Prefer slice threading on Linux so software decode can stay parallel
+      // without introducing extra frame-thread latency.
+      "-thread_type slice",
+      "-threads 0",
+    ];
+  }
+
   const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
-  const inputFormat = streamVideoConfig?.inputFormat;
 
   if (IS_WINDOWS) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
     options.push("-threads 1");
-  }
-
-  if (IS_LINUX && inputFormat === "hevc") {
-    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
-    options.push("-threads 0");
   }
 
   return options;
@@ -793,8 +802,12 @@ const getVideoDecoderInputHighWatermarkBytes = () => {
     return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
   }
 
-  if (IS_LINUX && streamVideoConfig.isHdr) {
-    return 512 * 1024;
+  if (IS_LINUX) {
+    if (streamVideoConfig.isHdr) {
+      return 512 * 1024;
+    }
+
+    return streamVideoConfig.inputFormat === "hevc" ? 256 * 1024 : 192 * 1024;
   }
 
   return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
@@ -2013,37 +2026,61 @@ const trimPendingDecodedFrames = (frameSize: number) => {
   discardPendingDecodedBytes(framesToDrop * frameSize);
 };
 
+const shiftPendingDecodedFrame = (frameSize: number, isHdr: boolean) => {
+  if (frameSize < 1 || pendingBytes < frameSize || pendingChunks.length < 1) {
+    return null;
+  }
+
+  const head = pendingChunks[0];
+  if (head.length >= frameSize) {
+    pendingBytes -= frameSize;
+    if (head.length === frameSize) {
+      pendingChunks.shift();
+      return head;
+    }
+
+    pendingChunks[0] = head.subarray(frameSize);
+    return head.subarray(0, frameSize);
+  }
+
+  const frame = isHdr ? Buffer.allocUnsafeSlow(frameSize) : Buffer.allocUnsafe(frameSize);
+  let copied = 0;
+
+  while (copied < frameSize && pendingChunks.length > 0) {
+    const chunk = pendingChunks[0];
+    const need = frameSize - copied;
+    if (chunk.length <= need) {
+      chunk.copy(frame, copied);
+      copied += chunk.length;
+      pendingChunks.shift();
+    } else {
+      chunk.copy(frame, copied, 0, need);
+      pendingChunks[0] = chunk.subarray(need);
+      copied += need;
+    }
+  }
+
+  pendingBytes -= frameSize;
+  return frame;
+};
+
 const handleDecodedVideoChunk = (chunk: Buffer) => {
   if (!chunk || chunk.length < 1 || !streamVideoConfig) {
     return;
   }
 
-  const frameSize = streamVideoConfig.frameSize;
+  const { frameSize, isHdr } = streamVideoConfig;
   pendingChunks.push(chunk);
   pendingBytes += chunk.length;
   trimPendingDecodedFrames(frameSize);
 
   while (pendingBytes >= frameSize) {
     const decodeFrameStart = performance.now();
-    const frame = streamVideoConfig.isHdr
-      ? Buffer.allocUnsafeSlow(frameSize)
-      : Buffer.allocUnsafe(frameSize);
-    let copied = 0;
-    while (copied < frameSize && pendingChunks.length > 0) {
-      const head = pendingChunks[0];
-      const need = frameSize - copied;
-      if (head.length <= need) {
-        head.copy(frame, copied);
-        copied += head.length;
-        pendingChunks.shift();
-      } else {
-        head.copy(frame, copied, 0, need);
-        pendingChunks[0] = head.subarray(need);
-        copied += need;
-      }
+    const frame = shiftPendingDecodedFrame(frameSize, isHdr);
+    if (!frame) {
+      break;
     }
 
-    pendingBytes -= frameSize;
     const now = Date.now();
     if (lastDecodedFrameAtMs > 0) {
       decodedFrameIntervalTotalMs += Math.max(0, now - lastDecodedFrameAtMs);
@@ -2096,6 +2133,11 @@ const createVideoDecodePipeline = () => {
       fallbackVideoDecoderToSoftware(message);
     })
     .on("end", () => log("ffmpeg video decoder ended"));
+
+  if (IS_LINUX) {
+    ffmpegCommand.outputOptions("-flush_packets", "1");
+    ffmpegCommand.outputOptions("-filter_threads", "1");
+  }
 
   if (decoderPlan.filterGraph) {
     ffmpegCommand.outputOptions("-vf", decoderPlan.filterGraph);

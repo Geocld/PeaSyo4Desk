@@ -46,6 +46,7 @@ const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const WS_BINARY_VIDEO_ENCODED = 3;
 const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
+const DISPLAY_REFRESH_INTERVAL_DEFAULT_US = Math.round(1000000 / 60);
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
 const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
 const AUDIO_SCHEDULE_LEAD_SEC = 0.04;
@@ -822,6 +823,8 @@ function StreamPage() {
   const decodedVideoFrameClockWallStartUsRef = useRef(0);
   const decodedVideoFrameClockMediaStartUsRef = useRef(0);
   const decodedVideoFrameClockPrimedRef = useRef(false);
+  const decodedVideoFrameDisplayIntervalUsRef = useRef(DISPLAY_REFRESH_INTERVAL_DEFAULT_US);
+  const decodedVideoFrameLastRenderLoopAtUsRef = useRef(0);
   const decodedVideoFrameRebufferingRef = useRef(false);
   const decodedVideoFrameDynamicDelayFramesRef = useRef(0);
   const decodedVideoFrameStableRenderFramesRef = useRef(0);
@@ -1488,6 +1491,8 @@ function StreamPage() {
     decodedVideoFrameClockWallStartUsRef.current = 0;
     decodedVideoFrameClockMediaStartUsRef.current = 0;
     decodedVideoFrameClockPrimedRef.current = false;
+    decodedVideoFrameDisplayIntervalUsRef.current = DISPLAY_REFRESH_INTERVAL_DEFAULT_US;
+    decodedVideoFrameLastRenderLoopAtUsRef.current = 0;
     decodedVideoFrameRebufferingRef.current = false;
   };
 
@@ -1617,6 +1622,55 @@ function StreamPage() {
     decodedVideoFrameClockWallStartUsRef.current = performance.now() * 1000;
     decodedVideoFrameClockMediaStartUsRef.current = Math.max(0, headTimestampUs - delayUs);
     decodedVideoFrameClockPrimedRef.current = true;
+  };
+
+  const updateDecodedVideoFrameDisplayIntervalEstimate = (nowUs: number) => {
+    const lastNowUs = decodedVideoFrameLastRenderLoopAtUsRef.current;
+    decodedVideoFrameLastRenderLoopAtUsRef.current = nowUs;
+    if (lastNowUs < 1) {
+      return;
+    }
+
+    const deltaUs = nowUs - lastNowUs;
+    if (deltaUs < 4_000 || deltaUs > 40_000) {
+      return;
+    }
+
+    const previousEstimateUs = decodedVideoFrameDisplayIntervalUsRef.current;
+    decodedVideoFrameDisplayIntervalUsRef.current = Math.round(
+      previousEstimateUs * 0.85 + deltaUs * 0.15
+    );
+  };
+
+  const getDecodedVideoFramePresentLeadUs = (frameIntervalUs: number) => {
+    const displayIntervalUs = Math.max(
+      1,
+      Math.round(decodedVideoFrameDisplayIntervalUsRef.current || DISPLAY_REFRESH_INTERVAL_DEFAULT_US)
+    );
+    return Math.max(1_000, Math.min(Math.round(frameIntervalUs / 2), Math.round(displayIntervalUs / 2)));
+  };
+
+  const dropLateDecodedVideoFrames = (mediaNowUs: number, presentLeadUs: number) => {
+    const queue = decodedVideoFrameQueueRef.current;
+    while (queue.length > 1) {
+      const headTimestampUs = getVideoFrameTimestampUs(queue[0]);
+      const nextFrameTimestampUs = getVideoFrameTimestampUs(queue[1]);
+      if (headTimestampUs === null || nextFrameTimestampUs === null) {
+        break;
+      }
+      if (nextFrameTimestampUs > mediaNowUs + presentLeadUs) {
+        break;
+      }
+
+      const staleFrame = queue.shift();
+      if (!staleFrame) {
+        break;
+      }
+
+      droppedFramesRef.current += 1;
+      ackRenderedNativeVideoFrame();
+      closeDecodedVideoFrame(staleFrame);
+    }
   };
 
   const closeDecodedVideoFrame = (frame: VideoFrame) => {
@@ -3357,6 +3411,8 @@ function StreamPage() {
     rafRef.current = null;
     renderLoopScheduledRef.current = false;
     flushRenderedDecodedVideoFrameRetireQueue(false);
+    const renderNowUs = performance.now() * 1000;
+    updateDecodedVideoFrameDisplayIntervalEstimate(renderNowUs);
 
     let decodedVideoFrame: VideoFrame | null = null;
     const decodedFrameQueue = decodedVideoFrameQueueRef.current;
@@ -3420,14 +3476,16 @@ function StreamPage() {
 
         const mediaNowUs =
           decodedVideoFrameClockMediaStartUsRef.current +
-          (performance.now() * 1000 - decodedVideoFrameClockWallStartUsRef.current);
+          (renderNowUs - decodedVideoFrameClockWallStartUsRef.current);
+        const presentLeadUs = getDecodedVideoFramePresentLeadUs(frameIntervalUs);
+        dropLateDecodedVideoFrames(mediaNowUs, presentLeadUs);
 
         const headFrame = decodedFrameQueue[0];
         if (headFrame) {
           const headFrameTimestampUs = getVideoFrameTimestampUs(headFrame);
           const shouldRenderNow =
             headFrameTimestampUs === null ||
-            headFrameTimestampUs <= mediaNowUs + frameIntervalUs / 2;
+            headFrameTimestampUs <= mediaNowUs + presentLeadUs;
           if (shouldRenderNow) {
             decodedVideoFrame = decodedFrameQueue.shift() || null;
           }

@@ -2658,6 +2658,7 @@ function StreamPage() {
     let active = true;
 
     const start = async () => {
+      let rawStreamListener: any = null;
       try {
         disconnectingRef.current = false;
         connectedToastShownRef.current = false;
@@ -2730,28 +2731,8 @@ function StreamPage() {
 
         setStatus(t("Connecting..."));
         setConnectState("starting");
-        const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
-          () => null
-        );
-        const serverInfo: any = await Ipc.send("app", "startStreamSession", {
-          streamHost,
-          isRemote: !!pendingConfig?.isRemote,
-          consoleInfo: pendingConfig?.consoleInfo || {},
-          loginInfo: currentLoginInfo || undefined,
-          sessionType: "ffmpeg",
-        });
-        if (!active) return;
-
-        const prefersNativeBinary = serverInfo?.binaryTransport === "electron-ipc";
-        nativeBinaryTransportRef.current = false;
-        controlTransportReadyRef.current = true;
-
-        const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
-        wsUrlRef.current = url;
-        setStatus(t("Connecting..."));
-
-        const rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
-          if (!active || !prefersNativeBinary) {
+        rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
+          if (!active) {
             return;
           }
 
@@ -2763,6 +2744,29 @@ function StreamPage() {
           nativeBinaryTransportRef.current = true;
           handleBinaryPacket(packet);
         });
+
+        const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
+          () => null
+        );
+        const serverInfo: any = await Ipc.send("app", "startStreamSession", {
+          streamHost,
+          isRemote: !!pendingConfig?.isRemote,
+          consoleInfo: pendingConfig?.consoleInfo || {},
+          loginInfo: currentLoginInfo || undefined,
+          sessionType: "ffmpeg",
+        });
+        if (!active) {
+          if (rawStreamListener) {
+            Ipc.removeListener("stream-binary", rawStreamListener);
+          }
+          return;
+        }
+
+        controlTransportReadyRef.current = true;
+
+        const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
+        wsUrlRef.current = url;
+        setStatus(t("Connecting..."));
 
         const socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
@@ -2889,6 +2893,9 @@ function StreamPage() {
           }
         };
       } catch (error: any) {
+        if (rawStreamListener) {
+          Ipc.removeListener("stream-binary", rawStreamListener);
+        }
         setStatus(
           t("StartSessionFailedWithReason", {
             reason: error?.message || String(error),
