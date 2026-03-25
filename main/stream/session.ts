@@ -195,6 +195,11 @@ type QueuedVideoSample = {
   hasSlice: boolean;
 };
 
+type VideoSampleSyncTrimResult = {
+  samples: QueuedVideoSample[];
+  hasSyncFrame: boolean;
+};
+
 type StreamPerformanceStats = {
   resolution: string;
   rtt: string;
@@ -381,6 +386,53 @@ const OGG_CRC_TABLE = (() => {
 
 const log = (...args) => {
   console.log("[stream-service]", ...args);
+};
+
+type StreamDebugCounters = {
+  videoConfigSentCount: number;
+  audioConfigSentCount: number;
+  nativeVideoPostCount: number;
+  nativeVideoAckCount: number;
+  nativeVideoBlockedCount: number;
+  nativeVideoAckTimeoutCount: number;
+  websocketVideoFallbackCount: number;
+  decodedVideoFrameQueuedCount: number;
+  cachedVideoConfigSampleCount: number;
+  droppedVideoSamplesWhileWaitingForSyncCount: number;
+  videoSamplesDroppedBeforeDecoderReadyCount: number;
+  wsConnectionCount: number;
+};
+
+const createStreamDebugCounters = (): StreamDebugCounters => ({
+  videoConfigSentCount: 0,
+  audioConfigSentCount: 0,
+  nativeVideoPostCount: 0,
+  nativeVideoAckCount: 0,
+  nativeVideoBlockedCount: 0,
+  nativeVideoAckTimeoutCount: 0,
+  websocketVideoFallbackCount: 0,
+  decodedVideoFrameQueuedCount: 0,
+  cachedVideoConfigSampleCount: 0,
+  droppedVideoSamplesWhileWaitingForSyncCount: 0,
+  videoSamplesDroppedBeforeDecoderReadyCount: 0,
+  wsConnectionCount: 0,
+});
+
+let streamSessionSequence = 0;
+let activeStreamSessionDebugId = 0;
+let streamDebugCounters = createStreamDebugCounters();
+
+const streamDebugLog = (
+  message: string,
+  details?: Record<string, unknown> | undefined
+) => {
+  const sessionLabel =
+    activeStreamSessionDebugId > 0 ? `session:${activeStreamSessionDebugId}` : "session:-";
+  if (details) {
+    log(`[${sessionLabel}] ${message}`, details);
+    return;
+  }
+  log(`[${sessionLabel}] ${message}`);
 };
 
 const isExistingFile = (filePath: string) => {
@@ -1015,7 +1067,7 @@ const shiftPendingVideoSample = () => {
   return sample;
 };
 
-const keepSamplesFromLatestSyncOrTail = (samples: QueuedVideoSample[], tailCount = 16) => {
+const keepSamplesFromLatestSync = (samples: QueuedVideoSample[]): VideoSampleSyncTrimResult => {
   let syncIndex = -1;
   for (let i = samples.length - 1; i >= 0; i -= 1) {
     if (samples[i].isSyncFrame) {
@@ -1025,19 +1077,30 @@ const keepSamplesFromLatestSyncOrTail = (samples: QueuedVideoSample[], tailCount
   }
 
   if (syncIndex >= 0) {
-    return samples.slice(syncIndex);
+    return {
+      samples: samples.slice(syncIndex),
+      hasSyncFrame: true,
+    };
   }
 
-  if (samples.length <= tailCount) {
-    return samples.slice();
-  }
-
-  return samples.slice(samples.length - tailCount);
+  return {
+    samples: [],
+    hasSyncFrame: false,
+  };
 };
 
 const recreateVideoDecodePipelineForSync = (reason: string) => {
   const keptSamples = pendingVideoSamples.slice();
-  const nextQueue = keepSamplesFromLatestSyncOrTail(keptSamples);
+  const { samples: nextQueue, hasSyncFrame } = keepSamplesFromLatestSync(keptSamples);
+  streamDebugLog("recreate video decode pipeline for sync", {
+    reason,
+    keptSampleCount: keptSamples.length,
+    keptSampleBytes: pendingVideoSampleBytes,
+    nextQueueCount: nextQueue.length,
+    hasSyncFrame,
+    hasCachedConfig: !!cachedVideoConfigSample,
+    decoderPlan: activeVideoDecoderPlanName,
+  });
 
   destroyVideoPipeline();
   createVideoDecodePipeline();
@@ -1057,7 +1120,7 @@ const recreateVideoDecodePipelineForSync = (reason: string) => {
     enqueueVideoSample(sample);
   }
 
-  waitingForVideoSyncFrame = nextQueue.length < 1;
+  waitingForVideoSyncFrame = !hasSyncFrame;
   log(
     waitingForVideoSyncFrame
       ? `video decoder resync requested (${reason}), waiting for next sync frame`
@@ -1073,8 +1136,17 @@ const fallbackVideoDecoderToSoftware = (reason: string) => {
   videoDecoderRecoveryInProgress = true;
   const failedPlan = activeVideoDecoderPlanName;
   const keptSamples = pendingVideoSamples.slice();
-  const nextQueue = keepSamplesFromLatestSyncOrTail(keptSamples);
+  const { samples: nextQueue, hasSyncFrame } = keepSamplesFromLatestSync(keptSamples);
   disabledVideoDecoderPlans.add(failedPlan);
+  streamDebugLog("fallback video decoder to software", {
+    reason,
+    failedPlan,
+    keptSampleCount: keptSamples.length,
+    keptSampleBytes: pendingVideoSampleBytes,
+    nextQueueCount: nextQueue.length,
+    hasSyncFrame,
+    hasCachedConfig: !!cachedVideoConfigSample,
+  });
   log(
     `video decoder '${failedPlan}' failed (${reason}), falling back to software decode`
   );
@@ -1097,7 +1169,7 @@ const fallbackVideoDecoderToSoftware = (reason: string) => {
     enqueueVideoSample(sample);
   }
 
-  waitingForVideoSyncFrame = nextQueue.length < 1;
+  waitingForVideoSyncFrame = !hasSyncFrame;
   videoDecoderRecoveryInProgress = false;
 
   if (pendingVideoSamples.length > 0) {
@@ -1545,8 +1617,21 @@ const broadcastText = (payload: unknown) => {
 
 const sendVideoConfigToClient = (client: any) => {
   if (!streamVideoConfig) {
+    streamDebugLog("skip sending video config because streamVideoConfig is not ready");
     return;
   }
+
+  streamDebugCounters.videoConfigSentCount += 1;
+  streamDebugLog("send video config to client", {
+    sendCount: streamDebugCounters.videoConfigSentCount,
+    clientCount: wsClients.size,
+    width: streamVideoConfig.width,
+    height: streamVideoConfig.height,
+    fps: streamVideoConfig.fps,
+    format: streamVideoConfig.format,
+    frameSize: streamVideoConfig.frameSize,
+    inputFormat: streamVideoConfig.inputFormat,
+  });
 
   sendWsText(client, {
     type: "config",
@@ -1559,13 +1644,28 @@ const sendVideoConfigToClient = (client: any) => {
 };
 
 const sendAudioConfigToClient = (client: any) => {
+  streamDebugCounters.audioConfigSentCount += 1;
   if (!audioHeaderInfo) {
+    streamDebugLog("send audio config to client", {
+      sendCount: streamDebugCounters.audioConfigSentCount,
+      clientCount: wsClients.size,
+      enabled: false,
+    });
     sendWsText(client, {
       type: "audio_config",
       enabled: false,
     });
     return;
   }
+
+  streamDebugLog("send audio config to client", {
+    sendCount: streamDebugCounters.audioConfigSentCount,
+    clientCount: wsClients.size,
+    enabled: true,
+    channels: audioHeaderInfo.channels,
+    rate: audioHeaderInfo.rate,
+    frameSamples: audioHeaderInfo.frameSize,
+  });
 
   sendWsText(client, {
     type: "audio_config",
@@ -1607,6 +1707,20 @@ const postNativeTypedBinary = (kind: number, payload: Buffer) => {
       byteOffset: 0,
       byteLength: clonedBuffer.byteLength,
     });
+    if (kind === WS_BINARY_VIDEO) {
+      streamDebugCounters.nativeVideoPostCount += 1;
+      if (
+        streamDebugCounters.nativeVideoPostCount <= 3 ||
+        streamDebugCounters.nativeVideoPostCount % 120 === 0
+      ) {
+        streamDebugLog("posted native video frame", {
+          postCount: streamDebugCounters.nativeVideoPostCount,
+          bytes: payload.length,
+          inFlight: nativeVideoFramesInFlight,
+          pendingBroadcastFrameBytes: pendingVideoBroadcastFrame?.length || 0,
+        });
+      }
+    }
     return true;
   } catch (error) {
     log("native stream binary postMessage failed:", (error as any)?.message || String(error));
@@ -1768,6 +1882,14 @@ const startSocketServer = async () => {
   websocketServer.on("connection", (socket) => {
     wsClients.add(socket);
     wsClientPressedButtons.set(socket, new Set());
+    streamDebugCounters.wsConnectionCount += 1;
+    streamDebugLog("websocket client connected", {
+      connectionCount: streamDebugCounters.wsConnectionCount,
+      clientCount: wsClients.size,
+      hasVideoConfig: !!streamVideoConfig,
+      hasAudioConfig: !!audioHeaderInfo,
+      nativeBinaryAvailable: canUseNativeStreamBinary(),
+    });
 
     try {
       socket?._socket?.setNoDelay?.(true);
@@ -1872,6 +1994,10 @@ const attachStreamWebContents = (webContents: WebContents | null | undefined) =>
   streamWebContents = webContents && !webContents.isDestroyed() ? webContents : null;
   nativeVideoFramesInFlight = 0;
   nativeVideoFrameInFlightAtMs = 0;
+  streamDebugLog("attach stream webContents", {
+    attached: !!streamWebContents,
+    webContentsId: streamWebContents?.id || null,
+  });
 };
 
 const destroyVideoPipeline = () => {
@@ -1931,11 +2057,31 @@ const flushPendingVideoBroadcastFrame = () => {
       nativeVideoFramesInFlight > 0 &&
       now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
     ) {
+      streamDebugCounters.nativeVideoAckTimeoutCount += 1;
+      streamDebugLog("native video ack timeout, resetting in-flight window", {
+        timeoutCount: streamDebugCounters.nativeVideoAckTimeoutCount,
+        inFlight: nativeVideoFramesInFlight,
+        ageMs: now - nativeVideoFrameInFlightAtMs,
+        ackTimeoutMs: NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS,
+        pendingBroadcastFrameBytes: frame.length,
+      });
       nativeVideoFramesInFlight = 0;
       nativeVideoFrameInFlightAtMs = 0;
     }
 
     if (nativeVideoFramesInFlight >= maxFramesInFlight) {
+      streamDebugCounters.nativeVideoBlockedCount += 1;
+      if (
+        streamDebugCounters.nativeVideoBlockedCount <= 3 ||
+        streamDebugCounters.nativeVideoBlockedCount % 60 === 0
+      ) {
+        streamDebugLog("native video frame blocked by in-flight limit", {
+          blockedCount: streamDebugCounters.nativeVideoBlockedCount,
+          inFlight: nativeVideoFramesInFlight,
+          maxFramesInFlight,
+          pendingBroadcastFrameBytes: frame.length,
+        });
+      }
       return;
     }
 
@@ -1948,6 +2094,19 @@ const flushPendingVideoBroadcastFrame = () => {
   }
 
   pendingVideoBroadcastFrame = null;
+  if (frame.length > 0) {
+    streamDebugCounters.websocketVideoFallbackCount += 1;
+    if (
+      streamDebugCounters.websocketVideoFallbackCount <= 3 ||
+      streamDebugCounters.websocketVideoFallbackCount % 120 === 0
+    ) {
+      streamDebugLog("fallback to websocket video frame broadcast", {
+        fallbackCount: streamDebugCounters.websocketVideoFallbackCount,
+        bytes: frame.length,
+        clientCount: wsClients.size,
+      });
+    }
+  }
   broadcastTypedBinary(WS_BINARY_VIDEO, frame);
 };
 
@@ -1972,6 +2131,18 @@ const notifyVideoFrameRendered = () => {
   if (nativeVideoFramesInFlight < 1) {
     nativeVideoFramesInFlight = 0;
     nativeVideoFrameInFlightAtMs = 0;
+  }
+
+  streamDebugCounters.nativeVideoAckCount += 1;
+  if (
+    streamDebugCounters.nativeVideoAckCount <= 3 ||
+    streamDebugCounters.nativeVideoAckCount % 120 === 0
+  ) {
+    streamDebugLog("received native video frame rendered ack", {
+      ackCount: streamDebugCounters.nativeVideoAckCount,
+      inFlight: nativeVideoFramesInFlight,
+      hasPendingBroadcastFrame: !!pendingVideoBroadcastFrame,
+    });
   }
 
   if (!pendingVideoBroadcastFrame || videoBroadcastFlushScheduled) {
@@ -2089,6 +2260,19 @@ const handleDecodedVideoChunk = (chunk: Buffer) => {
       decodeFrameCostWindowTotalMs -= removed;
     }
 
+    streamDebugCounters.decodedVideoFrameQueuedCount += 1;
+    if (
+      streamDebugCounters.decodedVideoFrameQueuedCount <= 3 ||
+      streamDebugCounters.decodedVideoFrameQueuedCount % 120 === 0
+    ) {
+      streamDebugLog("decoded video frame ready for broadcast", {
+        frameCount: streamDebugCounters.decodedVideoFrameQueuedCount,
+        frameBytes: frame.length,
+        pendingDecodedBytes: pendingBytes,
+        decoderPlan: activeVideoDecoderPlanName,
+      });
+    }
+
     queueVideoBroadcastFrame(frame);
   }
 };
@@ -2168,18 +2352,67 @@ const dispatchVideoSample = (sampleData: Buffer) => {
   const inspectedSample = inspectVideoSample(sampleData);
   if (inspectedSample.hasConfig) {
     cachedVideoConfigSample = Buffer.from(sampleData);
+    streamDebugCounters.cachedVideoConfigSampleCount += 1;
+    if (
+      streamDebugCounters.cachedVideoConfigSampleCount <= 3 ||
+      streamDebugCounters.cachedVideoConfigSampleCount % 30 === 0
+    ) {
+      streamDebugLog("cached video config sample", {
+        cacheCount: streamDebugCounters.cachedVideoConfigSampleCount,
+        sampleBytes: sampleData.length,
+        inputFormat: streamVideoConfig?.inputFormat || "unknown",
+      });
+    }
   }
 
   if (!ffmpegInput || !ffmpegInput.writable) {
+    streamDebugCounters.videoSamplesDroppedBeforeDecoderReadyCount += 1;
+    if (
+      streamDebugCounters.videoSamplesDroppedBeforeDecoderReadyCount <= 3 ||
+      streamDebugCounters.videoSamplesDroppedBeforeDecoderReadyCount % 60 === 0
+    ) {
+      streamDebugLog("drop video sample because decoder input is not writable", {
+        dropCount: streamDebugCounters.videoSamplesDroppedBeforeDecoderReadyCount,
+        sampleBytes: sampleData.length,
+        hasFfmpegInput: !!ffmpegInput,
+        ffmpegInputWritable: !!ffmpegInput?.writable,
+      });
+    }
     return;
   }
 
   if (waitingForVideoSyncFrame && !inspectedSample.isSyncFrame) {
+    streamDebugCounters.droppedVideoSamplesWhileWaitingForSyncCount += 1;
+    if (
+      streamDebugCounters.droppedVideoSamplesWhileWaitingForSyncCount <= 3 ||
+      streamDebugCounters.droppedVideoSamplesWhileWaitingForSyncCount % 60 === 0
+    ) {
+      streamDebugLog("drop video sample while waiting for next sync frame", {
+        dropCount: streamDebugCounters.droppedVideoSamplesWhileWaitingForSyncCount,
+        sampleBytes: sampleData.length,
+        hasConfig: inspectedSample.hasConfig,
+        hasSlice: inspectedSample.hasSlice,
+      });
+    }
     return;
   }
 
   if (waitingForVideoSyncFrame && inspectedSample.isSyncFrame) {
     waitingForVideoSyncFrame = false;
+    streamDebugLog("received sync frame while waiting for decoder resync", {
+      sampleBytes: sampleData.length,
+      hasConfig: inspectedSample.hasConfig,
+      hasSlice: inspectedSample.hasSlice,
+      pendingSampleBytes: pendingVideoSampleBytes,
+    });
+    if (cachedVideoConfigSample && !inspectedSample.hasConfig) {
+      enqueueVideoSample({
+        data: Buffer.from(cachedVideoConfigSample),
+        isSyncFrame: false,
+        hasConfig: true,
+        hasSlice: false,
+      });
+    }
   }
 
   enqueueVideoSample(inspectedSample);
@@ -2557,6 +2790,13 @@ const dispatchHapticsFrameAsRumble = (frame: any) => {
 };
 
 const cleanupSessionOnly = () => {
+  streamDebugLog("cleanup session resources", {
+    wsClientCount: wsClients.size,
+    streamSessionStarted,
+    nativeVideoFramesInFlight,
+    pendingVideoSampleBytes,
+    pendingDecodedBytes: pendingBytes,
+  });
   clearDelayedControllerResetRetry();
   for (const socket of wsClients) {
     releaseClientPressedButtons(socket, "session-stop");
@@ -2693,6 +2933,12 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
 const createSession = (sessionOptions: any) => {
   streamSession = new (chiaki as any).Session(sessionOptions, {
     onEvent: (event) => {
+      if (event?.name === "connected" || event?.name === "quit") {
+        streamDebugLog("session event", {
+          name: event?.name || "unknown",
+          reason: String(event?.reasonName || event?.reason || ""),
+        });
+      }
       broadcastText({
         type: "session_event",
         name: event?.name || "unknown",
@@ -2783,6 +3029,13 @@ const getPerformanceStats = (): StreamPerformanceStats => {
 };
 
 const stopSession = async (closeSocketServer = true) => {
+  streamDebugLog("stopSession requested", {
+    closeSocketServer,
+    wsClientCount: wsClients.size,
+    nativeVideoFramesInFlight,
+    pendingVideoSampleBytes,
+    pendingDecodedBytes: pendingBytes,
+  });
   cleanupSessionOnly();
   broadcastText({ type: "session_status", status: "stopped" });
 
@@ -2820,6 +3073,16 @@ const gotoBedAndStop = async (closeSocketServer = true) => {
 };
 
 const startSession = async (args: StartStreamSessionArgs) => {
+  activeStreamSessionDebugId = streamSessionSequence + 1;
+  streamSessionSequence = activeStreamSessionDebugId;
+  streamDebugCounters = createStreamDebugCounters();
+  streamDebugLog("startSession requested", {
+    streamHost: String(args.streamHost || args.host || ""),
+    isRemote: !!args.isRemote,
+    targetWebContentsAttached: !!args.targetWebContents,
+    existingSessionStarted: streamSessionStarted,
+  });
+
   ensureInitialized();
   attachStreamWebContents(args.targetWebContents);
   const wsInfo = await startSocketServer();
@@ -2830,6 +3093,19 @@ const startSession = async (args: StartStreamSessionArgs) => {
 
   configureControllerKernel(args.settings);
   const sessionOptions = buildSessionOptions(args);
+  streamDebugLog("resolved ffmpeg session options", {
+    wsPort: wsInfo.port,
+    wsReused: !!wsInfo.reused,
+    host: sessionOptions.host,
+    resolution: `${streamVideoConfig?.width || 0}x${streamVideoConfig?.height || 0}`,
+    fps: streamVideoConfig?.fps || 0,
+    bitrate: streamVideoConfig?.bitrate || 0,
+    codec: streamVideoConfig?.codecName || "unknown",
+    inputFormat: streamVideoConfig?.inputFormat || "unknown",
+    outputFormat: streamVideoConfig?.format || "unknown",
+    frameSize: streamVideoConfig?.frameSize || 0,
+    nativeBinaryAvailable: canUseNativeStreamBinary(),
+  });
   createVideoDecodePipeline();
   createSession(sessionOptions);
 

@@ -2782,7 +2782,13 @@ function StreamPage() {
             return;
           }
 
-          nativeBinaryTransportRef.current = true;
+          const kind = packet[0];
+          if (kind === WS_BINARY_VIDEO) {
+            nativeBinaryTransportRef.current = true;
+          } else if (!nativeBinaryTransportRef.current) {
+            return;
+          }
+
           handleBinaryPacket(packet);
         });
 
