@@ -119,42 +119,42 @@ type SteamOsWebCodecsTuning = {
 const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
 const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsWebCodecsTuning> = {
   balanced: {
-    decodeQueueLimit: 80,
-    renderQueueLimit: 40,
-    minBufferFrames: 14,
-    clockDelayFrames: 9,
-    rebufferLowFrames: 6,
-    rebufferResumeFrames: 14,
-    renderedFrameRetireKeep: 5,
+    decodeQueueLimit: 8,
+    renderQueueLimit: 3,
+    minBufferFrames: 2,
+    clockDelayFrames: 1,
+    rebufferLowFrames: 1,
+    rebufferResumeFrames: 2,
+    renderedFrameRetireKeep: 2,
     rebufferProtectionIncrementFrames: 0,
     rebufferProtectionMaxExtraFrames: 0,
     rebufferProtectionDecayRenderedFrames: 0,
     rebufferProtectionDecayStepFrames: 0,
   },
   stable: {
-    decodeQueueLimit: 120,
-    renderQueueLimit: 56,
-    minBufferFrames: 20,
-    clockDelayFrames: 14,
-    rebufferLowFrames: 10,
-    rebufferResumeFrames: 20,
-    renderedFrameRetireKeep: 8,
-    rebufferProtectionIncrementFrames: 0,
-    rebufferProtectionMaxExtraFrames: 0,
-    rebufferProtectionDecayRenderedFrames: 0,
-    rebufferProtectionDecayStepFrames: 0,
+    decodeQueueLimit: 12,
+    renderQueueLimit: 4,
+    minBufferFrames: 3,
+    clockDelayFrames: 2,
+    rebufferLowFrames: 1,
+    rebufferResumeFrames: 3,
+    renderedFrameRetireKeep: 3,
+    rebufferProtectionIncrementFrames: 1,
+    rebufferProtectionMaxExtraFrames: 2,
+    rebufferProtectionDecayRenderedFrames: 90,
+    rebufferProtectionDecayStepFrames: 1,
   },
   "ultra-stable": {
-    decodeQueueLimit: 256,
-    renderQueueLimit: 128,
-    minBufferFrames: 40,
-    clockDelayFrames: 30,
-    rebufferLowFrames: 22,
-    rebufferResumeFrames: 40,
-    renderedFrameRetireKeep: 16,
-    rebufferProtectionIncrementFrames: 10,
-    rebufferProtectionMaxExtraFrames: 120,
-    rebufferProtectionDecayRenderedFrames: 180,
+    decodeQueueLimit: 16,
+    renderQueueLimit: 5,
+    minBufferFrames: 4,
+    clockDelayFrames: 3,
+    rebufferLowFrames: 2,
+    rebufferResumeFrames: 4,
+    renderedFrameRetireKeep: 4,
+    rebufferProtectionIncrementFrames: 1,
+    rebufferProtectionMaxExtraFrames: 4,
+    rebufferProtectionDecayRenderedFrames: 120,
     rebufferProtectionDecayStepFrames: 1,
   },
 };
@@ -1647,12 +1647,18 @@ function StreamPage() {
       1,
       Math.round(decodedVideoFrameDisplayIntervalUsRef.current || DISPLAY_REFRESH_INTERVAL_DEFAULT_US)
     );
+    if (shouldUseTimestampDrivenWebCodecsRender()) {
+      return Math.max(2_000, Math.min(frameIntervalUs, Math.round(displayIntervalUs * 0.85)));
+    }
     return Math.max(1_000, Math.min(Math.round(frameIntervalUs / 2), Math.round(displayIntervalUs / 2)));
   };
 
   const dropLateDecodedVideoFrames = (mediaNowUs: number, presentLeadUs: number) => {
     const queue = decodedVideoFrameQueueRef.current;
-    while (queue.length > 1) {
+    const minQueuedFramesToKeep = shouldUseTimestampDrivenWebCodecsRender()
+      ? Math.max(2, getSteamOsWebCodecsRebufferResumeFrames())
+      : 1;
+    while (queue.length > minQueuedFramesToKeep) {
       const headTimestampUs = getVideoFrameTimestampUs(queue[0]);
       const nextFrameTimestampUs = getVideoFrameTimestampUs(queue[1]);
       if (headTimestampUs === null || nextFrameTimestampUs === null) {

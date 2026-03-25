@@ -685,25 +685,17 @@ const resolveInputFormat = (codec: number) => {
 };
 
 const getSoftwareVideoDecoderInputOptions = () => {
-  if (IS_LINUX) {
-    return [
-      "-fflags +genpts+nobuffer",
-      "-avioflags direct",
-      "-probesize 32",
-      "-analyzeduration 0",
-      "-flags low_delay",
-      // Prefer slice threading on Linux so software decode can stay parallel
-      // without introducing extra frame-thread latency.
-      "-thread_type slice",
-      "-threads 0",
-    ];
-  }
-
   const options: string[] = ["-fflags +genpts", "-probesize 32", "-analyzeduration 0"];
+  const inputFormat = streamVideoConfig?.inputFormat;
 
   if (IS_WINDOWS) {
     // Keep decoder queue shallow to reduce frame-thread reordering latency.
     options.push("-threads 1");
+  }
+
+  if (IS_LINUX && inputFormat === "hevc") {
+    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
+    options.push("-threads 0");
   }
 
   return options;
@@ -2133,11 +2125,6 @@ const createVideoDecodePipeline = () => {
       fallbackVideoDecoderToSoftware(message);
     })
     .on("end", () => log("ffmpeg video decoder ended"));
-
-  if (IS_LINUX) {
-    ffmpegCommand.outputOptions("-flush_packets", "1");
-    ffmpegCommand.outputOptions("-filter_threads", "1");
-  }
 
   if (decoderPlan.filterGraph) {
     ffmpegCommand.outputOptions("-vf", decoderPlan.filterGraph);
