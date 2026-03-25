@@ -391,6 +391,7 @@ const log = (...args) => {
 type StreamDebugCounters = {
   videoConfigSentCount: number;
   audioConfigSentCount: number;
+  videoInputBackpressureCount: number;
   nativeVideoPostCount: number;
   nativeVideoAckCount: number;
   nativeVideoBlockedCount: number;
@@ -406,6 +407,7 @@ type StreamDebugCounters = {
 const createStreamDebugCounters = (): StreamDebugCounters => ({
   videoConfigSentCount: 0,
   audioConfigSentCount: 0,
+  videoInputBackpressureCount: 0,
   nativeVideoPostCount: 0,
   nativeVideoAckCount: 0,
   nativeVideoBlockedCount: 0,
@@ -746,9 +748,8 @@ const getSoftwareVideoDecoderInputOptions = () => {
   }
 
   if (IS_LINUX && inputFormat === "hevc") {
-    // Prefer slice threading on Linux HEVC software decode to reduce frame-thread
-    // queueing latency without forcing a single-core decoder path.
-    options.push("-threads 0", "-thread_type slice");
+    // Let FFmpeg autoscale Linux HEVC decode threads to avoid bitrate-driven latency growth.
+    options.push("-threads 0");
   }
 
   return options;
@@ -852,22 +853,10 @@ const getVideoDecoderInputHighWatermarkBytes = () => {
       return 512 * 1024;
     }
 
-    return streamVideoConfig.inputFormat === "hevc" ? 128 * 1024 : 192 * 1024;
+    return streamVideoConfig.inputFormat === "hevc" ? 256 * 1024 : 192 * 1024;
   }
 
   return VIDEO_DECODER_INPUT_HIGH_WATERMARK_BYTES;
-};
-
-const getNativeVideoFramesInFlightLimit = () => {
-  if (streamVideoConfig?.isHdr) {
-    return 1;
-  }
-
-  if (IS_LINUX && activeVideoDecoderPlanName === "software") {
-    return 1;
-  }
-
-  return MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT;
 };
 
 const buildVideoDecoderPlan = (): VideoDecoderPlan => {
@@ -2075,7 +2064,9 @@ const flushPendingVideoBroadcastFrame = () => {
 
   if (canUseNativeStreamBinary()) {
     const now = Date.now();
-    const maxFramesInFlight = getNativeVideoFramesInFlightLimit();
+    const maxFramesInFlight = streamVideoConfig?.isHdr
+      ? 1
+      : MAX_NATIVE_VIDEO_FRAMES_IN_FLIGHT;
     if (
       nativeVideoFramesInFlight > 0 &&
       now - nativeVideoFrameInFlightAtMs > NATIVE_VIDEO_FRAME_ACK_TIMEOUT_MS
@@ -2358,6 +2349,19 @@ const flushPendingVideoSamples = () => {
     const ok = ffmpegInput.write(sample.data);
     if (!ok) {
       ffmpegInputBlocked = true;
+      streamDebugCounters.videoInputBackpressureCount += 1;
+      if (
+        streamDebugCounters.videoInputBackpressureCount <= 3 ||
+        streamDebugCounters.videoInputBackpressureCount % 60 === 0
+      ) {
+        streamDebugLog("ffmpeg video input backpressure", {
+          count: streamDebugCounters.videoInputBackpressureCount,
+          pendingVideoSampleCount: pendingVideoSamples.length,
+          pendingVideoSampleBytes,
+          decoderPlan: activeVideoDecoderPlanName,
+          highWaterMark: ffmpegInput.writableHighWaterMark,
+        });
+      }
       ffmpegInput.once("drain", () => {
         ffmpegInputBlocked = false;
         flushPendingVideoSamples();
