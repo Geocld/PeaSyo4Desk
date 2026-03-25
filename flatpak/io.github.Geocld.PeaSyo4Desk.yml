@@ -16,6 +16,7 @@ finish-args:
   - --allow=bluetooth
   - --device=all
   - --filesystem=/run/udev:ro
+  - --filesystem=/dev/dri:rw
 build-options:
   append-path: /usr/lib/sdk/node22/bin
   env:
