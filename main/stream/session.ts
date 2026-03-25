@@ -1049,11 +1049,11 @@ const shouldResyncVideoDecoderOnBacklog = () => {
   }
 
   // Linux software decode can transiently build a few compressed samples during
-  // motion bursts. Forcing a decoder resync without an in-queue sync frame
-  // freezes the stream waiting for the next keyframe, which is worse than
-  // tolerating short-lived backlog.
+  // motion bursts. Only resync when there is already a sync frame in the
+  // queued compressed samples; otherwise continue decoding to avoid freezing
+  // while waiting for a future keyframe.
   if (IS_LINUX && activeVideoDecoderPlanName === "software") {
-    return false;
+    return pendingVideoSamples.some((sample) => sample.isSyncFrame);
   }
 
   return true;
