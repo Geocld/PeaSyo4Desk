@@ -25,6 +25,7 @@ type ActivePointer = {
   pointerId: number;
   slot: 0 | 1;
   touchId: number;
+  mode: "hover" | "press";
   x: number;
   y: number;
   startX: number;
@@ -282,6 +283,16 @@ export default function Touchpad({
     };
   };
 
+  const appendTrailPoint = (pointer: ActivePointer, point: Point) => {
+    const lastPoint = pointer.trail[pointer.trail.length - 1];
+    if (!lastPoint || Math.hypot(lastPoint.x - point.x, lastPoint.y - point.y) > 1) {
+      pointer.trail.push(point);
+      if (pointer.trail.length > TRAIL_MAX_POINTS) {
+        pointer.trail.shift();
+      }
+    }
+  };
+
   const emitTouchState = () => {
     const touches: [StreamTouchPoint, StreamTouchPoint] = [{ id: -1 }, { id: -1 }];
     for (const pointer of activePointersRef.current.values()) {
@@ -300,6 +311,60 @@ export default function Touchpad({
       touchIdNext: nextTouchIdRef.current,
       touches,
     });
+  };
+
+  const createPointer = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    mode: ActivePointer["mode"]
+  ) => {
+    const slot = getSlotForPointer(event.pointerType);
+    if (slot === null) {
+      return null;
+    }
+
+    const point = toLocalPoint(event);
+    const pointer: ActivePointer = {
+      pointerId: event.pointerId,
+      slot,
+      touchId: allocateTouchId(),
+      mode,
+      x: point.x,
+      y: point.y,
+      startX: point.x,
+      startY: point.y,
+      startedAt: performance.now(),
+      trail: [point],
+    };
+
+    activePointersRef.current.set(event.pointerId, pointer);
+    emitTouchState();
+    scheduleDraw();
+    return pointer;
+  };
+
+  const capturePointer = (pointerId: number) => {
+    if (!containerRef.current) {
+      return;
+    }
+
+    try {
+      containerRef.current.setPointerCapture(pointerId);
+    } catch {
+      // ignore capture failures
+    }
+  };
+
+  const ensureHoverPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "mouse" || (event.buttons & 1) === 1) {
+      return;
+    }
+
+    if (activePointersRef.current.has(event.pointerId)) {
+      return;
+    }
+
+    onActivity?.();
+    createPointer(event, "hover");
   };
 
   const releasePointer = (
@@ -323,7 +388,10 @@ export default function Touchpad({
 
     const duration = performance.now() - pointer.startedAt;
     const travel = Math.hypot(pointer.x - pointer.startX, pointer.y - pointer.startY);
-    const isTap = duration <= TAP_MAX_DURATION_MS && travel <= TAP_MAX_DISTANCE_PX;
+    const isTap =
+      pointer.mode === "press" &&
+      duration <= TAP_MAX_DURATION_MS &&
+      travel <= TAP_MAX_DISTANCE_PX;
 
     rippleEffectsRef.current.push({
       x: pointer.x,
@@ -346,50 +414,47 @@ export default function Touchpad({
     }
 
     onActivity?.();
-
-    const slot = getSlotForPointer(event.pointerType);
-    if (slot === null) {
-      return;
-    }
-
     const point = toLocalPoint(event);
-    const touchId = allocateTouchId();
-    const pointer: ActivePointer = {
-      pointerId: event.pointerId,
-      slot,
-      touchId,
-      x: point.x,
-      y: point.y,
-      startX: point.x,
-      startY: point.y,
-      startedAt: performance.now(),
-      trail: [point],
-    };
-
-    activePointersRef.current.set(event.pointerId, pointer);
-    if (containerRef.current) {
-      try {
-        containerRef.current.setPointerCapture(event.pointerId);
-      } catch {
-        // ignore capture failures
+    const existingPointer = activePointersRef.current.get(event.pointerId);
+    if (existingPointer) {
+      existingPointer.mode = "press";
+      existingPointer.x = point.x;
+      existingPointer.y = point.y;
+      existingPointer.startX = point.x;
+      existingPointer.startY = point.y;
+      existingPointer.startedAt = performance.now();
+      existingPointer.trail = [point];
+      capturePointer(event.pointerId);
+      emitTouchState();
+      scheduleDraw();
+    } else {
+      const pointer = createPointer(event, "press");
+      if (!pointer) {
+        return;
       }
+      capturePointer(event.pointerId);
     }
-
-    emitTouchState();
-    scheduleDraw();
 
     if (event.pointerType !== "mouse") {
       event.preventDefault();
     }
   };
 
+  const handlePointerEnter = (event: ReactPointerEvent<HTMLDivElement>) => {
+    ensureHoverPointer(event);
+  };
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const pointer = activePointersRef.current.get(event.pointerId);
+    let pointer = activePointersRef.current.get(event.pointerId);
+    if (!pointer) {
+      ensureHoverPointer(event);
+      pointer = activePointersRef.current.get(event.pointerId);
+    }
     if (!pointer) {
       return;
     }
 
-    if (event.pointerType === "mouse" && (event.buttons & 1) !== 1) {
+    if (event.pointerType === "mouse" && pointer.mode === "press" && (event.buttons & 1) !== 1) {
       releasePointer(event.pointerId, event.pointerType, toLocalPoint(event));
       return;
     }
@@ -399,14 +464,7 @@ export default function Touchpad({
     const point = toLocalPoint(event);
     pointer.x = point.x;
     pointer.y = point.y;
-
-    const lastPoint = pointer.trail[pointer.trail.length - 1];
-    if (!lastPoint || Math.hypot(lastPoint.x - point.x, lastPoint.y - point.y) > 1) {
-      pointer.trail.push(point);
-      if (pointer.trail.length > TRAIL_MAX_POINTS) {
-        pointer.trail.shift();
-      }
-    }
+    appendTrailPoint(pointer, point);
 
     emitTouchState();
     scheduleDraw();
@@ -425,6 +483,15 @@ export default function Touchpad({
 
   const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
     releasePointer(event.pointerId, event.pointerType);
+  };
+
+  const handlePointerLeave = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointer = activePointersRef.current.get(event.pointerId);
+    if (!pointer || pointer.mode !== "hover") {
+      return;
+    }
+
+    releasePointer(event.pointerId, event.pointerType, toLocalPoint(event));
   };
 
   useEffect(() => {
@@ -495,10 +562,12 @@ export default function Touchpad({
             "linear-gradient(135deg, rgba(30,41,59,0.52) 0%, rgba(15,23,42,0.35) 100%)",
         }}
         onContextMenu={(event) => event.preventDefault()}
+        onPointerEnter={handlePointerEnter}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        onPointerLeave={handlePointerLeave}
       >
         <canvas ref={canvasRef} className="h-full w-full" />
       </div>
