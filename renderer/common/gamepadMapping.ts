@@ -54,8 +54,11 @@ export const normalizeGamepadButtonMapping = (value: unknown): GamepadButtonMapp
   const raw = value as Record<string, unknown>;
   for (const action of GAMEPAD_MAPPING_ACTIONS) {
     const nextValue = Number(raw[action]);
-    if (Number.isFinite(nextValue) && nextValue >= 0) {
-      nextMapping[action] = Math.trunc(nextValue);
+    if (Number.isFinite(nextValue)) {
+      const normalizedValue = Math.trunc(nextValue);
+      if (normalizedValue === -1 || normalizedValue >= 0) {
+        nextMapping[action] = normalizedValue;
+      }
     }
   }
 

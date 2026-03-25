@@ -41,9 +41,17 @@ function Map() {
   const handleMapConfirm = (name, idx) => {
     console.log(name, idx);
     setShowModal(false);
-    setMaping({
-      ...maping,
-      [name]: idx,
+    setMaping((prevMaping) => {
+      const nextMaping = { ...prevMaping };
+
+      for (const action of GAMEPAD_MAPPING_ACTIONS) {
+        if (action !== name && nextMaping[action] === idx) {
+          nextMaping[action] = -1;
+        }
+      }
+
+      nextMaping[name] = idx;
+      return nextMaping;
     });
   };
 

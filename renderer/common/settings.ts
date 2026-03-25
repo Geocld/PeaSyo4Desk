@@ -1,4 +1,6 @@
-const getSettingsMetas = (t) => {
+const getSettingsMetas = (t, options = {}) => {
+  const { isLinuxRuntime = false } = options as any;
+
   return {
     base: [
       {
@@ -63,7 +65,7 @@ const getSettingsMetas = (t) => {
         type: "radio",
         title: t("Stream renderer"),
         description: t("Stream renderer desc"),
-        needRestart: true,
+        needRestart: isLinuxRuntime,
         data: [
           { value: "ffmpeg", label: "FFmpeg" },
           { value: "webcodec", label: "WebCodec" },

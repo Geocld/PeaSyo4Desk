@@ -209,7 +209,13 @@ function SettingsPage() {
     void loadPsnUsers();
   }, []);
 
-  const settingsMetas = useMemo(() => getSettingsMetas(t), [t]);
+  const settingsMetas = useMemo(
+    () =>
+      getSettingsMetas(t, {
+        isLinuxRuntime: isLinuxOrSteamOsRuntime(),
+      }),
+    [t]
+  );
   const localMetas = settingsMetas.local || [];
   const remoteMetas = settingsMetas.remote || [];
   const visibleBaseMetas = useMemo(
