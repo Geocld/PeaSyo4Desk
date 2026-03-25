@@ -33,6 +33,15 @@ import {
   upsertConsoleCache,
 } from "../../common/remotePlay";
 
+const isLinuxOrSteamOsRuntime = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+  return /linux|steamos|steam deck/i.test(platformText);
+};
+
 function Home() {
   const { t, i18n: { language: locale } } = useTranslation("home");
   const { t: tCommon } = useTranslation("common");
@@ -242,8 +251,9 @@ function Home() {
       PENDING_STREAM_STORAGE_KEY,
       JSON.stringify(pendingConfig)
     );
-    const streamRoute =
-      String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase() === "webcodec"
+    const streamRoute = isLinuxOrSteamOsRuntime()
+      ? "webStream"
+      : String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase() === "webcodec"
         ? "webStream"
         : "stream";
     router.push(`/${locale}/${streamRoute}`);

@@ -2698,6 +2698,14 @@ function StreamPage() {
     const start = async () => {
       let rawStreamListener: any = null;
       try {
+        if (isLinuxRuntime()) {
+          await router.replace({
+            pathname: `/${String(router.locale || "en")}/webStream`,
+            query: router.query,
+          });
+          return;
+        }
+
         disconnectingRef.current = false;
         connectedToastShownRef.current = false;
         sessionConnectedRef.current = false;

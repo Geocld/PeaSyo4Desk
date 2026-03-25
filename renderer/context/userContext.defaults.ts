@@ -1,3 +1,16 @@
+const isLinuxLikePlatform = () => {
+  if (typeof process !== "undefined" && typeof process.platform === "string") {
+    return process.platform === "linux";
+  }
+
+  if (typeof navigator !== "undefined") {
+    const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
+    return /linux|steamos|steam deck/i.test(platformText);
+  }
+
+  return false;
+};
+
 export const defaultSettings = {
   locale: "en",
   fullscreen: false,
@@ -67,7 +80,7 @@ export const defaultSettings = {
   use_vulkan: false,
   fsr: false,
   fsr_sharpness: 2,
-  stream_renderer: "ffmpeg",
+  stream_renderer: isLinuxLikePlatform() ? "webcodec" : "ffmpeg",
   stream_webcodec_steamos_profile: "stable",
   stream_brightness: 100,
   stream_disconnect_standby: false,

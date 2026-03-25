@@ -47,17 +47,14 @@ export default class Application {
     this._log = Debug("peasyo");
 
     const settings: any = this._store.get('settings', defaultSettings)
-    const selectedStreamRenderer = String(
-      settings?.stream_renderer || defaultSettings.stream_renderer || "ffmpeg"
-    )
-      .trim()
-      .toLowerCase();
-    // Linux uses stream renderer selection to implicitly choose Vulkan mode:
-    // - ffmpeg => disable Vulkan
-    // - webcodec => enable Vulkan
-    const useVulkan = this._isLinux
-      ? selectedStreamRenderer === "webcodec"
-      : !!settings?.use_vulkan;
+    const selectedStreamRenderer = this._isLinux
+      ? "webcodec"
+      : String(settings?.stream_renderer || defaultSettings.stream_renderer || "ffmpeg")
+        .trim()
+        .toLowerCase();
+    // Linux now always routes streaming through WebCodec; Vulkan is controlled
+    // explicitly by the persisted use_vulkan setting instead of renderer mode.
+    const useVulkan = !!settings?.use_vulkan;
     const isLinuxWebCodecVulkanRoute =
       this._isLinux && useVulkan && selectedStreamRenderer === "webcodec";
 

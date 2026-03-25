@@ -8,12 +8,9 @@ export default class IpcSettings extends IpcBase {
             return nextSettings;
         }
 
-        const renderer = String(nextSettings?.stream_renderer || defaultSettings.stream_renderer || "ffmpeg")
-            .trim()
-            .toLowerCase();
         return {
             ...nextSettings,
-            use_vulkan: renderer === "webcodec",
+            stream_renderer: "webcodec",
         };
     }
 

@@ -61,11 +61,24 @@ const getSettingsMetas = (t, options = {}) => {
         ],
       },
       {
+        name: "use_vulkan",
+        type: "radio",
+        title: t("value_vulkan_title"),
+        description: t("value_vulkan_desc"),
+        linuxOnly: true,
+        needRestart: true,
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
         name: "stream_renderer",
         type: "radio",
         title: t("Stream renderer"),
         description: t("Stream renderer desc"),
         needRestart: isLinuxRuntime,
+        hideOnLinux: true,
         data: [
           { value: "ffmpeg", label: "FFmpeg" },
           { value: "webcodec", label: "WebCodec" },

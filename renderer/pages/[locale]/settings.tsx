@@ -224,6 +224,9 @@ function SettingsPage() {
         if (item.linuxOnly) {
           return showLinuxHdrHint;
         }
+        if (item.hideOnLinux && showLinuxHdrHint) {
+          return false;
+        }
         return true;
       }),
     [settingsMetas, showLinuxHdrHint]

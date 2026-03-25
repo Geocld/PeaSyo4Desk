@@ -13,6 +13,10 @@ const services: Record<StreamSessionMode, SessionService> = {
 let activeMode: StreamSessionMode = "ffmpeg";
 
 const resolveMode = (data: any): StreamSessionMode => {
+  if (process.platform === "linux") {
+    return "webcodec";
+  }
+
   const explicitMode = String(data?.sessionType || data?.stream_renderer || "")
     .trim()
     .toLowerCase();

@@ -1185,10 +1185,9 @@ function StreamPage() {
   }, [settings?.fsr_sharpness]);
 
   useEffect(() => {
-    const renderer = String(settings?.stream_renderer || "ffmpeg").trim().toLowerCase();
-    const linuxAutoVulkan = isLinuxRuntime() && renderer === "webcodec";
-    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && linuxAutoVulkan;
-  }, [settings?.stream_renderer]);
+    const linuxVulkanEnabled = isLinuxRuntime() && !!settings?.use_vulkan;
+    forceSdrCpuRenderingRef.current = isSteamOsRuntime() && linuxVulkanEnabled;
+  }, [settings?.use_vulkan]);
 
   useEffect(() => {
     fsrSharpnessRef.current = fsrSharpness;
