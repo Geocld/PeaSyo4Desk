@@ -637,7 +637,7 @@ function StreamPage() {
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
   );
   const nativeBinaryTransportRef = useRef(false);
-  const nativeVideoFrameRenderedAckPendingRef = useRef(false);
+  const nativeVideoFrameRenderedAckPendingCountRef = useRef(0);
   const controlTransportReadyRef = useRef(false);
   const controllerPollingIntervalMsRef = useRef(
     resolveControllerPollingIntervalMs(defaultSettings.polling_rate)
@@ -956,18 +956,17 @@ function StreamPage() {
       openSessionAlert(t("HdrWebgl2Required"));
     }
 
-    if (isLinuxRuntime()) {
-      const pendingFrame = pendingNativeVideoFrameBeforeConfigRef.current;
-      if (pendingFrame && pendingFrame.byteLength === frameSize) {
-        pendingNativeVideoFrameBeforeConfigRef.current = null;
-        latestFrameRef.current = pendingFrame;
-        if (!renderLoopScheduledRef.current) {
-          renderLoopScheduledRef.current = true;
-          rafRef.current = requestAnimationFrame(renderLoop);
-        }
-      } else if (pendingFrame) {
-        pendingNativeVideoFrameBeforeConfigRef.current = null;
+    const pendingFrame = pendingNativeVideoFrameBeforeConfigRef.current;
+    if (pendingFrame && pendingFrame.byteLength === frameSize) {
+      pendingNativeVideoFrameBeforeConfigRef.current = null;
+      latestFrameRef.current = pendingFrame;
+      if (!renderLoopScheduledRef.current) {
+        renderLoopScheduledRef.current = true;
+        rafRef.current = requestAnimationFrame(renderLoop);
       }
+    } else if (pendingFrame) {
+      pendingNativeVideoFrameBeforeConfigRef.current = null;
+      ackRenderedNativeVideoFrame();
     }
   };
 
@@ -2111,22 +2110,36 @@ function StreamPage() {
     }
   };
 
-  const ackRenderedNativeVideoFrame = () => {
-    if (!nativeVideoFrameRenderedAckPendingRef.current) {
+  const queueNativeVideoFrameRenderedAck = (count = 1) => {
+    if (!nativeBinaryTransportRef.current) {
       return;
     }
 
-    nativeVideoFrameRenderedAckPendingRef.current = false;
-    Ipc.sendStreamVideoFrameRendered();
+    const nextCount = Math.max(0, Math.trunc(count));
+    if (nextCount < 1) {
+      return;
+    }
+
+    nativeVideoFrameRenderedAckPendingCountRef.current += nextCount;
+  };
+
+  const ackRenderedNativeVideoFrame = (count = 1) => {
+    let remaining = Math.max(0, Math.trunc(count));
+    while (remaining > 0 && nativeVideoFrameRenderedAckPendingCountRef.current > 0) {
+      nativeVideoFrameRenderedAckPendingCountRef.current -= 1;
+      Ipc.sendStreamVideoFrameRendered();
+      remaining -= 1;
+    }
   };
 
   const handleVideoFrameBytes = (frameBytes: Uint8Array) => {
-    const shouldUseLinuxImmediateNativeAck =
-      isLinuxRuntime() && nativeBinaryTransportRef.current;
-
-    if (shouldUseLinuxImmediateNativeAck && !videoConfigReceivedRef.current) {
+    if (!videoConfigReceivedRef.current) {
+      if (pendingNativeVideoFrameBeforeConfigRef.current) {
+        droppedFramesRef.current += 1;
+        ackRenderedNativeVideoFrame();
+      }
       pendingNativeVideoFrameBeforeConfigRef.current = new Uint8Array(frameBytes);
-      Ipc.sendStreamVideoFrameRendered();
+      queueNativeVideoFrameRenderedAck();
       return;
     }
 
@@ -2146,16 +2159,11 @@ function StreamPage() {
     receivedFramesRef.current += 1;
     if (latestFrameRef.current) {
       droppedFramesRef.current += 1;
+      ackRenderedNativeVideoFrame();
     }
 
     latestFrameRef.current = frameBytes;
-    if (nativeBinaryTransportRef.current) {
-      if (shouldUseLinuxImmediateNativeAck) {
-        Ipc.sendStreamVideoFrameRendered();
-      } else {
-        nativeVideoFrameRenderedAckPendingRef.current = true;
-      }
-    }
+    queueNativeVideoFrameRenderedAck();
     if (!renderLoopScheduledRef.current) {
       renderLoopScheduledRef.current = true;
       rafRef.current = requestAnimationFrame(renderLoop);
@@ -2704,7 +2712,7 @@ function StreamPage() {
         fsrGpuRenderingDisabledRef.current = false;
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
-        nativeVideoFrameRenderedAckPendingRef.current = false;
+        nativeVideoFrameRenderedAckPendingCountRef.current = 0;
         controlTransportReadyRef.current = false;
         lastSentControllerStateRef.current = createIdleControllerState();
         lastControllerSendAtRef.current = 0;
@@ -2981,7 +2989,7 @@ function StreamPage() {
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       nativeBinaryTransportRef.current = false;
-      nativeVideoFrameRenderedAckPendingRef.current = false;
+      nativeVideoFrameRenderedAckPendingCountRef.current = 0;
       if (cleanupRawListener) {
         cleanupRawListener();
         cleanupRawListener = null;
