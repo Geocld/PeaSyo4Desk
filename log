@@ -1,0 +1,126 @@
+[stream-service] [session:1] recreate video decode pipeline for sync {
+  reason: 'compressed sample backlog',
+  keptSampleCount: 5,
+  keptSampleBytes: 401871,
+  nextQueueCount: 0,
+  hasSyncFrame: false,
+  hasCachedConfig: true,
+  decoderPlan: 'software'
+}
+[stream-service] ffmpeg video decoder started (software): ffmpeg -f hevc -fflags +genpts -probesize 32 -analyzeduration 0 -threads 0 -i pipe:0 -fflags nobuffer -flags low_delay -vsync 0 -an -sn -dn -pix_fmt yuv420p -f rawvideo -vcodec rawvideo pipe:1
+[stream-service] video decoder resync requested (compressed sample backlog), waiting for next sync frame
+[stream-service] [session:1] drop video sample while waiting for next sync frame { dropCount: 2, sampleBytes: 76617, hasConfig: false, hasSlice: true }
+[stream-service] [session:1] drop video sample while waiting for next sync frame { dropCount: 3, sampleBytes: 77554, hasConfig: false, hasSlice: true }
+[stream-service] ffmpeg video decoder error: ffmpeg was killed with signal SIGKILL
+[stream-service] [session:1] drop video sample while waiting for next sync frame { dropCount: 60, sampleBytes: 84093, hasConfig: false, hasSlice: true }
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 120,
+  sampleBytes: 84023,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 180,
+  sampleBytes: 76338,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 240,
+  sampleBytes: 53376,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 300,
+  sampleBytes: 82723,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 360,
+  sampleBytes: 46913,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 420,
+  sampleBytes: 47963,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 480,
+  sampleBytes: 24322,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 540,
+  sampleBytes: 28875,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 600,
+  sampleBytes: 36819,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 660,
+  sampleBytes: 42909,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 720,
+  sampleBytes: 45890,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 780,
+  sampleBytes: 29981,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 840,
+  sampleBytes: 36676,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 900,
+  sampleBytes: 44595,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 960,
+  sampleBytes: 36459,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] drop video sample while waiting for next sync frame {
+  dropCount: 1020,
+  sampleBytes: 37801,
+  hasConfig: false,
+  hasSlice: true
+}
+[stream-service] [session:1] stopSession requested {
+  closeSocketServer: true,
+  wsClientCount: 1,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 131072
+}
+[stream-service] [session:1] cleanup session resources {
+  wsClientCount: 1,
+  streamSessionStarted: true,
+  nativeVideoFramesInFlight: 0,
+  pendingVideoSampleBytes: 0,
+  pendingDecodedBytes: 131072
+}
+[stream-service] [session:1] session event { name: 'quit', reason: 'Stopped' }

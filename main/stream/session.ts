@@ -1042,7 +1042,19 @@ const getMaxPendingVideoSampleBytes = () => {
 };
 
 const shouldResyncVideoDecoderOnBacklog = () => {
-  return !!streamVideoConfig;
+  if (!streamVideoConfig) {
+    return false;
+  }
+
+  // Linux software decode can transiently build a few compressed samples during
+  // motion bursts. Forcing a decoder resync without an in-queue sync frame
+  // freezes the stream waiting for the next keyframe, which is worse than
+  // tolerating short-lived backlog.
+  if (IS_LINUX && activeVideoDecoderPlanName === "software") {
+    return false;
+  }
+
+  return true;
 };
 
 const clearPendingVideoSampleQueue = () => {
