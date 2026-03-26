@@ -231,6 +231,7 @@ type StreamPerformanceStats = {
   pl: string;
   br: string;
   decode: string;
+  decodeAvailable: boolean;
   decodeFrames: number;
   raw: {
     rttMs: number;
@@ -3064,6 +3065,7 @@ const getPerformanceStats = (): StreamPerformanceStats => {
     pl: packetLossRatio > 0 ? `${(packetLossRatio * 100).toFixed(2)} %` : "0.00 %",
     br: measuredBitrateMbps > 0 ? `${measuredBitrateMbps.toFixed(2)} Mbps` : "0.00 Mbps",
     decode: decodeText,
+    decodeAvailable: false,
     decodeFrames: decodedFrameCount,
     raw: {
       rttMs,

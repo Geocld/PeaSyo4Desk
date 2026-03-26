@@ -1,17 +1,28 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "next-i18next";
 import { useSettings } from "../context/userContext";
+import { PENDING_STREAM_STORAGE_KEY } from "../common/remotePlay";
 import Ipc from "../lib/ipc";
 
 type PerformProps = {
   connectState?: string;
 };
 
+type StreamPerformance = {
+  resolution?: string;
+  rtt?: string;
+  pl?: string;
+  br?: string;
+  decode?: string;
+  decodeAvailable?: boolean;
+};
+
 function Perform({ connectState }: PerformProps) {
   const { t } = useTranslation('cloud');
   const { settings } = useSettings();
-  const [performance, setPerformance] = useState<any>({});
+  const [performance, setPerformance] = useState<StreamPerformance>({});
   const [isLight, setIslight] = useState(false);
+  const [isRemoteSession, setIsRemoteSession] = useState(false);
 
   useEffect(() => {
     const localTheme = localStorage.getItem('theme');
@@ -19,6 +30,25 @@ function Perform({ connectState }: PerformProps) {
       setIslight(true)
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
+      if (!raw) {
+        setIsRemoteSession(false);
+        return;
+      }
+
+      const pendingConfig = JSON.parse(raw);
+      setIsRemoteSession(!!pendingConfig?.isRemote);
+    } catch {
+      setIsRemoteSession(false);
+    }
+  }, [connectState]);
 
   useEffect(() => {
     let alive = true;
@@ -50,12 +80,19 @@ function Perform({ connectState }: PerformProps) {
     };
   }, [connectState]);
 
-  let resolutionText = '';
-  if (performance.resolution) {
-    resolutionText = performance.resolution;
-  }
+  const configuredResolution = Number(
+    isRemoteSession ? settings?.remote_resolution : settings?.resolution
+  );
+  const resolutionText =
+    performance.resolution ||
+    (configuredResolution > 0 ? `${configuredResolution}P` : "--");
 
-  const codec = settings.codec.indexOf('H265') > -1 ? 'HEVC' : 'AVC';
+  const configuredCodec = String(
+    isRemoteSession ? settings?.remote_codec : settings?.codec || "H265"
+  ).toUpperCase();
+  const codec = configuredCodec.indexOf("H265") > -1 ? 'HEVC' : 'AVC';
+  const isFsrEnabled = !!settings?.fsr;
+  const showDecode = performance.decodeAvailable !== false;
 
   return (
     <>
@@ -64,7 +101,7 @@ function Perform({ connectState }: PerformProps) {
           <div id="performances-x" className="flex flex-row justify-center w-full">
             <span className={isLight ? "performance-x-wrap-light" : "performance-x-wrap"}>
               <span className="text-xs">
-                {resolutionText || "--"}{settings.fsr ? "(FSR)" : ""} | &nbsp;
+                {resolutionText}{isFsrEnabled ? "(FSR)" : ""} | &nbsp;
               </span>
               <span className="text-xs">
                 {t("RTT")}: {performance.rtt || "--"} | &nbsp;
@@ -73,17 +110,20 @@ function Perform({ connectState }: PerformProps) {
                 {t("PL")}: {performance.pl || "--"} | &nbsp;
               </span>
               <span className="text-xs">
-                {t("Bitrate")}: {performance.br || "--"} | &nbsp;
+                {t("Bitrate")}: {performance.br || "--"}
+                {showDecode ? " | " : ""}
               </span>
-              <span className="text-xs">
-                {t("DT")}: {performance.decode || "--"}({codec})
-              </span>
+              {showDecode ? (
+                <span className="text-xs">
+                  {t("DT")}: {performance.decode || "--"}({codec})
+                </span>
+              ) : null}
             </span>
           </div>
         ) : (
           <div id="performances">
             <div className="px-1 text-sm">
-              {resolutionText || "--"}{settings.fsr ? "(FSR)" : ""}
+              {resolutionText}{isFsrEnabled ? "(FSR)" : ""}
             </div>
             <div className="px-1 text-sm">
               {t("RTT")}: {performance.rtt || "--"}
@@ -94,9 +134,11 @@ function Perform({ connectState }: PerformProps) {
             <div className="px-1 text-sm">
               {t("Bitrate")}: {performance.br || "--"}
             </div>
-            <div className="px-1 text-sm">
-              {t("DT")}: {performance.decode || "--"}({codec})
-            </div>
+            {showDecode ? (
+              <div className="px-1 text-sm">
+                {t("DT")}: {performance.decode || "--"}({codec})
+              </div>
+            ) : null}
           </div>
         )
       }

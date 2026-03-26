@@ -3145,6 +3145,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    setShowPerformance(false);
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
     touchpadStateRef.current = createIdleTouchState();

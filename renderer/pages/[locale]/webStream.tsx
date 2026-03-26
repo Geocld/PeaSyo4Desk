@@ -3703,6 +3703,7 @@ function StreamPage() {
           !!pendingConfig?.isRemote
         );
         const clientVideoCapabilities = await detectClientVideoCapabilities(requestedCodecFamily);
+        console.log('clientVideoCapabilities:', clientVideoCapabilities)
         const negotiatedStreamCodec = resolveNegotiatedStreamCodec(
           requestedCodecFamily,
           clientVideoCapabilities
@@ -4075,6 +4076,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    setShowPerformance(false);
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
     touchpadStateRef.current = createIdleTouchState();

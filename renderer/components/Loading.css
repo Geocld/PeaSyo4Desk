@@ -22,6 +22,7 @@
 	user-drag: none;
 }
 .loadingText {
+	padding-top: 5px;
 	color: #DF6069;
 	font-weight: bold;
 }

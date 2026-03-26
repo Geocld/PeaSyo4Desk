@@ -102,7 +102,7 @@
   "Auto": "自動",
   "Custom": "自定義",
   "Automatic bitrate will follow the selected resolution and use {{bitrate}} kbps.": "自動碼率會跟隨當前分辨率，使用 {{bitrate}} kbps。",
-  "Custom bitrate (kbps)": "自定義碼率（kbps）",
+  "Custom bitrate (kbps)": "自定義碼率",
   "Save": "保存",
   "Save changes": "保存更改",
   "Cancel": "取消",

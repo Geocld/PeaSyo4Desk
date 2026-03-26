@@ -33,8 +33,8 @@ const getSettingsMetas = (t, options = {}) => {
         title: t("Fullscreen"),
         description: t("Whether open application with fullscreen"),
         data: [
-          { value: true, label: t("Enable") },
           { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
         ],
       },
       {

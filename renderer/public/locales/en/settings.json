@@ -107,7 +107,7 @@
   "Auto": "Auto",
   "Custom": "Custom",
   "Automatic bitrate will follow the selected resolution and use {{bitrate}} kbps.": "Automatic bitrate will follow the selected resolution and use {{bitrate}} kbps.",
-  "Custom bitrate (kbps)": "Custom bitrate (kbps)",
+  "Custom bitrate (kbps)": "Custom bitrate",
   "Save": "Save",
   "Save changes": "Save changes",
   "Reset": "Reset",

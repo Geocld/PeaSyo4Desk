@@ -41,6 +41,7 @@
     "qrcode.react": "^4.2.0",
     "react-i18next": "^15.0.1",
     "react-query": "^3.39.3",
+    "react-spinners": "^0.17.0",
     "semver": "^7.6.3",
     "three": "0.150.1",
     "uplot": "^1.6.30",
