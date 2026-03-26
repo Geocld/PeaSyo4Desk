@@ -23,6 +23,13 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.3" date="2026-03-26">
+     <description>
+        <ul>
+          <li>Optimize video render latency</li>
+        </ul>
+     </description>
+    </release>
     <release version="1.0.1" date="2026-03-23">
      <description>
         <ul>

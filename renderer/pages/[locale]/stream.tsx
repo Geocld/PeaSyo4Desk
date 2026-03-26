@@ -556,6 +556,7 @@ function StreamPage() {
   const [showFsrModal, setShowFsrModal] = useState(false);
   const [isPs5Console, setIsPs5Console] = useState(true);
   const [brightness, setBrightness] = useState(BRIGHTNESS_DEFAULT);
+  const [disconnectAndStandbyOnExit, setDisconnectAndStandbyOnExit] = useState(false);
   const [fsrSharpness, setFsrSharpness] = useState(
     normalizeFsrSharpness(defaultSettings.fsr_sharpness)
   );
@@ -666,7 +667,6 @@ function StreamPage() {
   const shouldShowHdrCanvas =
     shouldShowVideo && isHdrVideoFormat(videoFormat) && (!isFsrEnabled || !fsrFrameRendered);
   const shouldShowTouchpads = shouldShowVideo && showTouchpadOverlay && !sessionAlert;
-  const disconnectAndStandbyOnExit = !!settings?.stream_disconnect_standby;
   const persistedBrightness = normalizeBrightnessSetting(settings?.stream_brightness);
   const touchpadVerticalPosition = normalizeTouchpadVerticalPosition(
     settings?.stream_touchpad_position
@@ -736,10 +736,7 @@ function StreamPage() {
   };
 
   const handleDisconnectStandbySwitchChange = (enabled: boolean) => {
-    setSettings({
-      ...settings,
-      stream_disconnect_standby: enabled,
-    });
+    setDisconnectAndStandbyOnExit(enabled);
   };
 
   const handleTouchpadPositionChange = (position: TouchpadVerticalPosition) => {
@@ -2737,6 +2734,7 @@ function StreamPage() {
         clearConnectedFeedbackTimers();
         setFsrFrameRendered(false);
         setVideoReady(false);
+        setDisconnectAndStandbyOnExit(false);
         setAudioMutedState(false);
         setAudioAvailable(false);
         audioAvailableRef.current = false;
