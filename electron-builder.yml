@@ -14,6 +14,8 @@ files:
 asarUnpack:
   - node_modules/peasyo-sdl-lib/**/*
 extraResources:
+  - from: resources/icon.ico
+    to: icon.ico
   - from: node_modules/@ffmpeg-installer
     to: ffmpeg-installer
     filter:
@@ -47,7 +49,7 @@ dmg:
 # Windows configuration
 win:
   icon: resources/icon.ico
-  signAndEditExecutable: false
+  signAndEditExecutable: true
   target:
     - "zip"
     - "nsis"

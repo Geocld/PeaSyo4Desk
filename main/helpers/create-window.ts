@@ -1,10 +1,27 @@
 import {
+    app as ElectronApp,
     screen,
     BrowserWindow,
     BrowserWindowConstructorOptions,
 } from 'electron'
 import Store from 'electron-store'
+import fs from 'node:fs'
 import path from 'node:path'
+
+const resolveWindowIconPath = (): string | undefined => {
+    if (process.platform !== 'win32') {
+        return undefined
+    }
+
+    const candidatePaths = ElectronApp.isPackaged
+        ? [
+            path.join(process.resourcesPath, 'icon.ico'),
+            path.join(process.resourcesPath, 'resources', 'icon.ico'),
+        ]
+        : [path.resolve(__dirname, '..', '..', 'resources', 'icon.ico')]
+
+    return candidatePaths.find(candidatePath => fs.existsSync(candidatePath))
+}
 
 export default (windowName: string, options: BrowserWindowConstructorOptions): BrowserWindow => {
     const key = 'window-state'
@@ -71,6 +88,7 @@ export default (windowName: string, options: BrowserWindowConstructorOptions): B
     const browserOptions: BrowserWindowConstructorOptions = {
         ...options,
         ...state,
+        icon: options.icon ?? resolveWindowIconPath(),
         webPreferences: {
             // nodeIntegration: true,
             // contextIsolation: false,
