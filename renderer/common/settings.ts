@@ -102,8 +102,8 @@ const getSettingsMetas = (t, options = {}) => {
         title: t("Gamepad input kernel"),
         description: t("Gamepad input kernel desc"),
         data: [
-          { value: "node", label: t("Native") },
           { value: "web", label: t("Web") },
+          { value: "node", label: t("Native") },
         ],
       },
       {
