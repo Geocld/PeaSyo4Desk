@@ -3000,6 +3000,10 @@ const createSession = (sessionOptions: any) => {
         pushControllerState("connected-init");
       } else if (event?.name === "quit") {
         broadcastText({ type: "session_status", status: "quit" });
+      } else if (event?.name === "rumble") {
+        // TODO: handle rumble event(from PS4 games)
+      } else if (event?.name === "trigger_effects") {
+        // TODO: handle adaptive trigger effects event(from PS5 games)
       } else {
         broadcastText({ type: "session_status", status: event?.name || "unknown" });
       }
