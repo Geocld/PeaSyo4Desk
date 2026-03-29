@@ -24,6 +24,7 @@ type ConsoleItem = {
   hostId?: string;
   hostType?: string;
   isPs5?: boolean;
+  target?: number;
   stateName?: string;
 };
 
@@ -49,6 +50,7 @@ type DiscoveredConsole = {
   hostId?: string;
   hostType?: string;
   isPs5: boolean;
+  target?: number;
   stateName?: string;
   name?: string;
 };
@@ -89,6 +91,7 @@ const mapDiscoveredConsole = (item: any): DiscoveredConsole => {
     hostId: hostId || undefined,
     hostType: String(item?.hostType || (item?.isPs5 ? "PS5" : "PS4")).trim(),
     isPs5: Boolean(item?.isPs5),
+    target: typeof item?.target === "number" ? item.target : undefined,
     stateName: String(item?.stateName || "").trim(),
     name: String(item?.hostName || "").trim(),
   };
@@ -219,6 +222,10 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       hostId: matchedConsole.hostId || props.consoleItem.hostId,
       hostType: matchedConsole.hostType || props.consoleItem.hostType,
       isPs5: matchedConsole.isPs5,
+      target:
+        typeof matchedConsole.target === "number"
+          ? matchedConsole.target
+          : props.consoleItem.target,
       stateName: matchedConsole.stateName || props.consoleItem.stateName,
     };
   };
@@ -238,6 +245,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       (nextConsoleInfo.hostId || "") !== (props.consoleItem.hostId || "") ||
       (nextConsoleInfo.hostType || "") !== (props.consoleItem.hostType || "") ||
       Boolean(nextConsoleInfo.isPs5) !== Boolean(props.consoleItem.isPs5) ||
+      Number(nextConsoleInfo.target || 0) !== Number(props.consoleItem.target || 0) ||
       (nextConsoleInfo.stateName || "") !== (props.consoleItem.stateName || "");
 
     if (hasChanged) {

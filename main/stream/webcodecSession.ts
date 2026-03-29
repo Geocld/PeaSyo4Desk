@@ -177,6 +177,9 @@ type StartStreamSessionArgs = {
     registKey?: string;
     morning?: string;
     apName?: string;
+    hostType?: string;
+    isPs5?: boolean;
+    target?: number;
   };
 };
 
@@ -730,6 +733,53 @@ const resolvePlatformCodec = (codec: number) => {
     return (chiaki as any).codecs.H265;
   }
   return codec;
+};
+
+const CHIAKI_PS5_TARGET_FLOOR = 1000000;
+
+const resolveSessionPs5Flag = (
+  argsPs5: boolean | undefined,
+  consoleInfo: {
+    apName?: string;
+    hostType?: string;
+    isPs5?: boolean;
+    target?: number;
+  }
+) => {
+  if (typeof argsPs5 === "boolean") {
+    return argsPs5;
+  }
+
+  const numericTarget = Number(consoleInfo.target);
+  if (Number.isFinite(numericTarget) && numericTarget > 0) {
+    return numericTarget >= CHIAKI_PS5_TARGET_FLOOR;
+  }
+
+  if (typeof consoleInfo.isPs5 === "boolean") {
+    return consoleInfo.isPs5;
+  }
+
+  const hostType = String(consoleInfo.hostType || "").trim().toUpperCase();
+  if (hostType) {
+    if (hostType.includes("PS5")) {
+      return true;
+    }
+    if (hostType.includes("PS4")) {
+      return false;
+    }
+  }
+
+  const apName = String(consoleInfo.apName || "").trim().toUpperCase();
+  if (apName) {
+    if (apName.includes("PS5")) {
+      return true;
+    }
+    if (apName.includes("PS4")) {
+      return false;
+    }
+  }
+
+  return true;
 };
 
 const resolveInputFormat = (codec: number) => {
@@ -2949,9 +2999,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     profileResolution.height
   );
   const psnAccountId = resolvePsnAccountId(args.loginInfo);
-  const ps5 = typeof args.ps5 === "boolean"
-    ? args.ps5
-    : !String(consoleInfo.apName || "").toUpperCase().includes("PS4");
+  const ps5 = resolveSessionPs5Flag(args.ps5, consoleInfo);
 
   streamVideoConfig = {
     width: profileResolution.width,

@@ -30,6 +30,7 @@ export type ConsoleCacheItem = {
   hostType?: string;
   hostId?: string;
   isPs5?: boolean;
+  target?: number;
   stateName?: string;
 };
 
@@ -66,6 +67,22 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
   const consoleId = buildStorageConsoleId(item);
   const host = String(item.host || "").trim();
   const remoteHost = String(item.remoteHost || "").trim();
+  const parsedRemoteHost = String(item.parsedRemoteHost || "").trim();
+  const userCredential =
+    typeof item.userCredential === "number" || typeof item.userCredential === "string"
+      ? item.userCredential
+      : undefined;
+  const hostType = String(item.hostType || "").trim();
+  const hostId = String(item.hostId || "").trim();
+  const inferredIsPs5 =
+    typeof item.isPs5 === "boolean"
+      ? item.isPs5
+      : hostType
+        ? hostType.toUpperCase().includes("PS5")
+        : apName
+          ? apName.toUpperCase().includes("PS5")
+          : undefined;
+  const target = Number(item.target);
   const registedTime = Number(item.registedTime || Date.now());
 
   return {
@@ -80,6 +97,12 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
     consoleId,
     host,
     remoteHost,
+    parsedRemoteHost: parsedRemoteHost || undefined,
+    ...(userCredential !== undefined ? { userCredential } : {}),
+    hostType: hostType || undefined,
+    hostId: hostId || undefined,
+    ...(typeof inferredIsPs5 === "boolean" ? { isPs5: inferredIsPs5 } : {}),
+    ...(Number.isFinite(target) ? { target } : {}),
     registedTime: Number.isFinite(registedTime) ? registedTime : Date.now(),
   };
 };
