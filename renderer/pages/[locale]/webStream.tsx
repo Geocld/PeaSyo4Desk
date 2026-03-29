@@ -48,9 +48,10 @@ const WS_BINARY_VIDEO_ENCODED = 3;
 const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
 const DISPLAY_REFRESH_INTERVAL_DEFAULT_US = Math.round(1000000 / 60);
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
-const AUDIO_CONTEXT_LATENCY_SEC = 0.08;
-const AUDIO_SCHEDULE_LEAD_SEC = 0.04;
-const AUDIO_MAX_BUFFER_SEC = 0.8;
+const AUDIO_CONTEXT_LATENCY_SEC = 0.02;
+const AUDIO_SCHEDULE_LEAD_SEC = 0.01;
+const AUDIO_START_BUFFER_SEC = 0.06;
+const AUDIO_MAX_BUFFER_SEC = 0.18;
 const SHORT_PS_PRESS_MS = 150;
 const LONG_PS_PRESS_MS = 1000;
 const MIN_CONTROLLER_POLLING_RATE = 30;
@@ -2714,10 +2715,18 @@ function StreamPage() {
     pendingAudioQueueRef.current.push(arrayBuffer);
     pendingAudioBytesRef.current += arrayBuffer.byteLength;
 
-    while (
-      pendingAudioBytesRef.current > MAX_PENDING_AUDIO_BYTES &&
-      pendingAudioQueueRef.current.length > 0
-    ) {
+    const bytesPerSecond =
+      Math.max(1, audioRateRef.current) * Math.max(1, audioChannelsRef.current) * 4;
+    const startupQueueByteLimit = Math.max(
+      Math.floor(bytesPerSecond * AUDIO_START_BUFFER_SEC),
+      Math.max(1, audioFrameSamplesRef.current) * Math.max(1, audioChannelsRef.current) * 4
+    );
+    const queueByteLimit =
+      !audioUnlockedRef.current || !videoReadyRef.current || !audioPlaybackEnabledRef.current
+        ? Math.min(MAX_PENDING_AUDIO_BYTES, startupQueueByteLimit)
+        : MAX_PENDING_AUDIO_BYTES;
+
+    while (pendingAudioBytesRef.current > queueByteLimit && pendingAudioQueueRef.current.length > 0) {
       const dropped = pendingAudioQueueRef.current.shift();
       if (dropped) {
         pendingAudioBytesRef.current -= dropped.byteLength;
@@ -2782,7 +2791,6 @@ function StreamPage() {
     if (nextAudioTimeRef.current - now > AUDIO_MAX_BUFFER_SEC) {
       clearScheduledAudioSources();
       nextAudioTimeRef.current = targetStartTime;
-      return false;
     }
 
     const source = audioContext.createBufferSource();
@@ -2806,6 +2814,24 @@ function StreamPage() {
   };
 
   const flushPendingAudio = () => {
+    const bytesPerSecond =
+      Math.max(1, audioRateRef.current) * Math.max(1, audioChannelsRef.current) * 4;
+    const startupQueueByteLimit = Math.max(
+      Math.floor(bytesPerSecond * AUDIO_START_BUFFER_SEC),
+      Math.max(1, audioFrameSamplesRef.current) * Math.max(1, audioChannelsRef.current) * 4
+    );
+
+    while (
+      pendingAudioBytesRef.current > startupQueueByteLimit &&
+      pendingAudioQueueRef.current.length > 0
+    ) {
+      const dropped = pendingAudioQueueRef.current.shift();
+      if (dropped) {
+        pendingAudioBytesRef.current -= dropped.byteLength;
+        audioDroppedChunksRef.current += 1;
+      }
+    }
+
     while (pendingAudioQueueRef.current.length > 0) {
       const buf = pendingAudioQueueRef.current.shift();
       if (!buf) continue;
@@ -3082,14 +3108,10 @@ function StreamPage() {
             color: "success",
           });
 
-          audioStartTimerRef.current = setTimeout(() => {
-            audioStartTimerRef.current = null;
-            audioPlaybackEnabledRef.current = true;
-
-            if (audioAvailableRef.current) {
-              void ensureAudioContext(true);
-            }
-          }, 180);
+          audioPlaybackEnabledRef.current = true;
+          if (audioAvailableRef.current) {
+            void ensureAudioContext(true);
+          }
         });
       });
     };
