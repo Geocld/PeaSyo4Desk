@@ -2902,6 +2902,21 @@ const formatHapticPeak = (peak: number) => {
   return level;
 };
 
+const broadcastRumbleEvent = (event: any) => {
+  broadcastText({
+    type: "session_event",
+    name: "rumble",
+    event: {
+      name: "rumble",
+      unknown: clampInt(event?.unknown, 0, 0xff),
+      left: clampInt(event?.left, 0, 0xff),
+      right: clampInt(event?.right, 0, 0xff),
+      peakLeft: clampInt(event?.peakLeft, 0, 0xff),
+      peakRight: clampInt(event?.peakRight, 0, 0xff),
+    },
+  });
+};
+
 const dispatchHapticsFrameAsRumble = (frame: any) => {
   const frameData = frame?.data;
   const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
@@ -2934,17 +2949,12 @@ const dispatchHapticsFrameAsRumble = (frame: any) => {
   const left = hapticLevelFromPeak(peakLeft);
   const right = hapticLevelFromPeak(peakRight);
 
-  broadcastText({
-    type: "session_event",
-    name: "rumble",
-    event: {
-      name: "rumble",
-      unknown: buffer[0],
-      left,
-      right,
-      peakLeft: formatHapticPeak(peakLeft),
-      peakRight: formatHapticPeak(peakRight),
-    },
+  broadcastRumbleEvent({
+    unknown: buffer[0],
+    left,
+    right,
+    peakLeft: formatHapticPeak(peakLeft),
+    peakRight: formatHapticPeak(peakRight),
   });
 };
 
@@ -3090,29 +3100,35 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
 const createSession = (sessionOptions: any) => {
   streamSession = new (chiaki as any).Session(sessionOptions, {
     onEvent: (event) => {
-      if (event?.name === "connected" || event?.name === "quit") {
+      const eventName = String(event?.name || "unknown");
+      if (eventName === "connected" || eventName === "quit") {
         streamDebugLog("session event", {
-          name: event?.name || "unknown",
+          name: eventName,
           reason: String(event?.reasonName || event?.reason || ""),
         });
       }
-      broadcastText({
-        type: "session_event",
-        name: event?.name || "unknown",
-        event: serializeSessionEvent(event),
-      });
 
-      if (event?.name === "connected") {
+      if (eventName === "rumble") {
+        // Session rumble packets already carry direct motor levels, so forward
+        // them as-is without the haptics-audio peak filtering path.
+        broadcastRumbleEvent(event);
+      } else {
+        broadcastText({
+          type: "session_event",
+          name: eventName,
+          event: serializeSessionEvent(event),
+        });
+      }
+
+      if (eventName === "connected") {
         broadcastText({ type: "session_status", status: "connected" });
         pushControllerState("connected-init");
-      } else if (event?.name === "quit") {
+      } else if (eventName === "quit") {
         broadcastText({ type: "session_status", status: "quit" });
-      } else if (event?.name === "rumble") {
-        // TODO: handle rumble event(from PS4 games)
-      } else if (event?.name === "trigger_effects") {
+      } else if (eventName === "trigger_effects") {
         // TODO: handle adaptive trigger effects event(from PS5 games)
       } else {
-        broadcastText({ type: "session_status", status: event?.name || "unknown" });
+        broadcastText({ type: "session_status", status: eventName });
       }
     },
     onLog: () => {
