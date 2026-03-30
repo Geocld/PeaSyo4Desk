@@ -6,12 +6,35 @@ const HID_USAGE_ID_GAMEPAD = 0x0005;
 
 const DUALSENSE_INPUT_REPORT_USB = 0x01;
 const DUALSENSE_INPUT_REPORT_BT = 0x31;
+const DUALSENSE_INPUT_OFFSET_BT = 1;
 const DUALSENSE_TOUCH_OFFSET_USB = 32;
 const DUALSENSE_TOUCH_OFFSET_BT = 33;
 const DUALSENSE_TOUCH_DATA_BYTES = 8;
 const DUALSENSE_TOUCHPAD_WIDTH = 1919;
 const DUALSENSE_TOUCHPAD_HEIGHT = 1079;
 const DUALSENSE_TOUCH_INACTIVE_MASK = 0x80;
+const DUALSENSE_STANDARD_BUTTON_COUNT = 18;
+const DUALSENSE_STANDARD_BUTTON_INDEX = {
+  CROSS: 0,
+  CIRCLE: 1,
+  SQUARE: 2,
+  TRIANGLE: 3,
+  L1: 4,
+  R1: 5,
+  L2: 6,
+  R2: 7,
+  CREATE: 8,
+  OPTIONS: 9,
+  L3: 10,
+  R3: 11,
+  DPAD_UP: 12,
+  DPAD_DOWN: 13,
+  DPAD_LEFT: 14,
+  DPAD_RIGHT: 15,
+  PS: 16,
+  TOUCHPAD: 17,
+} as const;
+const DUALSENSE_DPAD_DIRECTION_NEUTRAL = 0x08;
 
 const DUALSENSE_OUTPUT_REPORT_USB = 0x02;
 const DUALSENSE_OUTPUT_REPORT_BT = 0x31;
@@ -75,9 +98,21 @@ type TouchPoint = {
   y?: number;
 };
 
+type DualSenseButtonState = {
+  pressed: boolean;
+  value: number;
+};
+
 export type DualSenseTouchState = {
   touchIdNext: number;
   touches: [TouchPoint, TouchPoint];
+};
+
+export type DualSenseInputState = {
+  reportId: number;
+  axes: [number, number, number, number];
+  buttons: DualSenseButtonState[];
+  touchState: DualSenseTouchState;
 };
 
 type DeviceConnectionType = "usb" | "bluetooth" | "unknown";
@@ -86,6 +121,7 @@ type DeviceContext = {
   device: HIDDevice;
   connectionType: DeviceConnectionType;
   lastInputReportId: number;
+  inputState: DualSenseInputState;
   rawTouchState: DualSenseTouchState;
   touchState: DualSenseTouchState;
   nextSessionTouchId: number;
@@ -139,12 +175,49 @@ const createIdleTouchState = (): DualSenseTouchState => ({
   touches: [{ id: -1 }, { id: -1 }],
 });
 
+const createIdleDualSenseButtonState = (): DualSenseButtonState => ({
+  pressed: false,
+  value: 0,
+});
+
+const createIdleDualSenseButtons = () => {
+  return Array.from({ length: DUALSENSE_STANDARD_BUTTON_COUNT }, () => {
+    return createIdleDualSenseButtonState();
+  });
+};
+
+const createIdleDualSenseInputState = (): DualSenseInputState => ({
+  reportId: 0,
+  axes: [0, 0, 0, 0],
+  buttons: createIdleDualSenseButtons(),
+  touchState: createIdleTouchState(),
+});
+
 const cloneTouchState = (touchState: DualSenseTouchState): DualSenseTouchState => ({
   touchIdNext: clamp(touchState.touchIdNext, 0, 127),
   touches: [
     cloneTouchPoint(touchState.touches[0]),
     cloneTouchPoint(touchState.touches[1]),
   ],
+});
+
+const cloneDualSenseButtonState = (button: DualSenseButtonState): DualSenseButtonState => ({
+  pressed: !!button?.pressed,
+  value: clamp(Number(button?.value ?? 0), 0, 1),
+});
+
+const cloneDualSenseInputState = (inputState: DualSenseInputState): DualSenseInputState => ({
+  reportId: Number(inputState.reportId) || 0,
+  axes: [
+    clamp(Number(inputState.axes[0] ?? 0), -1, 1),
+    clamp(Number(inputState.axes[1] ?? 0), -1, 1),
+    clamp(Number(inputState.axes[2] ?? 0), -1, 1),
+    clamp(Number(inputState.axes[3] ?? 0), -1, 1),
+  ],
+  buttons: Array.from({ length: DUALSENSE_STANDARD_BUTTON_COUNT }, (_, index) => {
+    return cloneDualSenseButtonState(inputState.buttons[index] || createIdleDualSenseButtonState());
+  }),
+  touchState: cloneTouchState(inputState.touchState),
 });
 
 const isSameTouchPoint = (left: TouchPoint, right: TouchPoint) => {
@@ -163,6 +236,31 @@ const isSameTouchState = (left: DualSenseTouchState, right: DualSenseTouchState)
     isSameTouchPoint(left.touches[0], right.touches[0]) &&
     isSameTouchPoint(left.touches[1], right.touches[1])
   );
+};
+
+const isSameDualSenseButtonState = (left: DualSenseButtonState, right: DualSenseButtonState) => {
+  return !!left?.pressed === !!right?.pressed && Number(left?.value ?? 0) === Number(right?.value ?? 0);
+};
+
+const isSameDualSenseInputState = (left: DualSenseInputState, right: DualSenseInputState) => {
+  if (
+    left.reportId !== right.reportId ||
+    left.axes[0] !== right.axes[0] ||
+    left.axes[1] !== right.axes[1] ||
+    left.axes[2] !== right.axes[2] ||
+    left.axes[3] !== right.axes[3] ||
+    !isSameTouchState(left.touchState, right.touchState)
+  ) {
+    return false;
+  }
+
+  for (let index = 0; index < DUALSENSE_STANDARD_BUTTON_COUNT; index += 1) {
+    if (!isSameDualSenseButtonState(left.buttons[index], right.buttons[index])) {
+      return false;
+    }
+  }
+
+  return true;
 };
 
 const hasActiveTouchState = (touchState: DualSenseTouchState | null | undefined) => {
@@ -250,6 +348,73 @@ const detectConnectionType = (device: HIDDevice): DeviceConnectionType => {
   return "unknown";
 };
 
+const normalizeDualSenseStickAxis = (value: number) => {
+  return clamp((2 * clampByte(value)) / 0xff - 1, -1, 1);
+};
+
+const normalizeDualSenseTriggerValue = (value: number) => {
+  return clamp(clampByte(value) / 0xff, 0, 1);
+};
+
+const getDualSenseInputOffsetBase = (reportId: number) => {
+  return reportId === DUALSENSE_INPUT_REPORT_BT ? DUALSENSE_INPUT_OFFSET_BT : 0;
+};
+
+const setDualSenseButtonState = (
+  buttons: DualSenseButtonState[],
+  index: number,
+  pressed: boolean,
+  value?: number
+) => {
+  if (index < 0 || index >= buttons.length) {
+    return;
+  }
+
+  const normalizedValue = clamp(
+    value === undefined ? (pressed ? 1 : 0) : Number(value),
+    0,
+    1
+  );
+  buttons[index] = {
+    pressed: !!pressed || normalizedValue > 0,
+    value: normalizedValue,
+  };
+};
+
+const parseDualSenseDpadButtons = (buttons: DualSenseButtonState[], direction: number) => {
+  const normalizedDirection = direction & 0x0f;
+  const up =
+    normalizedDirection === 0x00 || normalizedDirection === 0x01 || normalizedDirection === 0x07;
+  const right =
+    normalizedDirection === 0x01 || normalizedDirection === 0x02 || normalizedDirection === 0x03;
+  const down =
+    normalizedDirection === 0x03 || normalizedDirection === 0x04 || normalizedDirection === 0x05;
+  const left =
+    normalizedDirection === 0x05 || normalizedDirection === 0x06 || normalizedDirection === 0x07;
+  const hasDirection = normalizedDirection !== DUALSENSE_DPAD_DIRECTION_NEUTRAL;
+
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.DPAD_UP,
+    hasDirection && up
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.DPAD_RIGHT,
+    hasDirection && right
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.DPAD_DOWN,
+    hasDirection && down
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.DPAD_LEFT,
+    hasDirection && left
+  );
+};
+
 const parseDualSenseTouchPoint = (data: DataView, offset: number): TouchPoint => {
   if (data.byteLength < offset + 4) {
     return { id: -1 };
@@ -287,6 +452,112 @@ const parseDualSenseTouchState = (reportId: number, data: DataView) => {
       parseDualSenseTouchPoint(data, touchOffset),
       parseDualSenseTouchPoint(data, touchOffset + 4),
     ] as [TouchPoint, TouchPoint],
+  };
+};
+
+const parseDualSenseInputState = (reportId: number, data: DataView) => {
+  if (reportId !== DUALSENSE_INPUT_REPORT_USB && reportId !== DUALSENSE_INPUT_REPORT_BT) {
+    return null;
+  }
+
+  const offsetBase = getDualSenseInputOffsetBase(reportId);
+  const digitalKeysOffset = 7 + offsetBase;
+  if (data.byteLength < digitalKeysOffset + 3) {
+    return null;
+  }
+
+  const buttons = createIdleDualSenseButtons();
+  const axes: [number, number, number, number] = [
+    normalizeDualSenseStickAxis(data.getUint8(0 + offsetBase)),
+    normalizeDualSenseStickAxis(data.getUint8(1 + offsetBase)),
+    normalizeDualSenseStickAxis(data.getUint8(2 + offsetBase)),
+    normalizeDualSenseStickAxis(data.getUint8(3 + offsetBase)),
+  ];
+  const leftTriggerValue = normalizeDualSenseTriggerValue(data.getUint8(4 + offsetBase));
+  const rightTriggerValue = normalizeDualSenseTriggerValue(data.getUint8(5 + offsetBase));
+  const digitalKeys0 = data.getUint8(digitalKeysOffset);
+  const digitalKeys1 = data.getUint8(digitalKeysOffset + 1);
+  const digitalKeys2 = data.getUint8(digitalKeysOffset + 2);
+
+  parseDualSenseDpadButtons(buttons, digitalKeys0 & 0x0f);
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.SQUARE,
+    (digitalKeys0 & 0x10) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.CROSS,
+    (digitalKeys0 & 0x20) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.CIRCLE,
+    (digitalKeys0 & 0x40) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.TRIANGLE,
+    (digitalKeys0 & 0x80) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.L1,
+    (digitalKeys1 & 0x01) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.R1,
+    (digitalKeys1 & 0x02) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.CREATE,
+    (digitalKeys1 & 0x10) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.OPTIONS,
+    (digitalKeys1 & 0x20) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.L3,
+    (digitalKeys1 & 0x40) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.R3,
+    (digitalKeys1 & 0x80) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.PS,
+    (digitalKeys2 & 0x01) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.TOUCHPAD,
+    (digitalKeys2 & 0x02) !== 0
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.L2,
+    leftTriggerValue > 0,
+    leftTriggerValue
+  );
+  setDualSenseButtonState(
+    buttons,
+    DUALSENSE_STANDARD_BUTTON_INDEX.R2,
+    rightTriggerValue > 0,
+    rightTriggerValue
+  );
+
+  return {
+    reportId,
+    axes,
+    buttons,
+    touchState: parseDualSenseTouchState(reportId, data) || createIdleTouchState(),
   };
 };
 
@@ -536,6 +807,29 @@ class DualSenseHidBridge {
     return cloneTouchState(context.touchState);
   }
 
+  getInputStateForGamepad(gamepad: Gamepad | null | undefined) {
+    if (!gamepad) {
+      return null;
+    }
+
+    const assignedDevice = this.assignedDevicesByGamepadIndex.get(gamepad.index);
+    if (!assignedDevice) {
+      return null;
+    }
+
+    const context = this.deviceContexts.get(assignedDevice);
+    if (
+      !context ||
+      !context.device.opened ||
+      (context.lastInputReportId !== DUALSENSE_INPUT_REPORT_USB &&
+        context.lastInputReportId !== DUALSENSE_INPUT_REPORT_BT)
+    ) {
+      return null;
+    }
+
+    return cloneDualSenseInputState(context.inputState);
+  }
+
   requestAccessIfNeeded() {
     if (!this.needsAccess()) {
       return Promise.resolve(false);
@@ -740,6 +1034,7 @@ class DualSenseHidBridge {
       device,
       connectionType: detectConnectionType(device),
       lastInputReportId: 0,
+      inputState: createIdleDualSenseInputState(),
       rawTouchState: createIdleTouchState(),
       touchState: createIdleTouchState(),
       nextSessionTouchId: 0,
@@ -749,13 +1044,28 @@ class DualSenseHidBridge {
       openPromise: null,
       writeChain: Promise.resolve(true),
       inputReportHandler: (event) => {
-        const nextRawTouchState = parseDualSenseTouchState(event.reportId, event.data);
+        const nextInputState = parseDualSenseInputState(event.reportId, event.data);
         context.lastInputReportId = Number(event.reportId) || 0;
-        if (!nextRawTouchState || isSameTouchState(context.rawTouchState, nextRawTouchState)) {
+        if (!nextInputState) {
           return;
         }
-        context.rawTouchState = cloneTouchState(nextRawTouchState);
-        context.touchState = buildSessionTouchStateFromRaw(context, nextRawTouchState);
+
+        if (!isSameTouchState(context.rawTouchState, nextInputState.touchState)) {
+          context.rawTouchState = cloneTouchState(nextInputState.touchState);
+          context.touchState = buildSessionTouchStateFromRaw(context, nextInputState.touchState);
+        }
+
+        const nextResolvedInputState: DualSenseInputState = {
+          reportId: nextInputState.reportId,
+          axes: nextInputState.axes,
+          buttons: nextInputState.buttons,
+          touchState: context.touchState,
+        };
+        if (isSameDualSenseInputState(context.inputState, nextResolvedInputState)) {
+          return;
+        }
+
+        context.inputState = cloneDualSenseInputState(nextResolvedInputState);
         this.notifyListeners();
       },
     };
@@ -766,6 +1076,7 @@ class DualSenseHidBridge {
 
   private disposeContext(context: DeviceContext) {
     context.device.removeEventListener("inputreport", context.inputReportHandler);
+    context.inputState = createIdleDualSenseInputState();
     context.rawTouchState = createIdleTouchState();
     context.touchState = createIdleTouchState();
     context.nextSessionTouchId = 0;
@@ -956,6 +1267,10 @@ export const syncDualSenseHidGamepads = (gamepads: readonly Gamepad[]) => {
 
 export const getDualSenseTouchStateForGamepad = (gamepad: Gamepad | null | undefined) => {
   return bridge.getTouchStateForGamepad(gamepad);
+};
+
+export const getDualSenseInputStateForGamepad = (gamepad: Gamepad | null | undefined) => {
+  return bridge.getInputStateForGamepad(gamepad);
 };
 
 export const requestDualSenseHidAccessIfNeeded = () => {

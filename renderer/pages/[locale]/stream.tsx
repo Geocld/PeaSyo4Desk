@@ -20,7 +20,7 @@ import {
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import {
-  getDualSenseTouchStateForGamepad,
+  getDualSenseInputStateForGamepad,
   hasActiveDualSenseTouchState,
   requestDualSenseHidAccessIfNeeded,
   retainDualSenseHidBridge,
@@ -177,6 +177,16 @@ type ControllerStatePayload = {
   rightY: number;
   touchIdNext: number;
   touches: [TouchPoint, TouchPoint];
+};
+
+type ControllerInputButtonLike = {
+  pressed?: boolean;
+  value?: number;
+} | null | undefined;
+
+type ControllerInputSource = {
+  axes: ArrayLike<number>;
+  buttons: ArrayLike<ControllerInputButtonLike>;
 };
 
 type VideoDisplayFormat = "default" | "stretch" | "zoom";
@@ -2415,8 +2425,8 @@ function StreamPage() {
     return Math.trunc(clamped * 32767);
   };
 
-  const getButtonValue = (gamepad: Gamepad, index: number) => {
-    const btn = gamepad.buttons[index];
+  const getButtonValue = (inputSource: ControllerInputSource, index: number) => {
+    const btn = inputSource.buttons[index];
     if (!btn) {
       return 0;
     }
@@ -2424,12 +2434,12 @@ function StreamPage() {
     return Math.max(0, Math.min(1, raw));
   };
 
-  const isButtonPressed = (gamepad: Gamepad, index: number, threshold = 0.5) => {
-    const btn = gamepad.buttons[index];
+  const isButtonPressed = (inputSource: ControllerInputSource, index: number, threshold = 0.5) => {
+    const btn = inputSource.buttons[index];
     if (!btn) {
       return false;
     }
-    return !!btn.pressed || getButtonValue(gamepad, index) >= threshold;
+    return !!btn.pressed || getButtonValue(inputSource, index) >= threshold;
   };
 
   const sendControllerState = (state: ControllerStatePayload) => {
@@ -2491,39 +2501,52 @@ function StreamPage() {
     let rightXNorm = 0;
     let rightYNorm = 0;
 
-    const validGamepads = Array.from(gamepads).filter((gamepad): gamepad is Gamepad => {
-      return !!gamepad && gamepad.connected && Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
+    const connectedGamepads = Array.from(gamepads).filter((gamepad): gamepad is Gamepad => {
+      return !!gamepad && gamepad.connected;
     });
     const configuredGamepadIndex = useWebGamepadKernel
       ? Number(settings?.gamepad_index)
       : -1;
     const shouldMixGamepads = useWebGamepadKernel && !!settings?.gamepad_mix;
-    let activeGamepads = validGamepads;
+    let selectedGamepads = connectedGamepads;
 
     if (!shouldMixGamepads) {
       if (Number.isInteger(configuredGamepadIndex) && configuredGamepadIndex >= 0) {
-        const specifiedGamepad = validGamepads.find(
+        const specifiedGamepad = connectedGamepads.find(
           (gamepad) => gamepad.index === configuredGamepadIndex
         );
-        activeGamepads = specifiedGamepad ? [specifiedGamepad] : [];
+        selectedGamepads = specifiedGamepad ? [specifiedGamepad] : [];
       }
 
-      if (activeGamepads.length < 1 && validGamepads.length > 0) {
-        activeGamepads = [validGamepads[0]];
+      if (selectedGamepads.length < 1 && connectedGamepads.length > 0) {
+        selectedGamepads = [connectedGamepads[0]];
       }
     }
 
     if (useWebGamepadKernel) {
-      syncDualSenseHidGamepads(activeGamepads);
+      syncDualSenseHidGamepads(selectedGamepads);
     }
+
+    const activeGamepads = selectedGamepads.filter((gamepad) => {
+      const dualSenseInputState = useWebGamepadKernel
+        ? getDualSenseInputStateForGamepad(gamepad)
+        : null;
+      if (dualSenseInputState) {
+        return true;
+      }
+
+      return Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
+    });
 
     validCount = activeGamepads.length;
     let dualSenseTouchState = createIdleTouchState();
 
     for (const gamepad of activeGamepads) {
-      const currentDualSenseTouchState = useWebGamepadKernel
-        ? getDualSenseTouchStateForGamepad(gamepad)
+      const dualSenseInputState = useWebGamepadKernel
+        ? getDualSenseInputStateForGamepad(gamepad)
         : null;
+      const inputSource: ControllerInputSource = dualSenseInputState || gamepad;
+      const currentDualSenseTouchState = dualSenseInputState?.touchState || null;
       if (
         !hasActiveDualSenseTouchState(dualSenseTouchState) &&
         hasActiveDualSenseTouchState(currentDualSenseTouchState)
@@ -2535,70 +2558,70 @@ function StreamPage() {
         return gamepadMappingRef.current[action];
       };
 
-      if (isButtonPressed(gamepad, getMappedButtonIndex("A"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("A"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.CROSS;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("B"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("B"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.MOON;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("X"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("X"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.BOX;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("Y"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("Y"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.PYRAMID;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("LeftShoulder"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("LeftShoulder"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.L1;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("RightShoulder"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("RightShoulder"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.R1;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("View"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("View"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.SHARE;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("Menu"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("Menu"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.OPTIONS;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("LeftThumb"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("LeftThumb"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.L3;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("RightThumb"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("RightThumb"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.R3;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadUp"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("DPadUp"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_UP;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadDown"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("DPadDown"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_DOWN;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadLeft"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("DPadLeft"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_LEFT;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("DPadRight"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("DPadRight"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.DPAD_RIGHT;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("Nexus"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("Nexus"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.PS;
       }
-      if (isButtonPressed(gamepad, getMappedButtonIndex("Touchpad"))) {
+      if (isButtonPressed(inputSource, getMappedButtonIndex("Touchpad"))) {
         mergedState.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
       }
 
       const l2Value = normalizeTriggerValue(
-        getButtonValue(gamepad, getMappedButtonIndex("LeftTrigger"))
+        getButtonValue(inputSource, getMappedButtonIndex("LeftTrigger"))
       );
       const r2Value = normalizeTriggerValue(
-        getButtonValue(gamepad, getMappedButtonIndex("RightTrigger"))
+        getButtonValue(inputSource, getMappedButtonIndex("RightTrigger"))
       );
       mergedState.l2State = Math.max(mergedState.l2State, Math.round(l2Value * 255));
       mergedState.r2State = Math.max(mergedState.r2State, Math.round(r2Value * 255));
       if (mergedState.l2State > 0) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
       if (mergedState.r2State > 0) mergedState.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
 
-      const leftX = normalizeAxis(gamepad.axes[0] || 0);
-      const leftY = normalizeAxis(gamepad.axes[1] || 0);
-      const rightX = normalizeAxis(gamepad.axes[2] || 0);
-      const rightY = normalizeAxis(gamepad.axes[3] || 0);
+      const leftX = normalizeAxis(Number(inputSource.axes[0]) || 0);
+      const leftY = normalizeAxis(Number(inputSource.axes[1]) || 0);
+      const rightX = normalizeAxis(Number(inputSource.axes[2]) || 0);
+      const rightY = normalizeAxis(Number(inputSource.axes[3]) || 0);
 
       if (Math.abs(leftX) > Math.abs(leftXNorm)) leftXNorm = leftX;
       if (Math.abs(leftY) > Math.abs(leftYNorm)) leftYNorm = leftY;
