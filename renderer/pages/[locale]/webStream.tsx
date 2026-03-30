@@ -20,8 +20,9 @@ import {
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import {
-  getDualSenseInputStateForGamepad,
+  getDualSenseHidInputStates,
   hasActiveDualSenseTouchState,
+  isDualSenseHidManagedGamepad,
   requestDualSenseHidAccessIfNeeded,
   retainDualSenseHidBridge,
   subscribeDualSenseHidChanges,
@@ -3280,49 +3281,50 @@ function StreamPage() {
     const connectedGamepads = Array.from(gamepads).filter((gamepad): gamepad is Gamepad => {
       return !!gamepad && gamepad.connected;
     });
+    if (useWebGamepadKernel) {
+      syncDualSenseHidGamepads(connectedGamepads);
+    }
+
+    const dualSenseHidInputStates = useWebGamepadKernel ? getDualSenseHidInputStates() : [];
+    const webGamepadCandidates = connectedGamepads.filter((gamepad) => {
+      return !useWebGamepadKernel || !isDualSenseHidManagedGamepad(gamepad);
+    });
     const configuredGamepadIndex = useWebGamepadKernel
       ? Number(settings?.gamepad_index)
       : -1;
     const shouldMixGamepads = useWebGamepadKernel && !!settings?.gamepad_mix;
-    let selectedGamepads = connectedGamepads;
+    let selectedGamepads = webGamepadCandidates;
 
     if (!shouldMixGamepads) {
       if (Number.isInteger(configuredGamepadIndex) && configuredGamepadIndex >= 0) {
-        const specifiedGamepad = connectedGamepads.find(
+        const specifiedGamepad = webGamepadCandidates.find(
           (gamepad) => gamepad.index === configuredGamepadIndex
         );
         selectedGamepads = specifiedGamepad ? [specifiedGamepad] : [];
       }
 
-      if (selectedGamepads.length < 1 && connectedGamepads.length > 0) {
-        selectedGamepads = [connectedGamepads[0]];
+      if (selectedGamepads.length < 1 && webGamepadCandidates.length > 0) {
+        selectedGamepads = [webGamepadCandidates[0]];
       }
-    }
-
-    if (useWebGamepadKernel) {
-      syncDualSenseHidGamepads(selectedGamepads);
     }
 
     const activeGamepads = selectedGamepads.filter((gamepad) => {
-      const dualSenseInputState = useWebGamepadKernel
-        ? getDualSenseInputStateForGamepad(gamepad)
-        : null;
-      if (dualSenseInputState) {
-        return true;
-      }
-
       return Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
     });
+    const activeDualSenseInputs =
+      useWebGamepadKernel && (shouldMixGamepads || activeGamepads.length < 1)
+        ? shouldMixGamepads
+          ? dualSenseHidInputStates
+          : dualSenseHidInputStates.slice(0, 1)
+        : [];
 
-    validCount = activeGamepads.length;
+    validCount = activeGamepads.length + activeDualSenseInputs.length;
     let dualSenseTouchState = createIdleTouchState();
 
-    for (const gamepad of activeGamepads) {
-      const dualSenseInputState = useWebGamepadKernel
-        ? getDualSenseInputStateForGamepad(gamepad)
-        : null;
-      const inputSource: ControllerInputSource = dualSenseInputState || gamepad;
-      const currentDualSenseTouchState = dualSenseInputState?.touchState || null;
+    const applyControllerInputSource = (
+      inputSource: ControllerInputSource,
+      currentDualSenseTouchState: StreamTouchState | null
+    ) => {
       if (
         !hasActiveDualSenseTouchState(dualSenseTouchState) &&
         hasActiveDualSenseTouchState(currentDualSenseTouchState)
@@ -3403,6 +3405,14 @@ function StreamPage() {
       if (Math.abs(leftY) > Math.abs(leftYNorm)) leftYNorm = leftY;
       if (Math.abs(rightX) > Math.abs(rightXNorm)) rightXNorm = rightX;
       if (Math.abs(rightY) > Math.abs(rightYNorm)) rightYNorm = rightY;
+    };
+
+    for (const dualSenseInputState of activeDualSenseInputs) {
+      applyControllerInputSource(dualSenseInputState, dualSenseInputState.touchState);
+    }
+
+    for (const gamepad of activeGamepads) {
+      applyControllerInputSource(gamepad, null);
     }
 
     if (keyboardPressedKeysRef.current.size > 0) {

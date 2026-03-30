@@ -121,6 +121,7 @@ type DeviceContext = {
   device: HIDDevice;
   connectionType: DeviceConnectionType;
   lastInputReportId: number;
+  hasInputState: boolean;
   inputState: DualSenseInputState;
   rawTouchState: DualSenseTouchState;
   touchState: DualSenseTouchState;
@@ -318,6 +319,14 @@ const isDualSenseLikeGamepad = (gamepad: Gamepad | null | undefined) => {
   return /dualsense(?:\s+edge)?/i.test(String(gamepad.id || ""));
 };
 
+const isGenericWirelessControllerGamepad = (gamepad: Gamepad | null | undefined) => {
+  if (!gamepad || !gamepad.connected) {
+    return false;
+  }
+
+  return /wireless controller/i.test(String(gamepad.id || ""));
+};
+
 const isDualSenseHidDevice = (device: HIDDevice) => {
   return device.vendorId === SONY_VENDOR_ID && isDualSenseProductId(device.productId);
 };
@@ -357,8 +366,38 @@ const normalizeDualSenseTriggerValue = (value: number) => {
   return clamp(clampByte(value) / 0xff, 0, 1);
 };
 
-const getDualSenseInputOffsetBase = (reportId: number) => {
-  return reportId === DUALSENSE_INPUT_REPORT_BT ? DUALSENSE_INPUT_OFFSET_BT : 0;
+const usesDualSenseBluetoothInputLayout = (
+  connectionType: DeviceConnectionType,
+  reportId: number
+) => {
+  if (connectionType === "bluetooth") {
+    return true;
+  }
+  if (connectionType === "usb") {
+    return false;
+  }
+  if (reportId === DUALSENSE_INPUT_REPORT_BT) {
+    return true;
+  }
+  if (reportId === DUALSENSE_INPUT_REPORT_USB) {
+    return false;
+  }
+  return false;
+};
+
+const getDualSenseInputOffsetBase = (
+  connectionType: DeviceConnectionType,
+  reportId: number
+) => {
+  return usesDualSenseBluetoothInputLayout(connectionType, reportId)
+    ? DUALSENSE_INPUT_OFFSET_BT
+    : 0;
+};
+
+const getDualSenseTouchOffset = (connectionType: DeviceConnectionType, reportId: number) => {
+  return usesDualSenseBluetoothInputLayout(connectionType, reportId)
+    ? DUALSENSE_TOUCH_OFFSET_BT
+    : DUALSENSE_TOUCH_OFFSET_USB;
 };
 
 const setDualSenseButtonState = (
@@ -436,13 +475,12 @@ const parseDualSenseTouchPoint = (data: DataView, offset: number): TouchPoint =>
   };
 };
 
-const parseDualSenseTouchState = (reportId: number, data: DataView) => {
-  if (reportId !== DUALSENSE_INPUT_REPORT_USB && reportId !== DUALSENSE_INPUT_REPORT_BT) {
-    return null;
-  }
-
-  const touchOffset =
-    reportId === DUALSENSE_INPUT_REPORT_BT ? DUALSENSE_TOUCH_OFFSET_BT : DUALSENSE_TOUCH_OFFSET_USB;
+const parseDualSenseTouchState = (
+  connectionType: DeviceConnectionType,
+  reportId: number,
+  data: DataView
+) => {
+  const touchOffset = getDualSenseTouchOffset(connectionType, reportId);
   if (data.byteLength < touchOffset + DUALSENSE_TOUCH_DATA_BYTES) {
     return null;
   }
@@ -456,14 +494,15 @@ const parseDualSenseTouchState = (reportId: number, data: DataView) => {
   };
 };
 
-const parseDualSenseInputState = (reportId: number, data: DataView) => {
-  if (reportId !== DUALSENSE_INPUT_REPORT_USB && reportId !== DUALSENSE_INPUT_REPORT_BT) {
-    return null;
-  }
-
-  const offsetBase = getDualSenseInputOffsetBase(reportId);
+const parseDualSenseInputState = (
+  connectionType: DeviceConnectionType,
+  reportId: number,
+  data: DataView
+) => {
+  const offsetBase = getDualSenseInputOffsetBase(connectionType, reportId);
   const digitalKeysOffset = 7 + offsetBase;
-  if (data.byteLength < digitalKeysOffset + 3) {
+  const touchState = parseDualSenseTouchState(connectionType, reportId, data);
+  if (!touchState || data.byteLength < digitalKeysOffset + 3) {
     return null;
   }
 
@@ -558,7 +597,7 @@ const parseDualSenseInputState = (reportId: number, data: DataView) => {
     reportId,
     axes,
     buttons,
-    touchState: parseDualSenseTouchState(reportId, data) || createIdleTouchState(),
+    touchState,
   };
 };
 
@@ -745,7 +784,7 @@ class DualSenseHidBridge {
       void this.start();
     }
 
-    const dualSenseGamepads = gamepads.filter((gamepad) => isDualSenseLikeGamepad(gamepad));
+    const dualSenseGamepads = gamepads.filter((gamepad) => this.isDualSenseCandidateGamepad(gamepad));
     this.observedDualSenseGamepadCount = dualSenseGamepads.length;
     const activeIndexes = new Set(dualSenseGamepads.map((gamepad) => gamepad.index));
 
@@ -819,16 +858,44 @@ class DualSenseHidBridge {
     }
 
     const context = this.deviceContexts.get(assignedDevice);
-    if (
-      !context ||
-      !context.device.opened ||
-      (context.lastInputReportId !== DUALSENSE_INPUT_REPORT_USB &&
-        context.lastInputReportId !== DUALSENSE_INPUT_REPORT_BT)
-    ) {
+    if (!context || !context.device.opened || !context.hasInputState) {
       return null;
     }
 
     return cloneDualSenseInputState(context.inputState);
+  }
+
+  getInputStates() {
+    if (!this.started) {
+      void this.start();
+    }
+
+    const inputStates: DualSenseInputState[] = [];
+    for (const context of this.deviceContexts.values()) {
+      void this.ensureDeviceOpen(context);
+      if (!context.device.opened || !context.hasInputState) {
+        continue;
+      }
+      inputStates.push(cloneDualSenseInputState(context.inputState));
+    }
+
+    return inputStates;
+  }
+
+  isManagedGamepad(gamepad: Gamepad | null | undefined) {
+    if (!gamepad || !gamepad.connected) {
+      return false;
+    }
+
+    if (this.assignedDevicesByGamepadIndex.has(gamepad.index)) {
+      return true;
+    }
+
+    if (isDualSenseLikeGamepad(gamepad)) {
+      return true;
+    }
+
+    return isGenericWirelessControllerGamepad(gamepad) && this.deviceContexts.size > 0;
   }
 
   requestAccessIfNeeded() {
@@ -961,6 +1028,35 @@ class DualSenseHidBridge {
     return true;
   }
 
+  playRumbleForActiveDevices(weakMotor: unknown, strongMotor: unknown, durationMs: unknown) {
+    const contexts = this.getActiveDeviceContexts();
+    if (contexts.length < 1) {
+      return false;
+    }
+
+    const weakLevel = clampByte(weakMotor);
+    const strongLevel = clampByte(strongMotor);
+    const duration = Math.max(0, Math.trunc(Number(durationMs) || 0));
+
+    for (const context of contexts) {
+      if (context.rumbleStopTimer) {
+        clearTimeout(context.rumbleStopTimer);
+        context.rumbleStopTimer = null;
+      }
+
+      void this.writeRumbleState(context, weakLevel, strongLevel);
+
+      if (duration > 0 && (weakLevel > 0 || strongLevel > 0)) {
+        context.rumbleStopTimer = setTimeout(() => {
+          context.rumbleStopTimer = null;
+          void this.writeRumbleState(context, 0, 0);
+        }, duration);
+      }
+    }
+
+    return true;
+  }
+
   applyLedColor(event: unknown) {
     const payload = (event || {}) as Record<string, unknown>;
     const color = parseByteArrayValue(payload.color);
@@ -1068,6 +1164,10 @@ class DualSenseHidBridge {
         }
         this.assignedDevicesByGamepadIndex.delete(gamepadIndex);
       }
+
+      for (const context of this.deviceContexts.values()) {
+        void this.ensureDeviceOpen(context);
+      }
     })()
       .catch(() => undefined)
       .finally(() => {
@@ -1082,6 +1182,7 @@ class DualSenseHidBridge {
       device,
       connectionType: detectConnectionType(device),
       lastInputReportId: 0,
+      hasInputState: false,
       inputState: createIdleDualSenseInputState(),
       rawTouchState: createIdleTouchState(),
       touchState: createIdleTouchState(),
@@ -1093,7 +1194,11 @@ class DualSenseHidBridge {
       writeChain: Promise.resolve(true),
       rumbleStopTimer: null,
       inputReportHandler: (event) => {
-        const nextInputState = parseDualSenseInputState(event.reportId, event.data);
+        const nextInputState = parseDualSenseInputState(
+          context.connectionType,
+          event.reportId,
+          event.data
+        );
         context.lastInputReportId = Number(event.reportId) || 0;
         if (!nextInputState) {
           return;
@@ -1110,7 +1215,11 @@ class DualSenseHidBridge {
           buttons: nextInputState.buttons,
           touchState: context.touchState,
         };
-        if (isSameDualSenseInputState(context.inputState, nextResolvedInputState)) {
+        const shouldUpdate =
+          !context.hasInputState ||
+          !isSameDualSenseInputState(context.inputState, nextResolvedInputState);
+        context.hasInputState = true;
+        if (!shouldUpdate) {
           return;
         }
 
@@ -1130,6 +1239,7 @@ class DualSenseHidBridge {
       context.rumbleStopTimer = null;
     }
     context.inputState = createIdleDualSenseInputState();
+    context.hasInputState = false;
     context.rawTouchState = createIdleTouchState();
     context.touchState = createIdleTouchState();
     context.nextSessionTouchId = 0;
@@ -1163,6 +1273,15 @@ class DualSenseHidBridge {
     const parsed = parseGamepadVendorProduct(String(gamepad.id || ""));
     if (parsed) {
       return device.vendorId === parsed.vendorId && device.productId === parsed.productId;
+    }
+
+    if (isGenericWirelessControllerGamepad(gamepad)) {
+      const assignedDevice = this.assignedDevicesByGamepadIndex.get(gamepad.index);
+      if (assignedDevice) {
+        return assignedDevice === device;
+      }
+
+      return isDualSenseHidDevice(device) && this.deviceContexts.size === 1;
     }
 
     return isDualSenseHidDevice(device) && /dualsense(?:\s+edge)?/i.test(String(gamepad.id || ""));
@@ -1209,11 +1328,29 @@ class DualSenseHidBridge {
       return bestDevice;
     }
 
-    if (!parsed && this.deviceContexts.size === 1 && /wireless controller/i.test(gamepadId)) {
+    if (!parsed && this.deviceContexts.size === 1 && isGenericWirelessControllerGamepad(gamepad)) {
       return Array.from(this.deviceContexts.keys())[0] || null;
     }
 
     return null;
+  }
+
+  private isDualSenseCandidateGamepad(gamepad: Gamepad | null | undefined) {
+    if (isDualSenseLikeGamepad(gamepad)) {
+      return true;
+    }
+    if (!isGenericWirelessControllerGamepad(gamepad)) {
+      return false;
+    }
+
+    const assignedDevice = gamepad
+      ? this.assignedDevicesByGamepadIndex.get(gamepad.index)
+      : undefined;
+    if (assignedDevice && this.deviceContexts.has(assignedDevice)) {
+      return true;
+    }
+
+    return this.deviceContexts.size === 1;
   }
 
   private getActiveDeviceContexts() {
@@ -1228,6 +1365,13 @@ class DualSenseHidBridge {
 
     if (contexts.size > 0) {
       return Array.from(contexts.values());
+    }
+
+    const inputContexts = Array.from(this.deviceContexts.values()).filter((context) => {
+      return context.hasInputState || context.device.opened;
+    });
+    if (inputContexts.length > 0) {
+      return inputContexts;
     }
 
     if (this.deviceContexts.size === 1) {
@@ -1335,6 +1479,14 @@ export const getDualSenseInputStateForGamepad = (gamepad: Gamepad | null | undef
   return bridge.getInputStateForGamepad(gamepad);
 };
 
+export const getDualSenseHidInputStates = () => {
+  return bridge.getInputStates();
+};
+
+export const isDualSenseHidManagedGamepad = (gamepad: Gamepad | null | undefined) => {
+  return bridge.isManagedGamepad(gamepad);
+};
+
 export const playDualSenseHidRumbleForGamepad = (
   gamepad: Gamepad | null | undefined,
   weakMotor: unknown,
@@ -1342,6 +1494,14 @@ export const playDualSenseHidRumbleForGamepad = (
   durationMs: unknown
 ) => {
   return bridge.playRumbleForGamepad(gamepad, weakMotor, strongMotor, durationMs);
+};
+
+export const playDualSenseHidRumbleForActiveDevices = (
+  weakMotor: unknown,
+  strongMotor: unknown,
+  durationMs: unknown
+) => {
+  return bridge.playRumbleForActiveDevices(weakMotor, strongMotor, durationMs);
 };
 
 export const requestDualSenseHidAccessIfNeeded = () => {

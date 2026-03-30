@@ -1,4 +1,7 @@
-import { playDualSenseHidRumbleForGamepad } from "./dualsenseHid";
+import {
+  isDualSenseHidManagedGamepad,
+  playDualSenseHidRumbleForActiveDevices,
+} from "./dualsenseHid";
 
 type ChiakiRumbleEvent = {
   left?: number;
@@ -157,10 +160,6 @@ const playViaHapticActuators = (gamepad: Gamepad, magnitude: number, duration: n
 };
 
 export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
-  if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") {
-    return false;
-  }
-
   const now = Date.now();
   if (now - lastRumbleAtMs < GAMEPAD_RUMBLE_CONFIG.minIntervalMs) {
     return false;
@@ -205,22 +204,27 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
     GAMEPAD_RUMBLE_CONFIG.hidMotorScale
   );
 
+  let played = playDualSenseHidRumbleForActiveDevices(
+    hidWeakMotor,
+    hidStrongMotor,
+    hidDuration
+  );
+
+  if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") {
+    if (played) {
+      lastRumbleAtMs = now;
+    }
+    return played;
+  }
+
   const gamepads = navigator.getGamepads();
-  let played = false;
 
   for (const gamepad of gamepads) {
     if (!isValidStreamGamepad(gamepad)) {
       continue;
     }
 
-    const viaDualSenseHid = playDualSenseHidRumbleForGamepad(
-      gamepad,
-      hidWeakMotor,
-      hidStrongMotor,
-      hidDuration
-    );
-    if (viaDualSenseHid) {
-      played = true;
+    if (isDualSenseHidManagedGamepad(gamepad)) {
       continue;
     }
 
