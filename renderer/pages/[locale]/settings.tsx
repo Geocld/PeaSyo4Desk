@@ -491,7 +491,7 @@ function SettingsPage() {
         return;
       case "open-test":
         router.push({
-          pathname: `/${locale}/test`,
+          pathname: `/${locale}/${isWebGamepadKernel ? "test" : "nativeTest"}`,
         });
         return;
       case "open-transfer":

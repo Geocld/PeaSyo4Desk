@@ -23,6 +23,14 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.4" date="2026-03-31">
+     <description>
+        <ul>
+          <li>Optimize audio latency</li>
+          <li>Optimize native controller mode</li>
+        </ul>
+     </description>
+    </release>
     <release version="1.0.3" date="2026-03-26">
      <description>
         <ul>

@@ -8,6 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import chiaki from "chiaki-lib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
+import { NativeGamepadTestService } from "../gamepad/nativeTestService";
 import { StreamSessionManager } from "../stream/serviceManager";
 
 const WAKEUP_PORT = 9302;
@@ -1238,6 +1239,36 @@ export default class IpcApp extends IpcBase {
 
   stopStreamWebSocketServer() {
     return StreamSessionManager.stopSocketServer();
+  }
+
+  startNativeGamepadTestSession() {
+    return Promise.resolve(NativeGamepadTestService.start());
+  }
+
+  stopNativeGamepadTestSession() {
+    return Promise.resolve(NativeGamepadTestService.stop());
+  }
+
+  getNativeGamepadTestSnapshot() {
+    return Promise.resolve(NativeGamepadTestService.getSnapshot());
+  }
+
+  triggerNativeGamepadTestRumble(data: {
+    deviceId?: unknown;
+    low?: unknown;
+    high?: unknown;
+    durationMs?: unknown;
+  }) {
+    return Promise.resolve(NativeGamepadTestService.rumble(data || {}));
+  }
+
+  triggerNativeGamepadTestTriggerRumble(data: {
+    deviceId?: unknown;
+    left?: unknown;
+    right?: unknown;
+    durationMs?: unknown;
+  }) {
+    return Promise.resolve(NativeGamepadTestService.rumbleTriggers(data || {}));
   }
 
   startStreamSession(data: any) {
