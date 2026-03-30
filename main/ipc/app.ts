@@ -1271,6 +1271,14 @@ export default class IpcApp extends IpcBase {
     return Promise.resolve(NativeGamepadTestService.rumbleTriggers(data || {}));
   }
 
+  triggerStreamNativeGamepadRumble(data: {
+    low?: unknown;
+    high?: unknown;
+    durationMs?: unknown;
+  }) {
+    return Promise.resolve(StreamSessionManager.triggerNativeGamepadRumble(data || {}));
+  }
+
   startStreamSession(data: any) {
     const settings = this.getSettings();
     return StreamSessionManager.startSession({

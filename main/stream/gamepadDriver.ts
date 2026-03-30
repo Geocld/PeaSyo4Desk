@@ -49,6 +49,12 @@ type NodeGamepadDriverOptions = {
 
 type MutableControllerState = ControllerStateSnapshot;
 
+type NodeGamepadDriverRumbleRequest = {
+  low?: unknown;
+  high?: unknown;
+  durationMs?: unknown;
+};
+
 const createIdleState = (): MutableControllerState => ({
   buttons: 0,
   l2State: 0,
@@ -272,6 +278,22 @@ const resolveDeviceId = (device: any) => {
     return "";
   }
   return String(rawId);
+};
+
+const clampUnit = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, numeric));
+};
+
+const clampDurationMs = (value: unknown) => {
+  const numeric = Math.round(Number(value) || 0);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(5000, numeric));
 };
 
 export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
@@ -575,6 +597,29 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     closeController(resolveDeviceId(event?.device));
   };
 
+  const getActiveControllerEntry = () => {
+    if (activeDeviceId) {
+      const controller = controllerInstances.get(activeDeviceId);
+      if (controller) {
+        return {
+          deviceId: activeDeviceId,
+          controller,
+        };
+      }
+    }
+
+    const firstEntry = controllerInstances.entries().next().value as [string, any] | undefined;
+    if (!firstEntry) {
+      return null;
+    }
+
+    activeDeviceId = firstEntry[0];
+    return {
+      deviceId: firstEntry[0],
+      controller: firstEntry[1],
+    };
+  };
+
   const start = () => {
     if (started) {
       return true;
@@ -632,9 +677,39 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     onStateChange(cloneState(idleState));
   };
 
+  const rumble = (data: NodeGamepadDriverRumbleRequest) => {
+    const entry = getActiveControllerEntry();
+    if (!entry) {
+      throw new Error("No native controller is available.");
+    }
+    if (!entry.controller?.hasRumble || typeof entry.controller?.rumble !== "function") {
+      throw new Error("Active native controller does not support rumble.");
+    }
+
+    const low = clampUnit(data?.low ?? 0);
+    const high = clampUnit(data?.high ?? 0);
+    const durationMs = clampDurationMs(data?.durationMs);
+
+    entry.controller.rumble(low, high, durationMs);
+    onLog?.(
+      `node-sdl controller rumble: ${entry.deviceId} low=${low.toFixed(2)} high=${high.toFixed(
+        2
+      )} duration=${durationMs}ms`
+    );
+
+    return {
+      ok: true,
+      deviceId: entry.deviceId,
+      low,
+      high,
+      durationMs,
+    };
+  };
+
   return {
     start,
     stop,
+    rumble,
   };
 };
 

@@ -23,7 +23,7 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.0.4" date="2026-03-31">
+    <release version="1.0.4" date="2026-03-30">
      <description>
         <ul>
           <li>Optimize audio latency</li>

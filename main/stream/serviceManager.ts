@@ -62,6 +62,13 @@ export const StreamSessionManager = {
   setControllerStateDirect(state: any) {
     getActiveService().setControllerStateDirect(state);
   },
+  triggerNativeGamepadRumble(data: {
+    low?: unknown;
+    high?: unknown;
+    durationMs?: unknown;
+  }) {
+    return (getActiveService() as any).triggerNativeGamepadRumble(data);
+  },
   notifyVideoFrameRendered(sampleId?: number) {
     (getActiveService() as any).notifyVideoFrameRendered(sampleId);
   },

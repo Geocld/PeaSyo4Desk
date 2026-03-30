@@ -52,7 +52,7 @@
   "Mapping key of gamepad": "映射手柄按键",
   "Gamepad input kernel": "手柄输入内核",
   "Gamepad input kernel desc": "切换 Web 内核和 原生 内核的手柄输入。原生 内核使用原生 SDL 读取，通常可获得更低输入延迟。",
-  "Native": "原生(实验性)",
+  "Native": "原生",
   "Web": "Web",
   "Feedback": "交流",
   "FeedbackDesc": "加入用户交流群",

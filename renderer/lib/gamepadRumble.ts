@@ -2,6 +2,7 @@ import {
   isDualSenseHidManagedGamepad,
   playDualSenseHidRumbleForActiveDevices,
 } from "./dualsenseHid";
+import Ipc from "./ipc";
 
 type ChiakiRumbleEvent = {
   left?: number;
@@ -250,4 +251,33 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
   }
 
   return played;
+};
+
+export const triggerNativeGamepadRumbleFromChiaki = async (event: unknown) => {
+  const rumble = (event || {}) as ChiakiRumbleEvent;
+  const high = toRumbleMagnitude(rumble.left, rumble.peakLeft);
+  const low = toRumbleMagnitude(rumble.right, rumble.peakRight);
+  const durationMagnitude = Math.max(high, low);
+  if (durationMagnitude <= 0) {
+    return false;
+  }
+
+  const duration =
+    GAMEPAD_RUMBLE_CONFIG.minDurationMs +
+    Math.round(
+      (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
+        durationMagnitude
+    );
+
+  try {
+    await Ipc.send("app", "triggerStreamNativeGamepadRumble", {
+      low,
+      high,
+      durationMs: duration,
+    });
+    lastRumbleAtMs = Date.now();
+    return true;
+  } catch {
+    return false;
+  }
 };

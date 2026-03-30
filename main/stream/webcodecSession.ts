@@ -1602,6 +1602,21 @@ const configureControllerKernel = (settings: StreamSessionSettings | null | unde
   log(`controller kernel: ${controllerKernel}`);
 };
 
+const triggerNativeGamepadRumble = (data: {
+  low?: unknown;
+  high?: unknown;
+  durationMs?: unknown;
+}) => {
+  if (controllerKernel !== "node" || !nodeGamepadDriver) {
+    return {
+      ok: false,
+      reason: "controller-kernel-not-node",
+    };
+  }
+
+  return nodeGamepadDriver.rumble(data || {});
+};
+
 const setControllerButtonState = (key: string, pressed: boolean) => {
   const mask = BUTTON_NAME_TO_MASK[key];
   if (!mask) {
@@ -3301,6 +3316,7 @@ export const StreamSessionService = {
   stopSocketServer,
   startSession,
   setControllerStateDirect,
+  triggerNativeGamepadRumble,
   notifyVideoFrameRendered,
   stopSession,
   gotoBedAndStop,

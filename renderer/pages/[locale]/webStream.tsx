@@ -30,7 +30,10 @@ import {
 } from "../../lib/dualsenseHid";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
-import { triggerGamepadRumbleFromChiaki } from "../../lib/gamepadRumble";
+import {
+  triggerGamepadRumbleFromChiaki,
+  triggerNativeGamepadRumbleFromChiaki,
+} from "../../lib/gamepadRumble";
 import { handleGamepadTriggerEffectsFromChiaki } from "../../lib/gamepadTriggerEffects";
 import Ipc from "../../lib/ipc";
 import {
@@ -3886,7 +3889,11 @@ function StreamPage() {
                 const eventName = String(sessionEvent.name || msg?.name || "unknown");
 
                 if (eventName === "rumble") {
-                  triggerGamepadRumbleFromChiaki(sessionEvent);
+                  if (controllerInputKernelRef.current === "node") {
+                    void triggerNativeGamepadRumbleFromChiaki(sessionEvent);
+                  } else {
+                    triggerGamepadRumbleFromChiaki(sessionEvent);
+                  }
                 } else if (eventName === "trigger_effects") {
                   handleGamepadTriggerEffectsFromChiaki(sessionEvent);
                 } else if (eventName === "led_color") {
