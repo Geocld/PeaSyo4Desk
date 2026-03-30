@@ -2,26 +2,18 @@ import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import Nav from "../../components/Nav";
 
-import Ipc from "../../lib/ipc";
-
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 
 function GamepadTester() {
   const [isLogined, setIsLogined] = useState(false);
 
-  const timer = useRef(null);
+  const timer = useRef<number | null>(null);
 
   useEffect(() => {
     const _isLogined = window.sessionStorage.getItem("isLogined") || "0";
     if (_isLogined === "1") {
       setIsLogined(true);
     }
-
-    setInterval(() => {
-      Ipc.send("app", "hidController").then(res => {
-        console.log('controller states:', res.states)
-      })
-    }, 2000);
 
     const fudgeFactor = 2; // because of bug in Chrome related to svg text alignment font sizes can not be < 1
     const runningElem = document.querySelector("#running");
