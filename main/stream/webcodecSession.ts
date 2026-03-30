@@ -2851,6 +2851,60 @@ const broadcastRumbleEvent = (event: any) => {
   });
 };
 
+const normalizeFixedByteArrayEventValue = (value: unknown, length: number) => {
+  if (length <= 0) {
+    return undefined;
+  }
+
+  let source: Uint8Array | null = null;
+  if (Buffer.isBuffer(value)) {
+    source = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (value instanceof Uint8Array) {
+    source = value;
+  } else if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    source = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  } else if (Array.isArray(value)) {
+    source = Uint8Array.from(value.map((item) => clampInt(item, 0, 0xff)));
+  }
+
+  if (!source) {
+    return undefined;
+  }
+
+  const normalized = new Uint8Array(length);
+  normalized.set(source.subarray(0, length));
+  return Array.from(normalized);
+};
+
+const broadcastTriggerEffectsEvent = (event: any) => {
+  const payload: Record<string, unknown> = {
+    name: "trigger_effects",
+  };
+
+  if (event?.typeLeft !== undefined) {
+    payload.typeLeft = clampInt(event.typeLeft, 0, 0xff);
+  }
+  if (event?.typeRight !== undefined) {
+    payload.typeRight = clampInt(event.typeRight, 0, 0xff);
+  }
+
+  const left = normalizeFixedByteArrayEventValue(event?.left, 10);
+  const right = normalizeFixedByteArrayEventValue(event?.right, 10);
+  if (left) {
+    payload.left = left;
+  }
+  if (right) {
+    payload.right = right;
+  }
+
+  broadcastText({
+    type: "session_event",
+    name: "trigger_effects",
+    event: payload,
+  });
+};
+
 const dispatchHapticsFrameAsRumble = (frame: any) => {
   const frameData = frame?.data;
   const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
@@ -3052,6 +3106,10 @@ const createSession = (sessionOptions: any) => {
         // Session rumble packets already carry direct motor levels, so forward
         // them as-is without the haptics-audio peak filtering path.
         broadcastRumbleEvent(event);
+      } else if (eventName === "trigger_effects") {
+        // Forward adaptive trigger mode and raw 10-byte params so the renderer
+        // can write them into the DualSense HID output report.
+        broadcastTriggerEffectsEvent(event);
       } else {
         broadcastText({
           type: "session_event",
@@ -3065,8 +3123,6 @@ const createSession = (sessionOptions: any) => {
         pushControllerState("connected-init");
       } else if (eventName === "quit") {
         broadcastText({ type: "session_status", status: "quit" });
-      } else if (eventName === "trigger_effects") {
-        // TODO: handle adaptive trigger effects event(from PS5 games)
       } else {
         broadcastText({ type: "session_status", status: eventName });
       }
