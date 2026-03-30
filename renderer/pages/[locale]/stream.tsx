@@ -19,6 +19,14 @@ import {
 } from "../../common/gamepadMapping";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
+import {
+  getDualSenseTouchStateForGamepad,
+  hasActiveDualSenseTouchState,
+  requestDualSenseHidAccessIfNeeded,
+  retainDualSenseHidBridge,
+  subscribeDualSenseHidChanges,
+  syncDualSenseHidGamepads,
+} from "../../lib/dualsenseHid";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import { triggerGamepadRumbleFromChiaki } from "../../lib/gamepadRumble";
@@ -798,6 +806,18 @@ function StreamPage() {
   }, [persistedBrightness]);
 
   useEffect(() => {
+    const release = retainDualSenseHidBridge();
+    const unsubscribe = subscribeDualSenseHidChanges(() => {
+      pollAndSendControllerStateRef.current();
+    });
+
+    return () => {
+      unsubscribe();
+      release();
+    };
+  }, []);
+
+  useEffect(() => {
     keyboardMappingRef.current = normalizeKeyboardMapping(
       settings?.input_mousekeyboard_maping
     );
@@ -813,6 +833,13 @@ function StreamPage() {
       settings?.polling_rate
     );
 
+    const ensureDualSenseHidAccess = () => {
+      if (controllerInputKernelRef.current !== "web") {
+        return;
+      }
+      void requestDualSenseHidAccessIfNeeded();
+    };
+
     const activityEvent = () => {
       markUserActivity();
     };
@@ -821,8 +848,11 @@ function StreamPage() {
 
     window.addEventListener("touchstart", activityEvent);
     window.addEventListener("touchmove", activityEvent);
+    window.addEventListener("mousedown", ensureDualSenseHidAccess);
+    window.addEventListener("touchstart", ensureDualSenseHidAccess);
 
     const escEvent = (event: KeyboardEvent) => {
+      ensureDualSenseHidAccess();
       if (event.key === "Escape") {
         Ipc.send("app", "exitFullscreen");
       }
@@ -845,6 +875,8 @@ function StreamPage() {
       window.removeEventListener("mousedown", activityEvent);
       window.removeEventListener("touchstart", activityEvent);
       window.removeEventListener("touchmove", activityEvent);
+      window.removeEventListener("mousedown", ensureDualSenseHidAccess);
+      window.removeEventListener("touchstart", ensureDualSenseHidAccess);
       window.removeEventListener("keydown", escEvent);
     };
   }, [
@@ -2481,9 +2513,23 @@ function StreamPage() {
       }
     }
 
+    if (useWebGamepadKernel) {
+      syncDualSenseHidGamepads(activeGamepads);
+    }
+
     validCount = activeGamepads.length;
+    let dualSenseTouchState = createIdleTouchState();
 
     for (const gamepad of activeGamepads) {
+      const currentDualSenseTouchState = useWebGamepadKernel
+        ? getDualSenseTouchStateForGamepad(gamepad)
+        : null;
+      if (
+        !hasActiveDualSenseTouchState(dualSenseTouchState) &&
+        hasActiveDualSenseTouchState(currentDualSenseTouchState)
+      ) {
+        dualSenseTouchState = currentDualSenseTouchState!;
+      }
 
       const getMappedButtonIndex = (action: GamepadMappingAction) => {
         return gamepadMappingRef.current[action];
@@ -2601,10 +2647,13 @@ function StreamPage() {
     mergedState.leftY = toSignedAxis(leftYNorm);
     mergedState.rightX = toSignedAxis(rightXNorm);
     mergedState.rightY = toSignedAxis(rightYNorm);
-    mergedState.touchIdNext = touchpadStateRef.current.touchIdNext;
+    const activeTouchState = hasActiveDualSenseTouchState(touchpadStateRef.current)
+      ? touchpadStateRef.current
+      : dualSenseTouchState;
+    mergedState.touchIdNext = activeTouchState.touchIdNext;
     mergedState.touches = [
-      cloneTouchPoint(touchpadStateRef.current.touches[0]),
-      cloneTouchPoint(touchpadStateRef.current.touches[1]),
+      cloneTouchPoint(activeTouchState.touches[0]),
+      cloneTouchPoint(activeTouchState.touches[1]),
     ];
 
     if (touchpadButtonPressedRef.current) {

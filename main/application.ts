@@ -15,6 +15,29 @@ interface startupFlags {
   autoConnect: string;
 }
 
+const SONY_VENDOR_ID = 0x054c;
+const DUALSENSE_PRODUCT_IDS = new Set([0x0ce6, 0x0df2]);
+
+const isAllowedDualSenseHidDevice = (device: any) => {
+  return (
+    !!device &&
+    Number(device.vendorId) === SONY_VENDOR_ID &&
+    DUALSENSE_PRODUCT_IDS.has(Number(device.productId))
+  );
+};
+
+const isAllowedHidOrigin = (origin: string) => {
+  if (!origin) {
+    return false;
+  }
+
+  return (
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:") ||
+    origin.startsWith("app://")
+  );
+};
+
 export default class Application {
   private _log;
   public _store = new Store();
@@ -29,6 +52,7 @@ export default class Application {
   private _isWindows: boolean = process.platform === "win32";
   private _isLinux: boolean = process.platform === "linux";
   private _isQuitting: boolean = false;
+  private _hidSessionConfigured = false;
 
   public _mainWindow;
   public _ipc: Ipc;
@@ -224,6 +248,44 @@ export default class Application {
     ElectronApp.on("before-quit", () => (this._isQuitting = true));
   }
 
+  configureDualSenseWebHidSession() {
+    if (this._hidSessionConfigured || !this._mainWindow?.webContents?.session) {
+      return;
+    }
+
+    const currentSession = this._mainWindow.webContents.session;
+
+    currentSession.setDevicePermissionHandler((details) => {
+      return (
+        details.deviceType === "hid" &&
+        isAllowedHidOrigin(String(details.origin || "")) &&
+        isAllowedDualSenseHidDevice(details.device)
+      );
+    });
+
+    currentSession.on("select-hid-device", (event, details, callback) => {
+      const requestingOrigin = String(details?.frame?.origin || "");
+      if (!isAllowedHidOrigin(requestingOrigin)) {
+        callback(null);
+        return;
+      }
+
+      const selectedDevice = Array.isArray(details?.deviceList)
+        ? details.deviceList.find((device) => isAllowedDualSenseHidDevice(device))
+        : null;
+
+      if (!selectedDevice) {
+        callback(null);
+        return;
+      }
+
+      event.preventDefault();
+      callback(selectedDevice.deviceId);
+    });
+
+    this._hidSessionConfigured = true;
+  }
+
   openMainWindow() {
     this.log(
       "electron",
@@ -247,6 +309,7 @@ export default class Application {
       height: 800,
       ...windowOptions,
     });
+    this.configureDualSenseWebHidSession();
 
     this._mainWindow.webContents.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown') {
