@@ -159,6 +159,7 @@ type StartStreamSessionArgs = {
     apName?: string;
     hostType?: string;
     isPs5?: boolean;
+    serverNickname?: string;
     target?: number;
   };
 };
@@ -735,12 +736,30 @@ const resolvePlatformCodec = (codec: number) => {
 
 const CHIAKI_PS5_TARGET_FLOOR = 1000000;
 
+const inferPs5FlagFromText = (value: unknown) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized.includes("PS5")) {
+    return true;
+  }
+
+  if (normalized.includes("PS4")) {
+    return false;
+  }
+
+  return undefined;
+};
+
 const resolveSessionPs5Flag = (
   argsPs5: boolean | undefined,
   consoleInfo: {
     apName?: string;
     hostType?: string;
     isPs5?: boolean;
+    serverNickname?: string;
     target?: number;
   }
 ) => {
@@ -757,27 +776,20 @@ const resolveSessionPs5Flag = (
     return consoleInfo.isPs5;
   }
 
-  const hostType = String(consoleInfo.hostType || "").trim().toUpperCase();
-  if (hostType) {
-    if (hostType.includes("PS5")) {
-      return true;
-    }
-    if (hostType.includes("PS4")) {
-      return false;
-    }
-  }
-
-  const apName = String(consoleInfo.apName || "").trim().toUpperCase();
-  if (apName) {
-    if (apName.includes("PS5")) {
-      return true;
-    }
-    if (apName.includes("PS4")) {
-      return false;
+  for (const value of [
+    consoleInfo.hostType,
+    consoleInfo.apName,
+    consoleInfo.serverNickname,
+  ]) {
+    const inferred = inferPs5FlagFromText(value);
+    if (typeof inferred === "boolean") {
+      return inferred;
     }
   }
 
-  return true;
+  throw new Error(
+    "Unable to determine whether the cached host is PS4 or PS5. Please rediscover or re-register the console."
+  );
 };
 
 const resolveInputFormat = (codec: number) => {

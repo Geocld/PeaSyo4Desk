@@ -34,6 +34,23 @@ export type ConsoleCacheItem = {
   stateName?: string;
 };
 
+const inferPs5FlagFromText = (value: unknown) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized.includes("PS5")) {
+    return true;
+  }
+
+  if (normalized.includes("PS4")) {
+    return false;
+  }
+
+  return undefined;
+};
+
 const buildStorageConsoleId = (item: ConsoleCacheItem) => {
   return String(item.consoleId || item.hostId || item.serverMac || item.host || "").trim();
 };
@@ -77,11 +94,9 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
   const inferredIsPs5 =
     typeof item.isPs5 === "boolean"
       ? item.isPs5
-      : hostType
-        ? hostType.toUpperCase().includes("PS5")
-        : apName
-          ? apName.toUpperCase().includes("PS5")
-          : undefined;
+      : inferPs5FlagFromText(hostType) ??
+        inferPs5FlagFromText(apName) ??
+        inferPs5FlagFromText(serverNickname);
   const target = Number(item.target);
   const registedTime = Number(item.registedTime || Date.now());
 
