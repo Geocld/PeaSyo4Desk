@@ -1,3 +1,5 @@
+import { playDualSenseHidRumbleForGamepad } from "./dualsenseHid";
+
 type ChiakiRumbleEvent = {
   left?: number;
   right?: number;
@@ -24,6 +26,9 @@ export const GAMEPAD_RUMBLE_CONFIG = {
   minIntervalMs: 28,
   minDurationMs: 25,
   maxDurationMs: 80,
+  hidMinDurationMs: 18,
+  hidMaxDurationMs: 52,
+  hidMotorScale: 0.68,
   masterGain: 0.48,
   strongScale: 0.55,
   weakScale: 0.45,
@@ -61,6 +66,31 @@ const toRumbleMagnitude = (rawValue: unknown, rawPeak: unknown) => {
   }
 
   return clamp01(value);
+};
+
+const toRumbleMotorByte = (rawValue: unknown, rawPeak: unknown) => {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  const peak = Number(rawPeak);
+  if (Number.isFinite(peak) && peak > 0) {
+    return Math.max(0, Math.min(255, Math.round((value / peak) * 255)));
+  }
+
+  if (value > 1) {
+    return Math.max(0, Math.min(255, Math.round(value)));
+  }
+
+  return Math.max(0, Math.min(255, Math.round(value * 255)));
+};
+
+const scaleRumbleMotorByte = (value: number, scale: number) => {
+  if (value <= 0 || scale <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(255, Math.round(value * scale)));
 };
 
 const isValidStreamGamepad = (gamepad: Gamepad | null): gamepad is Gamepad => {
@@ -145,8 +175,12 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
     toRumbleMagnitude(rumble.right, rumble.peakRight),
     GAMEPAD_RUMBLE_CONFIG.weakScale
   );
+  const strongMotor = toRumbleMotorByte(rumble.left, rumble.peakLeft);
+  const weakMotor = toRumbleMotorByte(rumble.right, rumble.peakRight);
   const maxMagnitude = Math.max(strongMagnitude, weakMagnitude);
-  if (maxMagnitude <= 0) {
+  const maxMotorMagnitude = Math.max(strongMotor, weakMotor) / 255;
+  const durationMagnitude = Math.max(maxMagnitude, maxMotorMagnitude);
+  if (durationMagnitude <= 0) {
     return false;
   }
 
@@ -154,14 +188,39 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
     GAMEPAD_RUMBLE_CONFIG.minDurationMs +
     Math.round(
       (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
-        maxMagnitude
+        durationMagnitude
     );
+  const hidDuration =
+    GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs +
+    Math.round(
+      (GAMEPAD_RUMBLE_CONFIG.hidMaxDurationMs - GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs) *
+        durationMagnitude
+    );
+  const hidStrongMotor = scaleRumbleMotorByte(
+    strongMotor,
+    GAMEPAD_RUMBLE_CONFIG.hidMotorScale
+  );
+  const hidWeakMotor = scaleRumbleMotorByte(
+    weakMotor,
+    GAMEPAD_RUMBLE_CONFIG.hidMotorScale
+  );
 
   const gamepads = navigator.getGamepads();
   let played = false;
 
   for (const gamepad of gamepads) {
     if (!isValidStreamGamepad(gamepad)) {
+      continue;
+    }
+
+    const viaDualSenseHid = playDualSenseHidRumbleForGamepad(
+      gamepad,
+      hidWeakMotor,
+      hidStrongMotor,
+      hidDuration
+    );
+    if (viaDualSenseHid) {
+      played = true;
       continue;
     }
 

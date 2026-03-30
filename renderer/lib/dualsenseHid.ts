@@ -131,6 +131,7 @@ type DeviceContext = {
   inputReportHandler: (event: HIDInputReportEvent) => void;
   openPromise: Promise<boolean> | null;
   writeChain: Promise<boolean>;
+  rumbleStopTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const clamp = (value: number, min: number, max: number) => {
@@ -913,6 +914,53 @@ class DualSenseHidBridge {
     return payload;
   }
 
+  playRumbleForGamepad(
+    gamepad: Gamepad | null | undefined,
+    weakMotor: unknown,
+    strongMotor: unknown,
+    durationMs: unknown
+  ) {
+    if (!gamepad) {
+      return false;
+    }
+
+    let assignedDevice = this.assignedDevicesByGamepadIndex.get(gamepad.index);
+    if (!assignedDevice) {
+      assignedDevice = this.findMatchingDevice(gamepad, new Set()) || undefined;
+      if (assignedDevice) {
+        this.assignedDevicesByGamepadIndex.set(gamepad.index, assignedDevice);
+      }
+    }
+    if (!assignedDevice) {
+      return false;
+    }
+
+    const context = this.deviceContexts.get(assignedDevice);
+    if (!context) {
+      return false;
+    }
+
+    const weakLevel = clampByte(weakMotor);
+    const strongLevel = clampByte(strongMotor);
+    const duration = Math.max(0, Math.trunc(Number(durationMs) || 0));
+
+    if (context.rumbleStopTimer) {
+      clearTimeout(context.rumbleStopTimer);
+      context.rumbleStopTimer = null;
+    }
+
+    void this.writeRumbleState(context, weakLevel, strongLevel);
+
+    if (duration > 0 && (weakLevel > 0 || strongLevel > 0)) {
+      context.rumbleStopTimer = setTimeout(() => {
+        context.rumbleStopTimer = null;
+        void this.writeRumbleState(context, 0, 0);
+      }, duration);
+    }
+
+    return true;
+  }
+
   applyLedColor(event: unknown) {
     const payload = (event || {}) as Record<string, unknown>;
     const color = parseByteArrayValue(payload.color);
@@ -1043,6 +1091,7 @@ class DualSenseHidBridge {
       btOutputSeq: 0,
       openPromise: null,
       writeChain: Promise.resolve(true),
+      rumbleStopTimer: null,
       inputReportHandler: (event) => {
         const nextInputState = parseDualSenseInputState(event.reportId, event.data);
         context.lastInputReportId = Number(event.reportId) || 0;
@@ -1076,6 +1125,10 @@ class DualSenseHidBridge {
 
   private disposeContext(context: DeviceContext) {
     context.device.removeEventListener("inputreport", context.inputReportHandler);
+    if (context.rumbleStopTimer) {
+      clearTimeout(context.rumbleStopTimer);
+      context.rumbleStopTimer = null;
+    }
     context.inputState = createIdleDualSenseInputState();
     context.rawTouchState = createIdleTouchState();
     context.touchState = createIdleTouchState();
@@ -1226,6 +1279,15 @@ class DualSenseHidBridge {
     return context.writeChain;
   }
 
+  private writeRumbleState(context: DeviceContext, weakMotor: number, strongMotor: number) {
+    return this.queueOutputWrite(context, (state) => {
+      state[2] = clampByte(weakMotor);
+      state[3] = clampByte(strongMotor);
+      setBit(state, 0, 0, true);
+      setBit(state, 0, 1, true);
+    });
+  }
+
   private async sendOutputReport(context: DeviceContext, outputState: Uint8Array) {
     const preferBluetooth =
       context.connectionType === "bluetooth" || context.lastInputReportId === DUALSENSE_INPUT_REPORT_BT;
@@ -1271,6 +1333,15 @@ export const getDualSenseTouchStateForGamepad = (gamepad: Gamepad | null | undef
 
 export const getDualSenseInputStateForGamepad = (gamepad: Gamepad | null | undefined) => {
   return bridge.getInputStateForGamepad(gamepad);
+};
+
+export const playDualSenseHidRumbleForGamepad = (
+  gamepad: Gamepad | null | undefined,
+  weakMotor: unknown,
+  strongMotor: unknown,
+  durationMs: unknown
+) => {
+  return bridge.playRumbleForGamepad(gamepad, weakMotor, strongMotor, durationMs);
 };
 
 export const requestDualSenseHidAccessIfNeeded = () => {
