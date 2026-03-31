@@ -2959,9 +2959,15 @@ function StreamPage() {
 
                 if (eventName === "rumble") {
                   if (controllerInputKernelRef.current === "node") {
-                    void triggerNativeGamepadRumbleFromChiaki(sessionEvent);
+                    void triggerNativeGamepadRumbleFromChiaki(sessionEvent, {
+                      enabled: settings?.rumble !== false,
+                      intensity: settings?.rumble_intensity,
+                    });
                   } else {
-                    triggerGamepadRumbleFromChiaki(sessionEvent);
+                    triggerGamepadRumbleFromChiaki(sessionEvent, {
+                      enabled: settings?.rumble !== false,
+                      intensity: settings?.rumble_intensity,
+                    });
                   }
                 } else if (eventName === "trigger_effects") {
                   handleGamepadTriggerEffectsFromChiaki(sessionEvent);

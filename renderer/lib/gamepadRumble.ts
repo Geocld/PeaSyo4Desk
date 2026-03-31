@@ -11,6 +11,11 @@ type ChiakiRumbleEvent = {
   peakRight?: number;
 };
 
+export type GamepadRumbleSettings = {
+  enabled?: boolean;
+  intensity?: number;
+};
+
 type PlayEffectOptions = {
   startDelay?: number;
   duration: number;
@@ -39,6 +44,15 @@ export const GAMEPAD_RUMBLE_CONFIG = {
   gamma: 1.6,
 } as const;
 
+const DEFAULT_RUMBLE_INTENSITY = 3 as const;
+const RUMBLE_INTENSITY_GAINS = {
+  1: 0.35,
+  2: 0.6,
+  3: 1,
+  4: 1.2,
+  5: 1.4,
+} as const;
+
 let lastRumbleAtMs = 0;
 
 const clamp01 = (value: number) => {
@@ -47,10 +61,33 @@ const clamp01 = (value: number) => {
   return value;
 };
 
-const tuneRumbleMagnitude = (rawMagnitude: number, channelScale: number) => {
+const resolveRumbleIntensityLevel = (
+  value: unknown
+): keyof typeof RUMBLE_INTENSITY_GAINS => {
+  const numeric = Math.round(Number(value));
+  if (numeric >= 1 && numeric <= 5) {
+    return numeric as keyof typeof RUMBLE_INTENSITY_GAINS;
+  }
+  return DEFAULT_RUMBLE_INTENSITY;
+};
+
+const resolveRumbleIntensityGain = (settings?: GamepadRumbleSettings) => {
+  const level = resolveRumbleIntensityLevel(settings?.intensity);
+  return RUMBLE_INTENSITY_GAINS[level];
+};
+
+const isRumbleEnabled = (settings?: GamepadRumbleSettings) => {
+  return settings?.enabled !== false;
+};
+
+const tuneRumbleMagnitude = (
+  rawMagnitude: number,
+  channelScale: number,
+  intensityGain: number
+) => {
   const compressed = Math.pow(clamp01(rawMagnitude), GAMEPAD_RUMBLE_CONFIG.gamma);
   return clamp01(
-    compressed * GAMEPAD_RUMBLE_CONFIG.masterGain * channelScale
+    compressed * GAMEPAD_RUMBLE_CONFIG.masterGain * channelScale * intensityGain
   );
 };
 
@@ -95,6 +132,10 @@ const scaleRumbleMotorByte = (value: number, scale: number) => {
     return 0;
   }
   return Math.max(0, Math.min(255, Math.round(value * scale)));
+};
+
+const scaleNativeRumbleMagnitude = (value: number, intensityGain: number) => {
+  return clamp01(value * intensityGain);
 };
 
 const isValidStreamGamepad = (gamepad: Gamepad | null): gamepad is Gamepad => {
@@ -160,20 +201,30 @@ const playViaHapticActuators = (gamepad: Gamepad, magnitude: number, duration: n
   return played;
 };
 
-export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
+export const triggerGamepadRumbleFromChiaki = (
+  event: unknown,
+  settings?: GamepadRumbleSettings
+) => {
+  if (!isRumbleEnabled(settings)) {
+    return false;
+  }
+
   const now = Date.now();
   if (now - lastRumbleAtMs < GAMEPAD_RUMBLE_CONFIG.minIntervalMs) {
     return false;
   }
 
   const rumble = (event || {}) as ChiakiRumbleEvent;
+  const intensityGain = resolveRumbleIntensityGain(settings);
   const strongMagnitude = tuneRumbleMagnitude(
     toRumbleMagnitude(rumble.left, rumble.peakLeft),
-    GAMEPAD_RUMBLE_CONFIG.strongScale
+    GAMEPAD_RUMBLE_CONFIG.strongScale,
+    intensityGain
   );
   const weakMagnitude = tuneRumbleMagnitude(
     toRumbleMagnitude(rumble.right, rumble.peakRight),
-    GAMEPAD_RUMBLE_CONFIG.weakScale
+    GAMEPAD_RUMBLE_CONFIG.weakScale,
+    intensityGain
   );
   const strongMotor = toRumbleMotorByte(rumble.left, rumble.peakLeft);
   const weakMotor = toRumbleMotorByte(rumble.right, rumble.peakRight);
@@ -198,11 +249,11 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
     );
   const hidStrongMotor = scaleRumbleMotorByte(
     strongMotor,
-    GAMEPAD_RUMBLE_CONFIG.hidMotorScale
+    GAMEPAD_RUMBLE_CONFIG.hidMotorScale * intensityGain
   );
   const hidWeakMotor = scaleRumbleMotorByte(
     weakMotor,
-    GAMEPAD_RUMBLE_CONFIG.hidMotorScale
+    GAMEPAD_RUMBLE_CONFIG.hidMotorScale * intensityGain
   );
 
   let played = playDualSenseHidRumbleForActiveDevices(
@@ -253,10 +304,24 @@ export const triggerGamepadRumbleFromChiaki = (event: unknown) => {
   return played;
 };
 
-export const triggerNativeGamepadRumbleFromChiaki = async (event: unknown) => {
+export const triggerNativeGamepadRumbleFromChiaki = async (
+  event: unknown,
+  settings?: GamepadRumbleSettings
+) => {
+  if (!isRumbleEnabled(settings)) {
+    return false;
+  }
+
   const rumble = (event || {}) as ChiakiRumbleEvent;
-  const high = toRumbleMagnitude(rumble.left, rumble.peakLeft);
-  const low = toRumbleMagnitude(rumble.right, rumble.peakRight);
+  const intensityGain = resolveRumbleIntensityGain(settings);
+  const high = scaleNativeRumbleMagnitude(
+    toRumbleMagnitude(rumble.left, rumble.peakLeft),
+    intensityGain
+  );
+  const low = scaleNativeRumbleMagnitude(
+    toRumbleMagnitude(rumble.right, rumble.peakRight),
+    intensityGain
+  );
   const durationMagnitude = Math.max(high, low);
   if (durationMagnitude <= 0) {
     return false;

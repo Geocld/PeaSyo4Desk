@@ -107,6 +107,29 @@ const getSettingsMetas = (t, options = {}) => {
         ],
       },
       {
+        name: "rumble",
+        type: "radio",
+        title: t("Rumble"),
+        description: t("RumbleDesc"),
+        data: [
+          { value: true, label: t("Enable") },
+          { value: false, label: t("Disable") },
+        ],
+      },
+      {
+        name: "rumble_intensity",
+        type: "radio",
+        title: t("Rumble intensity"),
+        description: t("RumbleIntensityDesc"),
+        data: [
+          { value: 1, label: t("VeryWeak") },
+          { value: 2, label: t("Weak") },
+          { value: 3, label: t("Normal") },
+          { value: 4, label: t("Strong") },
+          { value: 5, label: t("VeryStrong") },
+        ],
+      },
+      {
         name: "theme",
         type: "radio",
         title: t("Theme"),

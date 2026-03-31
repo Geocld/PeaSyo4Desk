@@ -23,6 +23,14 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.5" date="2026-03-31">
+     <description>
+        <ul>
+          <li>Add rumble intensity option</li>
+          <li>Fix native controller error issue</li>
+        </ul>
+     </description>
+    </release>
     <release version="1.0.4" date="2026-03-30">
      <description>
         <ul>
