@@ -30,6 +30,8 @@ const CONTROLLER_ANALOG_BUTTONS = {
 };
 const TRIGGER_DEADZONE = 0.03;
 const TRIGGER_DIGITAL_PRESS_STATE = 8;
+const STARTUP_DEVICE_RESCAN_INTERVAL_MS = 250;
+const STARTUP_DEVICE_RESCAN_WINDOW_MS = 5000;
 
 type ControllerStateSnapshot = {
   buttons: number;
@@ -309,6 +311,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   const idleState = createIdleState();
   let hasLastEmittedState = false;
   let activeDeviceId: string | null = null;
+  let startupRescanTimer: ReturnType<typeof setTimeout> | null = null;
+  let startupRescanDeadline = 0;
 
   const setButtonState = (state: MutableControllerState, token: string, pressed: boolean) => {
     const mask = BUTTON_TOKEN_TO_MASK[token];
@@ -521,6 +525,15 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     emitActiveDeviceState();
   };
 
+  const clearStartupRescanTimer = () => {
+    if (!startupRescanTimer) {
+      return;
+    }
+
+    clearTimeout(startupRescanTimer);
+    startupRescanTimer = null;
+  };
+
   const openController = (device: any) => {
     const deviceId = resolveDeviceId(device);
     if (!deviceId || controllerInstances.has(deviceId) || !sdl?.controller?.openDevice) {
@@ -597,6 +610,49 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     closeController(resolveDeviceId(event?.device));
   };
 
+  const getDiscoveredDevices = () => {
+    return Array.isArray(sdl?.controller?.devices) ? sdl.controller.devices : [];
+  };
+
+  const syncDiscoveredDevices = () => {
+    for (const device of getDiscoveredDevices()) {
+      openController(device);
+    }
+  };
+
+  const scheduleStartupDeviceRescan = () => {
+    clearStartupRescanTimer();
+
+    if (!started) {
+      return;
+    }
+
+    startupRescanDeadline = Date.now() + STARTUP_DEVICE_RESCAN_WINDOW_MS;
+
+    const run = () => {
+      startupRescanTimer = null;
+
+      if (!started) {
+        return;
+      }
+
+      syncDiscoveredDevices();
+
+      if (controllerInstances.size > 0 || Date.now() >= startupRescanDeadline) {
+        if (controllerInstances.size > 0) {
+          onLog?.(
+            `node-sdl controller startup rescan resolved ${controllerInstances.size} controller(s)`
+          );
+        }
+        return;
+      }
+
+      startupRescanTimer = setTimeout(run, STARTUP_DEVICE_RESCAN_INTERVAL_MS);
+    };
+
+    startupRescanTimer = setTimeout(run, STARTUP_DEVICE_RESCAN_INTERVAL_MS);
+  };
+
   const getActiveControllerEntry = () => {
     if (activeDeviceId) {
       const controller = controllerInstances.get(activeDeviceId);
@@ -622,6 +678,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
 
   const start = () => {
     if (started) {
+      syncDiscoveredDevices();
+      emitActiveDeviceState();
       return true;
     }
 
@@ -644,13 +702,15 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     sdl.controller.on("deviceAdd", handleDeviceAdd);
     sdl.controller.on("deviceRemove", handleDeviceRemove);
 
-    const devices = Array.isArray(sdl.controller.devices) ? sdl.controller.devices : [];
+    started = true;
+
+    const devices = getDiscoveredDevices();
     onLog?.(`node-sdl detected controller devices: ${devices.length}`);
     for (const device of devices) {
       openController(device);
     }
 
-    started = true;
+    scheduleStartupDeviceRescan();
     emitActiveDeviceState();
     return true;
   };
@@ -662,6 +722,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
 
     sdl?.controller?.removeListener?.("deviceAdd", handleDeviceAdd);
     sdl?.controller?.removeListener?.("deviceRemove", handleDeviceRemove);
+    clearStartupRescanTimer();
 
     for (const deviceId of Array.from(controllerInstances.keys())) {
       closeController(deviceId);
