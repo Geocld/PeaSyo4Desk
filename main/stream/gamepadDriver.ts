@@ -680,10 +680,17 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   const rumble = (data: NodeGamepadDriverRumbleRequest) => {
     const entry = getActiveControllerEntry();
     if (!entry) {
-      throw new Error("No native controller is available.");
+      return {
+        ok: false,
+        reason: "no-native-controller",
+      };
     }
     if (!entry.controller?.hasRumble || typeof entry.controller?.rumble !== "function") {
-      throw new Error("Active native controller does not support rumble.");
+      return {
+        ok: false,
+        reason: "native-controller-rumble-unsupported",
+        deviceId: entry.deviceId,
+      };
     }
 
     const low = clampUnit(data?.low ?? 0);
