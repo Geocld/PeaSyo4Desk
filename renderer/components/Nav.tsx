@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
 import Ipc from "../lib/ipc";
+import updater from "../lib/updater";
 import pkg from '../../package.json';
 
 type NavSection = "home" | "settings";
@@ -84,9 +85,9 @@ const isSettingsSubpage = (pathname: string) => {
 const Nav = ({ current }: NavProps) => {
   const router = useRouter();
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [newVersions, setNewVersions] = useState(null);
 
   const { t, i18n: { language: locale } } = useTranslation("common");
-  const newVersions = null;
   const currentSection = getCurrentSection(router.pathname, current);
   const showBackToSettings = isSettingsSubpage(router.pathname);
 
@@ -145,6 +146,12 @@ const Nav = ({ current }: NavProps) => {
 
   useEffect(() => {
     syncFullscreenState();
+
+    updater().then((infos: any) => {
+      if (infos) {
+        setNewVersions(infos)
+      }
+    })
 
     window.addEventListener("resize", syncFullscreenState);
     window.addEventListener("focus", syncFullscreenState);
