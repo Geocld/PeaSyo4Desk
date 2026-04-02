@@ -1,3 +1,14 @@
+import {
+  createTriggerNormalizerState,
+  normalizeTriggerUnit,
+  parseTriggerBinding,
+  readTriggerUnitFromJoystickBinding,
+  resetTriggerNormalizerState,
+  type NativeTriggerBinding,
+  type NativeTriggerAxisName,
+  type TriggerNormalizerState,
+} from "./triggerNormalization";
+
 declare const __non_webpack_require__: undefined | ((id: string) => any);
 const runtimeRequire =
   typeof __non_webpack_require__ === "function"
@@ -48,6 +59,8 @@ type NativeGamepadTestButtonName =
 
 type NativeGamepadTestAxes = Record<NativeGamepadTestAxisName, number>;
 type NativeGamepadTestButtons = Record<NativeGamepadTestButtonName, boolean>;
+type ControllerTriggerNormalizers = Record<NativeTriggerAxisName, TriggerNormalizerState>;
+type ControllerTriggerBindings = Record<NativeTriggerAxisName, NativeTriggerBinding>;
 
 const createEmptyNativeGamepadAxes = (): NativeGamepadTestAxes => ({
   leftStickX: 0,
@@ -125,8 +138,11 @@ type ControllerEntry = {
   deviceId: string;
   device: any;
   controller: any;
+  joystick: any | null;
   axes: ReturnType<typeof createEmptyNativeGamepadAxes>;
   buttons: ReturnType<typeof createEmptyNativeGamepadButtons>;
+  triggerNormalizers: ControllerTriggerNormalizers;
+  triggerBindings: ControllerTriggerBindings;
 };
 
 const normalizeDeviceId = (value: unknown) => {
@@ -175,28 +191,6 @@ const clampUnit = (value: unknown) => {
   return numeric;
 };
 
-const normalizeTriggerUnit = (value: unknown) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return 0;
-  }
-
-  if (numeric >= 0 && numeric <= 1) {
-    return numeric;
-  }
-  if (numeric >= -1 && numeric <= 1) {
-    return (numeric + 1) / 2;
-  }
-  if (numeric >= 0 && numeric <= 255) {
-    return numeric / 255;
-  }
-  if (numeric >= -32768 && numeric <= 32767) {
-    return (numeric + 32768) / 65535;
-  }
-
-  return clampUnit(numeric);
-};
-
 const clampDurationMs = (value: unknown) => {
   const numeric = Math.round(Number(value));
   if (!Number.isFinite(numeric)) {
@@ -227,6 +221,36 @@ const encodeSteamHandle = (value: unknown) => {
   return normalizeString(value);
 };
 
+const getControllerMapping = (controller: any, device?: any) => {
+  return controller?.device?.mapping ?? device?.mapping ?? null;
+};
+
+const createControllerTriggerNormalizers = (mapping: unknown): ControllerTriggerNormalizers => ({
+  leftTrigger: createTriggerNormalizerState(mapping, "leftTrigger"),
+  rightTrigger: createTriggerNormalizerState(mapping, "rightTrigger"),
+});
+
+const createControllerTriggerBindings = (mapping: unknown): ControllerTriggerBindings => ({
+  leftTrigger: parseTriggerBinding(mapping, "leftTrigger"),
+  rightTrigger: parseTriggerBinding(mapping, "rightTrigger"),
+});
+
+const resetControllerTriggerNormalizers = (
+  normalizers: ControllerTriggerNormalizers,
+  mapping: unknown
+) => {
+  resetTriggerNormalizerState(normalizers.leftTrigger, mapping, "leftTrigger");
+  resetTriggerNormalizerState(normalizers.rightTrigger, mapping, "rightTrigger");
+};
+
+const resetControllerTriggerBindings = (
+  bindings: ControllerTriggerBindings,
+  mapping: unknown
+) => {
+  bindings.leftTrigger = parseTriggerBinding(mapping, "leftTrigger");
+  bindings.rightTrigger = parseTriggerBinding(mapping, "rightTrigger");
+};
+
 class NativeGamepadTestServiceImpl {
   private started = false;
   private sdl: any = null;
@@ -243,6 +267,7 @@ class NativeGamepadTestServiceImpl {
   private readonly handleDeviceRemove = (event: any) => {
     this.removeController(normalizeDeviceId(event?.device?.id), {
       closeInstance: true,
+      closeJoystick: true,
       reason: "device removed",
     });
   };
@@ -264,6 +289,63 @@ class NativeGamepadTestServiceImpl {
     this.markUpdated();
   }
 
+  private findJoystickDevice(deviceId: string) {
+    const devices = Array.isArray(this.sdl?.joystick?.devices) ? this.sdl.joystick.devices : [];
+    return devices.find((candidate: any) => normalizeDeviceId(candidate?.id) === deviceId) ?? null;
+  }
+
+  private openJoystick(deviceId: string) {
+    const joystickDevice = this.findJoystickDevice(deviceId);
+    if (!joystickDevice || !this.sdl?.joystick?.openDevice) {
+      return null;
+    }
+
+    try {
+      return this.sdl.joystick.openDevice(joystickDevice);
+    } catch (error: any) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error || "Failed to open native joystick sidecar.");
+      this.pushLog(`native gamepad tester: failed to open joystick ${deviceId}: ${message}`);
+      return null;
+    }
+  }
+
+  private readTriggerAxisValue(
+    entry: ControllerEntry,
+    axisName: NativeTriggerAxisName,
+    controllerValue: unknown
+  ) {
+    const joystickValue = readTriggerUnitFromJoystickBinding(
+      entry.triggerBindings[axisName],
+      entry.joystick
+    );
+    if (joystickValue !== null) {
+      return joystickValue;
+    }
+
+    return normalizeTriggerUnit(controllerValue, entry.triggerNormalizers[axisName]);
+  }
+
+  private refreshTriggerAxes(entry: ControllerEntry) {
+    const rawAxes =
+      entry.controller?.axes && typeof entry.controller.axes === "object"
+        ? (entry.controller.axes as Record<string, unknown>)
+        : {};
+
+    entry.axes.leftTrigger = this.readTriggerAxisValue(
+      entry,
+      "leftTrigger",
+      rawAxes.leftTrigger
+    );
+    entry.axes.rightTrigger = this.readTriggerAxisValue(
+      entry,
+      "rightTrigger",
+      rawAxes.rightTrigger
+    );
+  }
+
   private syncEntryFromController(entry: ControllerEntry) {
     const rawAxes =
       entry.controller?.axes && typeof entry.controller.axes === "object"
@@ -276,10 +358,13 @@ class NativeGamepadTestServiceImpl {
 
     for (const axisName of NATIVE_GAMEPAD_TEST_AXIS_NAMES) {
       const axisValue = rawAxes[axisName];
-      entry.axes[axisName] = axisName.includes("Trigger")
-        ? normalizeTriggerUnit(axisValue)
-        : clampSignedUnit(axisValue);
+      if (axisName === "leftTrigger" || axisName === "rightTrigger") {
+        continue;
+      }
+
+      entry.axes[axisName] = clampSignedUnit(axisValue);
     }
+    this.refreshTriggerAxes(entry);
 
     for (const buttonName of NATIVE_GAMEPAD_TEST_BUTTON_NAMES) {
       entry.buttons[buttonName] = !!rawButtons[buttonName];
@@ -344,7 +429,7 @@ class NativeGamepadTestServiceImpl {
 
   private removeController(
     deviceId: string,
-    options: { closeInstance: boolean; reason?: string | null }
+    options: { closeInstance: boolean; closeJoystick?: boolean; reason?: string | null }
   ) {
     if (!deviceId) {
       return;
@@ -374,6 +459,15 @@ class NativeGamepadTestServiceImpl {
         // ignore close failures
       }
     }
+
+    const shouldCloseJoystick = options.closeJoystick ?? options.closeInstance;
+    if (shouldCloseJoystick && entry.joystick && !entry.joystick.closed) {
+      try {
+        entry.joystick.close();
+      } catch {
+        // ignore close failures
+      }
+    }
   }
 
   private openController(device: any) {
@@ -384,12 +478,20 @@ class NativeGamepadTestServiceImpl {
 
     try {
       const controller = this.sdl.controller.openDevice(device);
+      const joystick = this.openJoystick(deviceId);
       const entry: ControllerEntry = {
         deviceId,
         device,
         controller,
+        joystick,
         axes: createEmptyNativeGamepadAxes(),
         buttons: createEmptyNativeGamepadButtons(),
+        triggerNormalizers: createControllerTriggerNormalizers(
+          getControllerMapping(controller, device)
+        ),
+        triggerBindings: createControllerTriggerBindings(
+          getControllerMapping(controller, device)
+        ),
       };
 
       this.syncEntryFromController(entry);
@@ -412,8 +514,18 @@ class NativeGamepadTestServiceImpl {
         const axisName = normalizeAxisName(event?.axis);
         if (!axisName) {
           this.syncEntryFromController(nextEntry);
-        } else if (axisName.includes("Trigger")) {
-          nextEntry.axes[axisName] = normalizeTriggerUnit(event?.value);
+        } else if (axisName === "leftTrigger") {
+          nextEntry.axes.leftTrigger = this.readTriggerAxisValue(
+            nextEntry,
+            "leftTrigger",
+            event?.value
+          );
+        } else if (axisName === "rightTrigger") {
+          nextEntry.axes.rightTrigger = this.readTriggerAxisValue(
+            nextEntry,
+            "rightTrigger",
+            event?.value
+          );
         } else {
           nextEntry.axes[axisName] = clampSignedUnit(event?.value);
         }
@@ -475,6 +587,12 @@ class NativeGamepadTestServiceImpl {
         if (!nextEntry) {
           return;
         }
+        const mapping = getControllerMapping(nextEntry.controller, nextEntry.device);
+        resetControllerTriggerNormalizers(
+          nextEntry.triggerNormalizers,
+          mapping
+        );
+        resetControllerTriggerBindings(nextEntry.triggerBindings, mapping);
         this.syncEntryFromController(nextEntry);
         this.pushLog(`native gamepad tester: controller remapped ${deviceId}`);
       });
@@ -482,8 +600,53 @@ class NativeGamepadTestServiceImpl {
       controller.on("close", () => {
         this.removeController(deviceId, {
           closeInstance: false,
+          closeJoystick: true,
           reason: "closed",
         });
+      });
+
+      joystick?.on("axisMotion", () => {
+        const nextEntry = this.controllerEntries.get(deviceId);
+        if (!nextEntry) {
+          return;
+        }
+
+        this.refreshTriggerAxes(nextEntry);
+        this.activeDeviceId = deviceId;
+        this.markUpdated();
+      });
+
+      joystick?.on("buttonDown", () => {
+        const nextEntry = this.controllerEntries.get(deviceId);
+        if (!nextEntry) {
+          return;
+        }
+
+        this.refreshTriggerAxes(nextEntry);
+        this.activeDeviceId = deviceId;
+        this.markUpdated();
+      });
+
+      joystick?.on("buttonUp", () => {
+        const nextEntry = this.controllerEntries.get(deviceId);
+        if (!nextEntry) {
+          return;
+        }
+
+        this.refreshTriggerAxes(nextEntry);
+        this.activeDeviceId = deviceId;
+        this.markUpdated();
+      });
+
+      joystick?.on("close", () => {
+        const nextEntry = this.controllerEntries.get(deviceId);
+        if (!nextEntry) {
+          return;
+        }
+
+        nextEntry.joystick = null;
+        this.refreshTriggerAxes(nextEntry);
+        this.markUpdated();
       });
     } catch (error: any) {
       const message =
@@ -549,6 +712,7 @@ class NativeGamepadTestServiceImpl {
     for (const deviceId of Array.from(this.controllerEntries.keys())) {
       this.removeController(deviceId, {
         closeInstance: true,
+        closeJoystick: true,
         reason: null,
       });
     }
