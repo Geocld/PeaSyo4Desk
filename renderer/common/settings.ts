@@ -117,6 +117,27 @@ const getSettingsMetas = (t, options = {}) => {
         ],
       },
       {
+        name: "haptic",
+        type: "radio",
+        title: t("Haptic feedback"),
+        description: t("HapticFeedbackDesc"),
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
+        name: "haptic_feedback_intensity",
+        type: "radio",
+        title: t("Haptic feedback intensity"),
+        description: t("HapticFeedbackIntensityDesc"),
+        data: [
+          { value: 0.5, label: t("HapticStandard") },
+          { value: 0.15, label: t("Weak") },
+          { value: 0.75, label: t("Strong") },
+        ],
+      },
+      {
         name: "rumble_intensity",
         type: "radio",
         title: t("Rumble intensity"),

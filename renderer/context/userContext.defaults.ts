@@ -28,6 +28,8 @@ export const defaultSettings = {
   polling_rate: 250,
   coop: false,
   rumble: true,
+  haptic: false,
+  haptic_feedback_intensity: 0.5,
   rumble_intensity: 3,
   gamepad_kernel: "web",
   gamepad_mix: false,

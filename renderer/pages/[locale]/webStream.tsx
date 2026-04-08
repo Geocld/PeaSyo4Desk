@@ -29,6 +29,7 @@ import {
   syncDualSenseHidGamepads,
 } from "../../lib/dualsenseHid";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
+import { triggerGamepadHapticsFromChiaki } from "../../lib/gamepadHaptics";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import {
   triggerGamepadRumbleFromChiaki,
@@ -926,6 +927,11 @@ function StreamPage() {
   const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
   const lastControllerSendAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
+  const rumbleEnabledRef = useRef(settings?.rumble !== false);
+  const rumbleIntensityRef = useRef(settings?.rumble_intensity);
+  const hapticEnabledRef = useRef(settings?.haptic === true);
+  const hapticIntensityRef = useRef(settings?.haptic_feedback_intensity);
+  const hapticSuppressedFrameSeqRef = useRef<Set<number>>(new Set());
 
   const steamOsRuntime = isSteamOsRuntime();
   const steamOsWebCodecsProfile = resolveSteamOsWebCodecsProfile(
@@ -1152,6 +1158,10 @@ function StreamPage() {
     controllerInputKernelRef.current = resolveControllerInputKernel({
       gamepad_kernel: settings?.gamepad_kernel,
     });
+    rumbleEnabledRef.current = settings?.rumble !== false;
+    rumbleIntensityRef.current = settings?.rumble_intensity;
+    hapticEnabledRef.current = settings?.haptic === true;
+    hapticIntensityRef.current = settings?.haptic_feedback_intensity;
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
       settings?.polling_rate
@@ -1211,6 +1221,10 @@ function StreamPage() {
     settings?.input_mousekeyboard_maping,
     settings?.gamepad_maping,
     settings?.gamepad_kernel,
+    settings?.rumble,
+    settings?.rumble_intensity,
+    settings?.haptic,
+    settings?.haptic_feedback_intensity,
     markUserActivity,
   ]);
 
@@ -3868,6 +3882,7 @@ function StreamPage() {
           lastControlStateKeyRef.current = "";
           lastSentControllerStateRef.current = createIdleControllerState();
           lastControllerSendAtRef.current = 0;
+          hapticSuppressedFrameSeqRef.current.clear();
           setStatus(t("Connecting..."));
         };
 
@@ -3887,18 +3902,42 @@ function StreamPage() {
                     ? msg.event
                     : { name: msg?.name || "unknown" };
                 const eventName = String(sessionEvent.name || msg?.name || "unknown");
+                const hapticFrameSeq = Number(
+                  (sessionEvent as { hapticFrameSeq?: unknown })?.hapticFrameSeq
+                );
 
                 if (eventName === "rumble") {
-                  if (controllerInputKernelRef.current === "node") {
+                  if (
+                    Number.isFinite(hapticFrameSeq) &&
+                    hapticSuppressedFrameSeqRef.current.delete(Math.trunc(hapticFrameSeq))
+                  ) {
+                    // Haptic frame already sent through DS5 HID path.
+                  } else if (controllerInputKernelRef.current === "node") {
                     void triggerNativeGamepadRumbleFromChiaki(sessionEvent, {
-                      enabled: settings?.rumble !== false,
-                      intensity: settings?.rumble_intensity,
+                      enabled: rumbleEnabledRef.current,
+                      intensity: rumbleIntensityRef.current,
                     });
                   } else {
                     triggerGamepadRumbleFromChiaki(sessionEvent, {
-                      enabled: settings?.rumble !== false,
-                      intensity: settings?.rumble_intensity,
+                      enabled: rumbleEnabledRef.current,
+                      intensity: rumbleIntensityRef.current,
                     });
+                  }
+                } else if (eventName === "haptic_audio") {
+                  if (controllerInputKernelRef.current === "web" && hapticEnabledRef.current) {
+                    const played = triggerGamepadHapticsFromChiaki(sessionEvent, {
+                      enabled: true,
+                      gain: hapticIntensityRef.current,
+                    });
+                    if (played && Number.isFinite(hapticFrameSeq)) {
+                      hapticSuppressedFrameSeqRef.current.add(Math.trunc(hapticFrameSeq));
+                      if (hapticSuppressedFrameSeqRef.current.size > 128) {
+                        const first = hapticSuppressedFrameSeqRef.current.values().next().value;
+                        if (first !== undefined) {
+                          hapticSuppressedFrameSeqRef.current.delete(first);
+                        }
+                      }
+                    }
                   }
                 } else if (eventName === "trigger_effects") {
                   handleGamepadTriggerEffectsFromChiaki(sessionEvent);

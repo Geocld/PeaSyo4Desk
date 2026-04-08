@@ -23,6 +23,13 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.7" date="2026-04-09">
+     <description>
+        <ul>
+          <li>Haptic rumble supported(Only for Dualsense5 controller)</li>
+        </ul>
+     </description>
+    </release>
     <release version="1.0.6" date="2026-04-02">
      <description>
         <ul>

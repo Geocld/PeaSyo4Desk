@@ -41,6 +41,9 @@ const DUALSENSE_OUTPUT_REPORT_BT = 0x31;
 const DUALSENSE_OUTPUT_STATE_BYTES = 47;
 const DUALSENSE_OUTPUT_REPORT_BT_BYTES = 77;
 const DUALSENSE_TRIGGER_PARAM_BYTES = 10;
+const DUALSENSE_HAPTIC_REPORT_ID = 0x32;
+const DUALSENSE_HAPTIC_REPORT_BYTES = 141;
+const DUALSENSE_HAPTIC_SAMPLE_BYTES = 64;
 
 type HidReportItemInfoLike = {
   reportSize?: number | null;
@@ -48,6 +51,7 @@ type HidReportItemInfoLike = {
 };
 
 type HidReportInfoLike = {
+  reportId?: number | null;
   items?: HidReportItemInfoLike[] | readonly HidReportItemInfoLike[] | null;
 };
 
@@ -55,6 +59,7 @@ type HidCollectionInfoLike = {
   usagePage?: number | null;
   usage?: number | null;
   inputReports?: HidReportInfoLike[] | readonly HidReportInfoLike[] | null;
+  outputReports?: HidReportInfoLike[] | readonly HidReportInfoLike[] | null;
 };
 
 type HIDInputReportEvent = {
@@ -129,6 +134,10 @@ type DeviceContext = {
   activeSessionTouchIds: [number | null, number | null];
   outputState: Uint8Array;
   btOutputSeq: number;
+  outputReportBytes: Map<number, number>;
+  hapticPacketSeq: number;
+  hapticPrimed: boolean;
+  hapticStreaming: boolean;
   inputReportHandler: (event: HIDInputReportEvent) => void;
   openPromise: Promise<boolean> | null;
   writeChain: Promise<boolean>;
@@ -154,6 +163,30 @@ const clampByte = (value: unknown) => {
     return 0;
   }
   return Math.max(0, Math.min(255, Math.trunc(numeric)));
+};
+
+const clampInt8 = (value: number) => {
+  if (value > 127) {
+    return 127;
+  }
+  if (value < -128) {
+    return -128;
+  }
+  return value;
+};
+
+const normalizeHapticGain = (gain: unknown) => {
+  const numeric = Number(gain);
+  if (!Number.isFinite(numeric)) {
+    return 0.5;
+  }
+  if (numeric < 0) {
+    return 0;
+  }
+  if (numeric > 2) {
+    return 2;
+  }
+  return numeric;
 };
 
 const normalizeTouchPoint = (touch: TouchPoint): TouchPoint => {
@@ -356,6 +389,39 @@ const detectConnectionType = (device: HIDDevice): DeviceConnectionType => {
   }
 
   return "unknown";
+};
+
+const collectOutputReportBytes = (device: HIDDevice) => {
+  const reportBytesById = new Map<number, number>();
+  for (const collection of device.collections || []) {
+    if (
+      collection.usagePage !== HID_USAGE_PAGE_GENERIC_DESKTOP ||
+      collection.usage !== HID_USAGE_ID_GAMEPAD
+    ) {
+      continue;
+    }
+
+    for (const report of collection.outputReports || []) {
+      const reportId = Number(report?.reportId);
+      if (!Number.isFinite(reportId)) {
+        continue;
+      }
+
+      const byteLength = (report.items || []).reduce((sum, item) => {
+        const bits = (item.reportSize || 0) * (item.reportCount || 0);
+        return sum + Math.floor(bits / 8);
+      }, 0);
+
+      if (byteLength < 1) {
+        continue;
+      }
+
+      const previous = reportBytesById.get(reportId) || 0;
+      reportBytesById.set(reportId, Math.max(previous, byteLength));
+    }
+  }
+
+  return reportBytesById;
 };
 
 const normalizeDualSenseStickAxis = (value: number) => {
@@ -697,6 +763,33 @@ const parseByteArrayValue = (value: unknown) => {
   }
 
   return null;
+};
+
+const toDualSenseHapticSample = (
+  frame: Int16Array | Int8Array | Uint8Array,
+  gain: unknown
+) => {
+  const safeGain = normalizeHapticGain(gain);
+  const sample = new Uint8Array(DUALSENSE_HAPTIC_SAMPLE_BYTES);
+  const length = Math.min(frame.length, DUALSENSE_HAPTIC_SAMPLE_BYTES);
+
+  for (let index = 0; index < length; index += 1) {
+    let signedValue = 0;
+
+    if (frame instanceof Int16Array) {
+      signedValue = clampInt8(Math.round((frame[index] * safeGain) / 256));
+    } else if (frame instanceof Int8Array) {
+      signedValue = clampInt8(Math.round(frame[index] * safeGain));
+    } else {
+      const byte = frame[index];
+      const signedByte = byte > 127 ? byte - 256 : byte;
+      signedValue = clampInt8(Math.round(signedByte * safeGain));
+    }
+
+    sample[index] = signedValue & 0xff;
+  }
+
+  return sample;
 };
 
 let crcTable: number[] | null = null;
@@ -1057,6 +1150,60 @@ class DualSenseHidBridge {
     return true;
   }
 
+  supportsHapticsForActiveDevices() {
+    const contexts = this.getActiveDeviceContexts();
+    return contexts.some((context) => {
+      return this.supportsHidHaptics(context);
+    });
+  }
+
+  playHapticsForActiveDevices(
+    frame: Int16Array | Int8Array | Uint8Array,
+    gain?: unknown
+  ) {
+    const contexts = this.getActiveDeviceContexts();
+    if (contexts.length < 1) {
+      return false;
+    }
+
+    const hapticSample = toDualSenseHapticSample(frame, gain);
+    let queued = false;
+
+    for (const context of contexts) {
+      if (!this.supportsHidHaptics(context)) {
+        continue;
+      }
+
+      const task = async () => {
+        const opened = await this.ensureDeviceOpen(context);
+        if (!opened) {
+          return false;
+        }
+
+        if (!context.hapticPrimed) {
+          const primed = await this.sendHapticPrimePacket(context);
+          if (!primed) {
+            context.hapticStreaming = false;
+            return false;
+          }
+          context.hapticPrimed = true;
+        }
+
+        const sent = await this.sendHapticReport(context, hapticSample);
+        context.hapticStreaming = sent;
+        if (!sent) {
+          context.hapticPrimed = false;
+        }
+        return sent;
+      };
+
+      context.writeChain = context.writeChain.then(task, task);
+      queued = true;
+    }
+
+    return queued;
+  }
+
   applyLedColor(event: unknown) {
     const payload = (event || {}) as Record<string, unknown>;
     const color = parseByteArrayValue(payload.color);
@@ -1190,6 +1337,10 @@ class DualSenseHidBridge {
       activeSessionTouchIds: [null, null],
       outputState: createDefaultOutputState(),
       btOutputSeq: 0,
+      outputReportBytes: collectOutputReportBytes(device),
+      hapticPacketSeq: 0,
+      hapticPrimed: false,
+      hapticStreaming: false,
       openPromise: null,
       writeChain: Promise.resolve(true),
       rumbleStopTimer: null,
@@ -1244,6 +1395,9 @@ class DualSenseHidBridge {
     context.touchState = createIdleTouchState();
     context.nextSessionTouchId = 0;
     context.activeSessionTouchIds = [null, null];
+    context.hapticPrimed = false;
+    context.hapticStreaming = false;
+    context.hapticPacketSeq = 0;
     if (context.device.opened) {
       void context.device.close().catch(() => undefined);
     }
@@ -1438,6 +1592,11 @@ class DualSenseHidBridge {
 
     if (!preferBluetooth) {
       await context.device.sendReport(DUALSENSE_OUTPUT_REPORT_USB, outputState);
+      if (context.hapticStreaming) {
+        // Regular output can reset haptics routing on DualSense. Mark prime as
+        // stale so the next haptics frame re-primes with current trigger state.
+        context.hapticPrimed = false;
+      }
       return;
     }
 
@@ -1448,6 +1607,85 @@ class DualSenseHidBridge {
     fillDualSenseBluetoothOutputChecksum(DUALSENSE_OUTPUT_REPORT_BT, payload);
     context.btOutputSeq = (context.btOutputSeq + 1) & 0xff;
     await context.device.sendReport(DUALSENSE_OUTPUT_REPORT_BT, payload);
+    if (context.hapticStreaming) {
+      context.hapticPrimed = false;
+    }
+  }
+
+  private hasOutputReport(context: DeviceContext, reportId: number, minBytes = 1) {
+    const reportBytes = context.outputReportBytes.get(reportId);
+    if (reportBytes === undefined) {
+      return false;
+    }
+    return reportBytes >= minBytes;
+  }
+
+  private supportsHidHaptics(context: DeviceContext) {
+    return this.hasOutputReport(context, DUALSENSE_HAPTIC_REPORT_ID, DUALSENSE_HAPTIC_REPORT_BYTES);
+  }
+
+  private setPrimeTriggerData(reportData: Uint8Array, commonOffset: number, outputState: Uint8Array) {
+    reportData[commonOffset + 10] = outputState[10];
+    reportData.set(outputState.subarray(11, 11 + DUALSENSE_TRIGGER_PARAM_BYTES), commonOffset + 11);
+    reportData[commonOffset + 21] = outputState[21];
+    reportData.set(outputState.subarray(22, 22 + DUALSENSE_TRIGGER_PARAM_BYTES), commonOffset + 22);
+  }
+
+  private async sendHapticPrimePacket(context: DeviceContext) {
+    const preferBluetooth =
+      context.connectionType === "bluetooth" || context.lastInputReportId === DUALSENSE_INPUT_REPORT_BT;
+
+    if (
+      preferBluetooth &&
+      this.hasOutputReport(context, DUALSENSE_OUTPUT_REPORT_BT, DUALSENSE_OUTPUT_REPORT_BT_BYTES)
+    ) {
+      const payload = new Uint8Array(DUALSENSE_OUTPUT_REPORT_BT_BYTES);
+      payload[0] = (context.btOutputSeq & 0x0f) << 4;
+      payload[1] = 0x10;
+      payload[2] = 0x0c;
+      payload[3] = 0x40;
+      this.setPrimeTriggerData(payload, 2, context.outputState);
+      fillDualSenseBluetoothOutputChecksum(DUALSENSE_OUTPUT_REPORT_BT, payload);
+      context.btOutputSeq = (context.btOutputSeq + 1) & 0xff;
+      await context.device.sendReport(DUALSENSE_OUTPUT_REPORT_BT, payload);
+      return true;
+    }
+
+    if (!this.hasOutputReport(context, DUALSENSE_OUTPUT_REPORT_USB, DUALSENSE_OUTPUT_STATE_BYTES)) {
+      return false;
+    }
+    const payload = new Uint8Array(DUALSENSE_OUTPUT_STATE_BYTES);
+    payload[0] = 0x0c;
+    payload[1] = 0x40;
+    this.setPrimeTriggerData(payload, 0, context.outputState);
+    await context.device.sendReport(DUALSENSE_OUTPUT_REPORT_USB, payload);
+    return true;
+  }
+
+  private async sendHapticReport(context: DeviceContext, hapticSample: Uint8Array) {
+    if (!this.supportsHidHaptics(context)) {
+      return false;
+    }
+
+    const report = new Uint8Array(DUALSENSE_HAPTIC_REPORT_BYTES);
+    report[0] = 0x00;
+    report[1] = 0x91;
+    report[2] = 0x07;
+    report[3] = 0xfe;
+    report[8] = 0xff;
+    report[9] = context.hapticPacketSeq;
+    context.hapticPacketSeq = (context.hapticPacketSeq + 1) & 0xff;
+    report[10] = 0x92;
+    report[11] = DUALSENSE_HAPTIC_SAMPLE_BYTES;
+    report.set(hapticSample.subarray(0, DUALSENSE_HAPTIC_SAMPLE_BYTES), 12);
+    fillDualSenseBluetoothOutputChecksum(DUALSENSE_HAPTIC_REPORT_ID, report);
+
+    try {
+      await context.device.sendReport(DUALSENSE_HAPTIC_REPORT_ID, report);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private notifyListeners() {
@@ -1502,6 +1740,17 @@ export const playDualSenseHidRumbleForActiveDevices = (
   durationMs: unknown
 ) => {
   return bridge.playRumbleForActiveDevices(weakMotor, strongMotor, durationMs);
+};
+
+export const supportsDualSenseHidHapticsForActiveDevices = () => {
+  return bridge.supportsHapticsForActiveDevices();
+};
+
+export const playDualSenseHidHapticsForActiveDevices = (
+  frame: Int16Array | Int8Array | Uint8Array,
+  gain?: unknown
+) => {
+  return bridge.playHapticsForActiveDevices(frame, gain);
 };
 
 export const requestDualSenseHidAccessIfNeeded = () => {

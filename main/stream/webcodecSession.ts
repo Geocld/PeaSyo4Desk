@@ -2863,17 +2863,54 @@ const formatHapticPeak = (peak: number) => {
   return level;
 };
 
+let hapticsFrameSeq = 0;
+
+const nextHapticsFrameSeq = () => {
+  hapticsFrameSeq = (hapticsFrameSeq + 1) & 0x7fffffff;
+  return hapticsFrameSeq;
+};
+
 const broadcastRumbleEvent = (event: any) => {
+  const payload: Record<string, unknown> = {
+    name: "rumble",
+    unknown: clampInt(event?.unknown, 0, 0xff),
+    left: clampInt(event?.left, 0, 0xff),
+    right: clampInt(event?.right, 0, 0xff),
+    peakLeft: clampInt(event?.peakLeft, 0, 0xff),
+    peakRight: clampInt(event?.peakRight, 0, 0xff),
+  };
+  if (typeof event?.source === "string" && event.source.length > 0) {
+    payload.source = event.source;
+  }
+  if (Number.isFinite(event?.hapticFrameSeq)) {
+    payload.hapticFrameSeq = Math.trunc(Number(event.hapticFrameSeq));
+  }
+
   broadcastText({
     type: "session_event",
     name: "rumble",
+    event: payload,
+  });
+};
+
+const broadcastHapticAudioEvent = (frame: any, frameSeq: number) => {
+  const frameData = frame?.data;
+  const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
+  if (buffer.length < 1) {
+    return;
+  }
+
+  broadcastText({
+    type: "session_event",
+    name: "haptic_audio",
     event: {
-      name: "rumble",
-      unknown: clampInt(event?.unknown, 0, 0xff),
-      left: clampInt(event?.left, 0, 0xff),
-      right: clampInt(event?.right, 0, 0xff),
-      peakLeft: clampInt(event?.peakLeft, 0, 0xff),
-      peakRight: clampInt(event?.peakRight, 0, 0xff),
+      name: "haptic_audio",
+      source: "haptic_audio",
+      hapticFrameSeq: frameSeq,
+      format: "s16le",
+      channels: 2,
+      dataBase64: buffer.toString("base64"),
+      byteLength: buffer.length,
     },
   });
 };
@@ -2932,7 +2969,7 @@ const broadcastTriggerEffectsEvent = (event: any) => {
   });
 };
 
-const dispatchHapticsFrameAsRumble = (frame: any) => {
+const dispatchHapticsFrameAsRumble = (frame: any, frameSeq: number) => {
   const frameData = frame?.data;
   const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
   if (buffer.length < 4) {
@@ -2970,6 +3007,8 @@ const dispatchHapticsFrameAsRumble = (frame: any) => {
     right,
     peakLeft: formatHapticPeak(peakLeft),
     peakRight: formatHapticPeak(peakRight),
+    source: "haptic_audio",
+    hapticFrameSeq: frameSeq,
   });
 };
 
@@ -3171,7 +3210,11 @@ const createSession = (sessionOptions: any) => {
       dispatchAudioFrame(frame.data);
     },
     onHapticsFrame: (frame) => {
-      dispatchHapticsFrameAsRumble(frame);
+      // Emit raw haptics PCM first for DS5 HID path, and keep rumble fallback
+      // for non-supported connections/devices.
+      const frameSeq = nextHapticsFrameSeq();
+      broadcastHapticAudioEvent(frame, frameSeq);
+      dispatchHapticsFrameAsRumble(frame, frameSeq);
     },
   });
 };
