@@ -43,6 +43,7 @@ const TRIGGER_DEADZONE = 0.03;
 const TRIGGER_DIGITAL_PRESS_STATE = 8;
 const STARTUP_DEVICE_RESCAN_INTERVAL_MS = 250;
 const STARTUP_DEVICE_RESCAN_WINDOW_MS = 5000;
+const STATE_RECONCILE_INTERVAL_MS = 60;
 
 type ControllerStateSnapshot = {
   buttons: number;
@@ -360,6 +361,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   let activeDeviceId: string | null = null;
   let startupRescanTimer: ReturnType<typeof setTimeout> | null = null;
   let startupRescanDeadline = 0;
+  let stateReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   const findJoystickDevice = (deviceId: string) => {
     const devices = Array.isArray(sdl?.joystick?.devices) ? sdl.joystick.devices : [];
@@ -949,6 +951,45 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     startupRescanTimer = setTimeout(run, STARTUP_DEVICE_RESCAN_INTERVAL_MS);
   };
 
+  const clearStateReconcileTimer = () => {
+    if (!stateReconcileTimer) {
+      return;
+    }
+    clearInterval(stateReconcileTimer);
+    stateReconcileTimer = null;
+  };
+
+  const reconcileActiveDeviceStateFromSnapshot = () => {
+    if (!started) {
+      return;
+    }
+
+    const entry = getActiveControllerEntry();
+    if (!entry) {
+      return;
+    }
+
+    const state = deviceStates.get(entry.deviceId);
+    const triggerBindings = deviceTriggerBindings.get(entry.deviceId);
+    const triggerNormalizers = deviceTriggerNormalizers.get(entry.deviceId);
+    const joystick = joystickInstances.get(entry.deviceId) ?? null;
+    if (!state || !triggerBindings || !triggerNormalizers) {
+      return;
+    }
+
+    // Periodic full snapshot reconciliation reduces sticky inputs when a
+    // buttonUp event is occasionally missed by the native event stream.
+    syncStateFromControllerInstance(
+      entry.controller,
+      joystick,
+      state,
+      triggerBindings,
+      triggerNormalizers
+    );
+    activeDeviceId = entry.deviceId;
+    emitState(state);
+  };
+
   const getActiveControllerEntry = () => {
     if (activeDeviceId) {
       const controller = controllerInstances.get(activeDeviceId);
@@ -1006,6 +1047,12 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       openController(device);
     }
 
+    clearStateReconcileTimer();
+    stateReconcileTimer = setInterval(
+      reconcileActiveDeviceStateFromSnapshot,
+      STATE_RECONCILE_INTERVAL_MS
+    );
+
     scheduleStartupDeviceRescan();
     emitActiveDeviceState();
     return true;
@@ -1019,6 +1066,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     sdl?.controller?.removeListener?.("deviceAdd", handleDeviceAdd);
     sdl?.controller?.removeListener?.("deviceRemove", handleDeviceRemove);
     clearStartupRescanTimer();
+    clearStateReconcileTimer();
 
     for (const deviceId of Array.from(controllerInstances.keys())) {
       closeController(deviceId);
