@@ -1,11 +1,28 @@
-const isLinuxLikePlatform = () => {
+const isWebcodecDefaultPlatform = () => {
   if (typeof process !== "undefined" && typeof process.platform === "string") {
-    return process.platform === "linux";
+    if (process.platform === "linux") {
+      return true;
+    }
+
+    if (process.platform === "darwin" && process.arch === "x64") {
+      return true;
+    }
+
+    return false;
   }
 
   if (typeof navigator !== "undefined") {
     const platformText = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
-    return /linux|steamos|steam deck/i.test(platformText);
+    if (/linux|steamos|steam deck/i.test(platformText)) {
+      return true;
+    }
+
+    // Browser fallback for Intel macOS runtime where process.arch is not exposed.
+    if (/macintosh|mac os x/i.test(platformText) && /macintel|intel|x86_64/i.test(platformText)) {
+      return true;
+    }
+
+    return false;
   }
 
   return false;
@@ -83,7 +100,7 @@ export const defaultSettings = {
   use_vulkan: false,
   fsr: false,
   fsr_sharpness: 2,
-  stream_renderer: isLinuxLikePlatform() ? "webcodec" : "ffmpeg",
+  stream_renderer: isWebcodecDefaultPlatform() ? "webcodec" : "ffmpeg",
   stream_webcodec_steamos_profile: "stable",
   stream_brightness: 100,
   stream_disconnect_standby: false,
