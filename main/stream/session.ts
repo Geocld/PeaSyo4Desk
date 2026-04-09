@@ -3270,7 +3270,7 @@ const createSession = (sessionOptions: any) => {
       dispatchAudioFrame(frame.data);
     },
     onHapticsFrame: (frame) => {
-      console.log('onHapticsFrame:', frame)
+      // console.log('onHapticsFrame:', frame)
       // Mirror Android flow: emit raw haptic audio first, then keep rumble as
       // fallback for non-haptic-capable devices.
       const frameSeq = nextHapticsFrameSeq();

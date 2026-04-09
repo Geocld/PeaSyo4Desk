@@ -51,6 +51,7 @@ const DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS = 2;
 const DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES = 2;
 const DUALSENSE_HAPTIC_SAMPLE_RATE = 3000;
 const DUALSENSE_HAPTIC_MAX_PENDING_SAMPLES = 1000;
+const DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS = 120;
 const DUALSENSE_HAPTIC_IDLE_STOP_DELAY_MS = Math.ceil(
   ((DUALSENSE_HAPTIC_SAMPLE_BYTES / DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES) /
     DUALSENSE_HAPTIC_SAMPLE_RATE) *
@@ -158,6 +159,9 @@ type DeviceContext = {
   hapticNextWriteAtMs: number;
   inputReportHandler: (event: HIDInputReportEvent) => void;
   openPromise: Promise<boolean> | null;
+  pendingStateOutputPayload: Uint8Array | null;
+  stateOutputWriteScheduled: boolean;
+  outputWriteChain: Promise<boolean>;
   writeChain: Promise<boolean>;
   rumbleStopTimer: ReturnType<typeof setTimeout> | null;
 };
@@ -201,19 +205,6 @@ const clampInt8 = (value: number) => {
 
 const toSignedPcm8 = (value: number) => {
   return clampInt8(Math.round(value / 256));
-};
-
-const nowMs = () => {
-  if (typeof performance !== "undefined" && typeof performance.now === "function") {
-    return performance.now();
-  }
-  return Date.now();
-};
-
-const sleep = (durationMs: number) => {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, Math.max(0, Math.ceil(durationMs)));
-  });
 };
 
 const getDualSenseHapticSampleDurationMs = (sampleBytes: number) => {
@@ -776,6 +767,20 @@ const normalizeFixedLengthBytes = (bytes: Uint8Array | null, length: number) => 
   return normalized;
 };
 
+const hasMatchingBytes = (buffer: Uint8Array, offset: number, expected: Uint8Array) => {
+  if (offset < 0 || offset + expected.length > buffer.length) {
+    return false;
+  }
+
+  for (let index = 0; index < expected.length; index += 1) {
+    if (buffer[offset + index] !== expected[index]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 const parseByteArrayValue = (value: unknown) => {
   if (value instanceof Uint8Array) {
     return new Uint8Array(value);
@@ -1106,16 +1111,38 @@ class DualSenseHidBridge {
 
     const activeContexts = this.getActiveDeviceContexts();
     for (const context of activeContexts) {
-      void this.queueOutputWrite(
+      const normalizedRightParams = hasRight
+        ? normalizeFixedLengthBytes(rightParams, DUALSENSE_TRIGGER_PARAM_BYTES)
+        : null;
+      const normalizedLeftParams = hasLeft
+        ? normalizeFixedLengthBytes(leftParams, DUALSENSE_TRIGGER_PARAM_BYTES)
+        : null;
+      const nextRightType = hasRight ? clampByte(payload.typeRight) : null;
+      const nextLeftType = hasLeft ? clampByte(payload.typeLeft) : null;
+      const rightUnchanged =
+        !hasRight ||
+        (context.outputState[10] === nextRightType &&
+          !!normalizedRightParams &&
+          hasMatchingBytes(context.outputState, 11, normalizedRightParams));
+      const leftUnchanged =
+        !hasLeft ||
+        (context.outputState[21] === nextLeftType &&
+          !!normalizedLeftParams &&
+          hasMatchingBytes(context.outputState, 22, normalizedLeftParams));
+      if (rightUnchanged && leftUnchanged) {
+        continue;
+      }
+
+      void this.queueStateOutputWrite(
         context,
         (state) => {
           if (hasRight) {
-            state[10] = clampByte(payload.typeRight);
-            state.set(normalizeFixedLengthBytes(rightParams, DUALSENSE_TRIGGER_PARAM_BYTES), 11);
+            state[10] = nextRightType ?? 0;
+            state.set(normalizedRightParams ?? new Uint8Array(DUALSENSE_TRIGGER_PARAM_BYTES), 11);
           }
           if (hasLeft) {
-            state[21] = clampByte(payload.typeLeft);
-            state.set(normalizeFixedLengthBytes(leftParams, DUALSENSE_TRIGGER_PARAM_BYTES), 22);
+            state[21] = nextLeftType ?? 0;
+            state.set(normalizedLeftParams ?? new Uint8Array(DUALSENSE_TRIGGER_PARAM_BYTES), 22);
           }
           setBit(state, 0, 3, true);
           setBit(state, 0, 2, true);
@@ -1250,7 +1277,15 @@ class DualSenseHidBridge {
 
     const activeContexts = this.getActiveDeviceContexts();
     for (const context of activeContexts) {
-      void this.queueOutputWrite(
+      if (
+        context.outputState[44] === color[0] &&
+        context.outputState[45] === color[1] &&
+        context.outputState[46] === color[2]
+      ) {
+        continue;
+      }
+
+      void this.queueStateOutputWrite(
         context,
         (state) => {
           state[44] = color[0];
@@ -1384,6 +1419,9 @@ class DualSenseHidBridge {
       hapticStopTimer: null,
       hapticNextWriteAtMs: 0,
       openPromise: null,
+      pendingStateOutputPayload: null,
+      stateOutputWriteScheduled: false,
+      outputWriteChain: Promise.resolve(true),
       writeChain: Promise.resolve(true),
       rumbleStopTimer: null,
       inputReportHandler: (event) => {
@@ -1448,6 +1486,10 @@ class DualSenseHidBridge {
     context.pendingHapticRemainder = new Uint8Array(0);
     context.hapticWriteScheduled = false;
     context.hapticNextWriteAtMs = 0;
+    context.pendingStateOutputPayload = null;
+    context.stateOutputWriteScheduled = false;
+    context.outputWriteChain = Promise.resolve(true);
+    context.writeChain = Promise.resolve(true);
     if (context.device.opened) {
       void context.device.close().catch(() => undefined);
     }
@@ -1600,6 +1642,19 @@ class DualSenseHidBridge {
     return activeAssignedDevices < this.observedDualSenseGamepadCount;
   }
 
+  private queueDeviceWrite(context: DeviceContext, task: () => Promise<boolean>) {
+    const queuedTask = async () => {
+      try {
+        return await task();
+      } catch {
+        return false;
+      }
+    };
+
+    context.writeChain = context.writeChain.then(queuedTask, queuedTask);
+    return context.writeChain;
+  }
+
   private queueOutputWrite(
     context: DeviceContext,
     apply: (state: Uint8Array) => void,
@@ -1615,16 +1670,69 @@ class DualSenseHidBridge {
       const payload = context.outputState.slice();
       cleanup?.(context.outputState);
 
-      try {
+      return this.queueDeviceWrite(context, async () => {
         await this.sendOutputReport(context, payload);
         return true;
-      } catch {
-        return false;
+      });
+    };
+
+    context.outputWriteChain = context.outputWriteChain.then(task, task);
+    return context.outputWriteChain;
+  }
+
+  private queueStateOutputWrite(
+    context: DeviceContext,
+    apply: (state: Uint8Array) => void,
+    cleanup?: (state: Uint8Array) => void
+  ) {
+    const task = async () => {
+      apply(context.outputState);
+      context.pendingStateOutputPayload = context.outputState.slice();
+      cleanup?.(context.outputState);
+      this.scheduleQueuedStateOutputWrite(context);
+      return true;
+    };
+
+    context.outputWriteChain = context.outputWriteChain.then(task, task);
+    return context.outputWriteChain;
+  }
+
+  private scheduleQueuedStateOutputWrite(context: DeviceContext) {
+    if (context.stateOutputWriteScheduled) {
+      return;
+    }
+
+    context.stateOutputWriteScheduled = true;
+    const task = async () => {
+      try {
+        while (context.pendingStateOutputPayload) {
+          const payload = context.pendingStateOutputPayload;
+          context.pendingStateOutputPayload = null;
+
+          const opened = await this.ensureDeviceOpen(context);
+          if (!opened) {
+            return false;
+          }
+
+          const sent = await this.queueDeviceWrite(context, async () => {
+            await this.sendOutputReport(context, payload);
+            return true;
+          });
+          if (!sent) {
+            return false;
+          }
+        }
+
+        return true;
+      } finally {
+        context.stateOutputWriteScheduled = false;
+        if (context.pendingStateOutputPayload) {
+          this.scheduleQueuedStateOutputWrite(context);
+        }
       }
     };
 
-    context.writeChain = context.writeChain.then(task, task);
-    return context.writeChain;
+    void task();
   }
 
   private enqueueHapticSample(context: DeviceContext, hapticSample: Uint8Array) {
@@ -1638,7 +1746,35 @@ class DualSenseHidBridge {
     }
 
     context.pendingHapticSamples.push(hapticSample.slice());
+    this.trimPendingHaptics(context);
     this.scheduleHapticStop(context);
+  }
+
+  private trimPendingHaptics(context: DeviceContext) {
+    let pendingLatencyMs =
+      context.pendingHapticSamples.reduce((total, sample) => {
+        return total + getDualSenseHapticSampleDurationMs(sample.byteLength);
+      }, 0);
+    if (pendingLatencyMs <= DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS) {
+      return;
+    }
+
+    let dropped = false;
+    while (
+      context.pendingHapticSamples.length > 0 &&
+      pendingLatencyMs > DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS
+    ) {
+      const droppedSample = context.pendingHapticSamples.shift();
+      if (!droppedSample) {
+        break;
+      }
+      pendingLatencyMs -= getDualSenseHapticSampleDurationMs(droppedSample.byteLength);
+      dropped = true;
+    }
+
+    if (dropped) {
+      context.hapticNextWriteAtMs = 0;
+    }
   }
 
   private enqueueHapticPayload(context: DeviceContext, hapticPayload: Uint8Array) {
@@ -1702,11 +1838,6 @@ class DualSenseHidBridge {
     context.hapticWriteScheduled = true;
     const task = async () => {
       try {
-        const hapticSample = context.pendingHapticSamples.shift();
-        if (!hapticSample) {
-          return false;
-        }
-
         const opened = await this.ensureDeviceOpen(context);
         if (!opened) {
           context.hapticPrimed = false;
@@ -1715,31 +1846,31 @@ class DualSenseHidBridge {
           return false;
         }
 
-        if (!context.hapticPrimed) {
-          const primed = await this.sendHapticPrimePacket(context);
-          if (!primed) {
-            context.hapticPrimed = false;
-            context.hapticStreaming = false;
-            context.hapticNextWriteAtMs = 0;
-            return false;
+        const hapticSample = context.pendingHapticSamples.shift();
+        if (!hapticSample) {
+          return false;
+        }
+
+        const sent = await this.queueDeviceWrite(context, async () => {
+          if (!context.hapticPrimed) {
+            const primed = await this.sendHapticPrimePacket(context);
+            if (!primed) {
+              context.hapticPrimed = false;
+              return false;
+            }
+            context.hapticPrimed = true;
           }
-          context.hapticPrimed = true;
-        }
 
-        const scheduledWriteAtMs = Math.max(context.hapticNextWriteAtMs, nowMs());
-        const waitMs = scheduledWriteAtMs - nowMs();
-        if (waitMs > 0) {
-          await sleep(waitMs);
-        }
-
-        const sent = await this.sendHapticReport(context, hapticSample);
+          return this.sendHapticReport(context, hapticSample);
+        });
         context.hapticStreaming = sent;
         if (!sent) {
           context.hapticPrimed = false;
           context.hapticNextWriteAtMs = 0;
         } else {
-          context.hapticNextWriteAtMs =
-            scheduledWriteAtMs + getDualSenseHapticSampleDurationMs(hapticSample.byteLength);
+          // The incoming Chiaki haptics frames already arrive at real-time pace.
+          // Adding a second JS-side playout clock here only creates latency.
+          context.hapticNextWriteAtMs = 0;
         }
         return sent;
       } catch {
@@ -1755,7 +1886,7 @@ class DualSenseHidBridge {
       }
     };
 
-    context.writeChain = context.writeChain.then(task, task);
+    void task();
   }
 
   private writeRumbleState(context: DeviceContext, weakMotor: number, strongMotor: number) {
@@ -1846,38 +1977,6 @@ class DualSenseHidBridge {
     }
 
     return layouts[layouts.length - 1] || null;
-  }
-
-  private splitHapticPayloadForContext(context: DeviceContext, payload: Uint8Array) {
-    const preferredLayout = this.getHapticReportLayoutForSample(
-      context,
-      DUALSENSE_HAPTIC_SAMPLE_BYTES
-    );
-    if (!preferredLayout || payload.length < 1) {
-      return [];
-    }
-
-    const maxSampleBytes = Math.min(
-      preferredLayout.sampleBytes,
-      0xff
-    );
-    const chunks: Uint8Array[] = [];
-    let offset = 0;
-
-    while (offset < payload.length) {
-      let chunkBytes = Math.min(maxSampleBytes, payload.length - offset);
-      if (chunkBytes > DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES) {
-        chunkBytes -= chunkBytes % DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES;
-      }
-      if (chunkBytes < 1) {
-        break;
-      }
-
-      chunks.push(payload.subarray(offset, offset + chunkBytes));
-      offset += chunkBytes;
-    }
-
-    return chunks;
   }
 
   private supportsHidHaptics(context: DeviceContext) {
