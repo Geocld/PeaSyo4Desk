@@ -52,6 +52,9 @@ const DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES = 2;
 const DUALSENSE_HAPTIC_SAMPLE_RATE = 3000;
 const DUALSENSE_HAPTIC_MAX_PENDING_SAMPLES = 1000;
 const DUALSENSE_HAPTIC_MAX_PLAYAHEAD_MS = 32;
+const DUALSENSE_HAPTIC_GAIN_COMPENSATION = 1.35;
+const DUALSENSE_HAPTIC_DETAIL_TARGET_PCM16 = 24576;
+const DUALSENSE_HAPTIC_MAX_DETAIL_BOOST = 1.35;
 const DUALSENSE_HAPTIC_IDLE_STOP_DELAY_MS = Math.ceil(
   ((DUALSENSE_HAPTIC_SAMPLE_BYTES / DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES) /
     DUALSENSE_HAPTIC_SAMPLE_RATE) *
@@ -205,13 +208,64 @@ const clampInt8 = (value: number) => {
   return value;
 };
 
+const absInt16 = (value: number) => {
+  if (value >= 0) {
+    return value;
+  }
+  return value === -32768 ? 32768 : -value;
+};
+
+const decodeSignedPcm16Le = (low: number, high: number) => {
+  const value = (high << 8) | low;
+  return value > 0x7fff ? value - 0x10000 : value;
+};
+
+const resolveHapticDetailGainScaleFromPcm16Peak = (peakAbs: number) => {
+  if (!Number.isFinite(peakAbs) || peakAbs <= 0) {
+    return DUALSENSE_HAPTIC_GAIN_COMPENSATION;
+  }
+
+  const detailBoost = clamp(
+    Math.sqrt(DUALSENSE_HAPTIC_DETAIL_TARGET_PCM16 / peakAbs),
+    1,
+    DUALSENSE_HAPTIC_MAX_DETAIL_BOOST
+  );
+  return DUALSENSE_HAPTIC_GAIN_COMPENSATION * detailBoost;
+};
+
+const resolveHapticDetailGainScale = (frame: Int16Array | Uint8Array) => {
+  let peakAbs = 0;
+
+  if (frame instanceof Int16Array) {
+    for (let index = 0; index < frame.length; index += 1) {
+      peakAbs = Math.max(peakAbs, absInt16(frame[index] || 0));
+    }
+    return resolveHapticDetailGainScaleFromPcm16Peak(peakAbs);
+  }
+
+  const sampleCount = Math.floor(frame.byteLength / Int16Array.BYTES_PER_ELEMENT);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const inputOffset = index * Int16Array.BYTES_PER_ELEMENT;
+    const pcm16 = decodeSignedPcm16Le(frame[inputOffset] || 0, frame[inputOffset + 1] || 0);
+    peakAbs = Math.max(peakAbs, absInt16(pcm16));
+  }
+  return resolveHapticDetailGainScaleFromPcm16Peak(peakAbs);
+};
+
+const shapeHapticPcm16ForDualSense = (pcm16: number, totalGain: number) => {
+  const normalized = clamp((pcm16 / 32768) * totalGain, -8, 8);
+  const limited = Math.tanh(normalized);
+  return Math.round(clamp(limited * 32767, -32768, 32767));
+};
+
 const quantizePcm16ToSignedPcm8 = (
   pcm16: number,
-  gain: number,
+  totalGain: number,
   channel: 0 | 1,
   quantizationError?: [number, number]
 ) => {
-  const adjustedPcm16 = pcm16 * gain + (quantizationError?.[channel] ?? 0);
+  const shapedPcm16 = shapeHapticPcm16ForDualSense(pcm16, totalGain);
+  const adjustedPcm16 = shapedPcm16 + (quantizationError?.[channel] ?? 0);
   const signedPcm8 = clampInt8(Math.round(adjustedPcm16 / 256));
 
   if (quantizationError) {
@@ -851,16 +905,22 @@ const toDualSenseHapticPayload = (
   quantizationError?: [number, number]
 ) => {
   const safeGain = normalizeHapticGain(gain);
+  const detailGainScale =
+    frame instanceof Int8Array ? DUALSENSE_HAPTIC_GAIN_COMPENSATION : resolveHapticDetailGainScale(frame);
+  const totalGain = safeGain * detailGainScale;
   // DualSense HID haptics packets carry a continuous 3kHz stereo signed-8 PCM
   // stream. The incoming Chiaki frames are 3kHz stereo s16le, so convert them
-  // sample-for-sample without changing the channel count.
+  // sample-for-sample without changing the channel count. Mobile keeps the
+  // source as linear s16 all the way into the native USB haptics endpoint; on
+  // WebHID we only have signed-8 payload budget, so apply a mild calibration
+  // and soft limiter before quantizing to preserve more of that detail.
 
   if (frame instanceof Int16Array) {
     const sample = new Uint8Array(frame.length - (frame.length % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS));
     for (let index = 0; index < sample.length; index += 1) {
       sample[index] = quantizePcm16ToSignedPcm8(
         frame[index],
-        safeGain,
+        totalGain,
         (index % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS) as 0 | 1,
         quantizationError
       );
@@ -871,7 +931,8 @@ const toDualSenseHapticPayload = (
   if (frame instanceof Int8Array) {
     const sample = new Uint8Array(frame.length - (frame.length % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS));
     for (let index = 0; index < sample.length; index += 1) {
-      sample[index] = clampInt8(Math.round(frame[index] * safeGain)) & 0xff;
+      const normalized = clamp((frame[index] / 128) * totalGain, -8, 8);
+      sample[index] = clampInt8(Math.round(Math.tanh(normalized) * 127)) & 0xff;
     }
     return sample;
   }
@@ -880,11 +941,10 @@ const toDualSenseHapticPayload = (
   const sample = new Uint8Array(sampleCount - (sampleCount % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS));
   for (let index = 0; index < sample.length; index += 1) {
     const inputOffset = index * Int16Array.BYTES_PER_ELEMENT;
-    const value = (frame[inputOffset + 1] << 8) | frame[inputOffset];
-    const pcm16 = value > 0x7fff ? value - 0x10000 : value;
+    const pcm16 = decodeSignedPcm16Le(frame[inputOffset] || 0, frame[inputOffset + 1] || 0);
     sample[index] = quantizePcm16ToSignedPcm8(
       pcm16,
-      safeGain,
+      totalGain,
       (index % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS) as 0 | 1,
       quantizationError
     );
