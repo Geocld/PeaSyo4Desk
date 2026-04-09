@@ -116,16 +116,16 @@ const getSettingsMetas = (t, options = {}) => {
           { value: false, label: t("Disable") },
         ],
       },
-      {
-        name: "haptic",
-        type: "radio",
-        title: t("Haptic feedback"),
-        description: t("HapticFeedbackDesc"),
-        data: [
-          { value: false, label: t("Disable") },
-          { value: true, label: t("Enable") },
-        ],
-      },
+      // {
+      //   name: "haptic",
+      //   type: "radio",
+      //   title: t("Haptic feedback"),
+      //   description: t("HapticFeedbackDesc"),
+      //   data: [
+      //     { value: false, label: t("Disable") },
+      //     { value: true, label: t("Enable") },
+      //   ],
+      // },
       {
         name: "haptic_feedback_intensity",
         type: "radio",
