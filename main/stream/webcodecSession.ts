@@ -23,6 +23,8 @@ const STREAM_WS_PATH = "/stream";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const WS_BINARY_VIDEO_ENCODED = 3;
+const WS_BINARY_HAPTIC = 4;
+const HAPTIC_BINARY_PACKET_HEADER_BYTES = 4;
 const MAX_VIDEO_CLIENT_BACKLOG_BYTES = 1 * 1024 * 1024;
 const MAX_AUDIO_CLIENT_BACKLOG_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_AUDIO_INPUT_BYTES = 512 * 1024;
@@ -1823,7 +1825,9 @@ const broadcastTypedBinary = (kind: number, payload: Buffer) => {
   packet[0] = kind & 0xff;
   payload.copy(packet, 1);
   const backlogLimit =
-    kind === WS_BINARY_AUDIO ? MAX_AUDIO_CLIENT_BACKLOG_BYTES : MAX_VIDEO_CLIENT_BACKLOG_BYTES;
+    kind === WS_BINARY_VIDEO || kind === WS_BINARY_VIDEO_ENCODED
+      ? MAX_VIDEO_CLIENT_BACKLOG_BYTES
+      : MAX_AUDIO_CLIENT_BACKLOG_BYTES;
   let sent = false;
 
   for (const client of wsClients) {
@@ -2893,11 +2897,33 @@ const broadcastRumbleEvent = (event: any) => {
   });
 };
 
+const buildHapticBinaryPacket = (frame: any, frameSeq: number) => {
+  const frameData = frame?.data;
+  const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
+  if (buffer.length < 1) {
+    return null;
+  }
+
+  const packet = Buffer.allocUnsafe(HAPTIC_BINARY_PACKET_HEADER_BYTES + buffer.length);
+  packet.writeUInt32LE(frameSeq >>> 0, 0);
+  buffer.copy(packet, HAPTIC_BINARY_PACKET_HEADER_BYTES);
+  return packet;
+};
+
+const broadcastHapticBinaryEvent = (frame: any, frameSeq: number) => {
+  const packet = buildHapticBinaryPacket(frame, frameSeq);
+  if (!packet) {
+    return false;
+  }
+
+  return broadcastTypedBinary(WS_BINARY_HAPTIC, packet);
+};
+
 const broadcastHapticAudioEvent = (frame: any, frameSeq: number) => {
   const frameData = frame?.data;
   const buffer = Buffer.isBuffer(frameData) ? frameData : Buffer.from(frameData || []);
   if (buffer.length < 1) {
-    return;
+    return false;
   }
 
   broadcastText({
@@ -2913,6 +2939,7 @@ const broadcastHapticAudioEvent = (frame: any, frameSeq: number) => {
       byteLength: buffer.length,
     },
   });
+  return true;
 };
 
 const normalizeFixedByteArrayEventValue = (value: unknown, length: number) => {
@@ -3210,10 +3237,12 @@ const createSession = (sessionOptions: any) => {
       dispatchAudioFrame(frame.data);
     },
     onHapticsFrame: (frame) => {
-      // Emit raw haptics PCM first for DS5 HID path, and keep rumble fallback
-      // for non-supported connections/devices.
+      // Emit raw haptics first for DS5 HID path, and keep rumble fallback for
+      // non-supported connections/devices.
       const frameSeq = nextHapticsFrameSeq();
-      broadcastHapticAudioEvent(frame, frameSeq);
+      if (!broadcastHapticBinaryEvent(frame, frameSeq)) {
+        broadcastHapticAudioEvent(frame, frameSeq);
+      }
       dispatchHapticsFrameAsRumble(frame, frameSeq);
     },
   });

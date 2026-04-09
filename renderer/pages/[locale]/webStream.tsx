@@ -29,7 +29,10 @@ import {
   syncDualSenseHidGamepads,
 } from "../../lib/dualsenseHid";
 import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
-import { triggerGamepadHapticsFromChiaki } from "../../lib/gamepadHaptics";
+import {
+  canUseDualSenseGamepadHaptics,
+  triggerGamepadHapticsFromChiaki,
+} from "../../lib/gamepadHaptics";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import {
   triggerGamepadRumbleFromChiaki,
@@ -58,6 +61,8 @@ const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
 const WS_BINARY_VIDEO = 1;
 const WS_BINARY_AUDIO = 2;
 const WS_BINARY_VIDEO_ENCODED = 3;
+const WS_BINARY_HAPTIC = 4;
+const HAPTIC_PACKET_HEADER_BYTES = 4;
 const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
 const DISPLAY_REFRESH_INTERVAL_DEFAULT_US = Math.round(1000000 / 60);
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
@@ -3030,6 +3035,50 @@ function StreamPage() {
       return;
     }
 
+    const rememberHapticFrameSeq = (frameSeq: number) => {
+      if (!Number.isFinite(frameSeq)) {
+        return;
+      }
+
+      hapticSuppressedFrameSeqRef.current.add(Math.trunc(frameSeq));
+      if (hapticSuppressedFrameSeqRef.current.size > 128) {
+        const first = hapticSuppressedFrameSeqRef.current.values().next().value;
+        if (first !== undefined) {
+          hapticSuppressedFrameSeqRef.current.delete(first);
+        }
+      }
+    };
+
+    const handleHapticFrameBytes = (hapticPacketBytes: Uint8Array) => {
+      if (
+        hapticPacketBytes.byteLength <= HAPTIC_PACKET_HEADER_BYTES ||
+        controllerInputKernelRef.current !== "web" ||
+        !hapticEnabledRef.current
+      ) {
+        return;
+      }
+
+      const headerView = new DataView(
+        hapticPacketBytes.buffer,
+        hapticPacketBytes.byteOffset,
+        HAPTIC_PACKET_HEADER_BYTES
+      );
+      const hapticFrameSeq = headerView.getUint32(0, true);
+      const played = triggerGamepadHapticsFromChiaki(
+        {
+          data: hapticPacketBytes.subarray(HAPTIC_PACKET_HEADER_BYTES),
+          hapticFrameSeq,
+        },
+        {
+          enabled: true,
+          gain: hapticIntensityRef.current,
+        }
+      );
+      if (played) {
+        rememberHapticFrameSeq(hapticFrameSeq);
+      }
+    };
+
     const kind = packetBytes[0];
     const payload = packetBytes.subarray(1);
     if (kind === WS_BINARY_VIDEO) {
@@ -3042,6 +3091,10 @@ function StreamPage() {
     }
     if (kind === WS_BINARY_AUDIO) {
       handleAudioFrameBytes(payload);
+      return;
+    }
+    if (kind === WS_BINARY_HAPTIC) {
+      handleHapticFrameBytes(payload);
     }
   };
 
@@ -3907,7 +3960,17 @@ function StreamPage() {
                 );
 
                 if (eventName === "rumble") {
+                  const rumbleSource = String(
+                    (sessionEvent as { source?: unknown })?.source || ""
+                  );
                   if (
+                    rumbleSource === "haptic_audio" &&
+                    controllerInputKernelRef.current === "web" &&
+                    canUseDualSenseGamepadHaptics({ enabled: hapticEnabledRef.current })
+                  ) {
+                    // DS5 haptics path is active, so ignore the motor fallback
+                    // derived from the same PCM frame.
+                  } else if (
                     Number.isFinite(hapticFrameSeq) &&
                     hapticSuppressedFrameSeqRef.current.delete(Math.trunc(hapticFrameSeq))
                   ) {

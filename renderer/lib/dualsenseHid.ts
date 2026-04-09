@@ -51,7 +51,7 @@ const DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS = 2;
 const DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES = 2;
 const DUALSENSE_HAPTIC_SAMPLE_RATE = 3000;
 const DUALSENSE_HAPTIC_MAX_PENDING_SAMPLES = 1000;
-const DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS = 120;
+const DUALSENSE_HAPTIC_MAX_PLAYAHEAD_MS = 32;
 const DUALSENSE_HAPTIC_IDLE_STOP_DELAY_MS = Math.ceil(
   ((DUALSENSE_HAPTIC_SAMPLE_BYTES / DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES) /
     DUALSENSE_HAPTIC_SAMPLE_RATE) *
@@ -156,6 +156,7 @@ type DeviceContext = {
   pendingHapticSamples: Uint8Array[];
   pendingHapticRemainder: Uint8Array;
   hapticWriteScheduled: boolean;
+  hapticWriteTimer: ReturnType<typeof setTimeout> | null;
   hapticStopTimer: ReturnType<typeof setTimeout> | null;
   hapticNextWriteAtMs: number;
   inputReportHandler: (event: HIDInputReportEvent) => void;
@@ -231,6 +232,13 @@ const getDualSenseHapticSampleDurationMs = (sampleBytes: number) => {
   return (
     ((sampleBytes / DUALSENSE_HAPTIC_SAMPLE_FRAME_BYTES) / DUALSENSE_HAPTIC_SAMPLE_RATE) * 1000
   );
+};
+
+const getMonotonicTimeMs = () => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
 };
 
 const normalizeHapticGain = (gain: unknown) => {
@@ -1453,6 +1461,7 @@ class DualSenseHidBridge {
       pendingHapticSamples: [],
       pendingHapticRemainder: new Uint8Array(0),
       hapticWriteScheduled: false,
+      hapticWriteTimer: null,
       hapticStopTimer: null,
       hapticNextWriteAtMs: 0,
       openPromise: null,
@@ -1510,6 +1519,10 @@ class DualSenseHidBridge {
       clearTimeout(context.hapticStopTimer);
       context.hapticStopTimer = null;
     }
+    if (context.hapticWriteTimer) {
+      clearTimeout(context.hapticWriteTimer);
+      context.hapticWriteTimer = null;
+    }
     context.inputState = createIdleDualSenseInputState();
     context.hasInputState = false;
     context.rawTouchState = createIdleTouchState();
@@ -1523,6 +1536,7 @@ class DualSenseHidBridge {
     context.pendingHapticSamples.length = 0;
     context.pendingHapticRemainder = new Uint8Array(0);
     context.hapticWriteScheduled = false;
+    context.hapticWriteTimer = null;
     context.hapticNextWriteAtMs = 0;
     context.pendingStateOutputPayload = null;
     context.stateOutputWriteScheduled = false;
@@ -1784,35 +1798,54 @@ class DualSenseHidBridge {
     }
 
     context.pendingHapticSamples.push(hapticSample.slice());
-    this.trimPendingHaptics(context);
     this.scheduleHapticStop(context);
   }
 
-  private trimPendingHaptics(context: DeviceContext) {
-    let pendingLatencyMs =
-      context.pendingHapticSamples.reduce((total, sample) => {
-        return total + getDualSenseHapticSampleDurationMs(sample.byteLength);
-      }, 0);
-    if (pendingLatencyMs <= DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS) {
-      return;
-    }
+  private trimPendingHapticBacklog(context: DeviceContext) {
+    let queuedAheadMs = context.pendingHapticSamples.reduce((total, sample) => {
+      return total + getDualSenseHapticSampleDurationMs(sample.byteLength);
+    }, getDualSenseHapticSampleDurationMs(context.pendingHapticRemainder.byteLength));
 
-    let dropped = false;
+    // Haptics that are already tens of milliseconds late feel like aftershock.
+    // Keep only a short playout-ahead window so stale PCM does not trail behind
+    // the actual game event.
     while (
-      context.pendingHapticSamples.length > 0 &&
-      pendingLatencyMs > DUALSENSE_HAPTIC_MAX_PENDING_LATENCY_MS
+      queuedAheadMs > DUALSENSE_HAPTIC_MAX_PLAYAHEAD_MS &&
+      context.pendingHapticSamples.length > 0
     ) {
       const droppedSample = context.pendingHapticSamples.shift();
       if (!droppedSample) {
         break;
       }
-      pendingLatencyMs -= getDualSenseHapticSampleDurationMs(droppedSample.byteLength);
-      dropped = true;
+      queuedAheadMs -= getDualSenseHapticSampleDurationMs(droppedSample.byteLength);
+    }
+  }
+
+  private getQueuedHapticSampleBytes(context: DeviceContext, availableBytes: number) {
+    if (availableBytes <= 0) {
+      return 0;
     }
 
-    if (dropped) {
-      context.hapticNextWriteAtMs = 0;
+    const layout = this.getHapticReportLayoutForSample(context, availableBytes);
+    if (!layout || layout.sampleBytes <= 0) {
+      return 0;
     }
+    return Math.min(availableBytes, layout.sampleBytes);
+  }
+
+  private enqueueQueuedHapticBytes(context: DeviceContext, hapticBytes: Uint8Array) {
+    let offset = 0;
+    while (offset < hapticBytes.length) {
+      const chunkBytes = this.getQueuedHapticSampleBytes(context, hapticBytes.length - offset);
+      if (chunkBytes < 1) {
+        break;
+      }
+
+      this.enqueueHapticSample(context, hapticBytes.subarray(offset, offset + chunkBytes));
+      offset += chunkBytes;
+    }
+
+    return hapticBytes.slice(offset);
   }
 
   private enqueueHapticPayload(context: DeviceContext, hapticPayload: Uint8Array) {
@@ -1828,20 +1861,9 @@ class DualSenseHidBridge {
     const combined = new Uint8Array(context.pendingHapticRemainder.length + hapticPayload.length);
     combined.set(context.pendingHapticRemainder, 0);
     combined.set(hapticPayload, context.pendingHapticRemainder.length);
-
-    let offset = 0;
-    while (offset + DUALSENSE_HAPTIC_SAMPLE_BYTES <= combined.length) {
-      this.enqueueHapticSample(
-        context,
-        combined.subarray(offset, offset + DUALSENSE_HAPTIC_SAMPLE_BYTES)
-      );
-      offset += DUALSENSE_HAPTIC_SAMPLE_BYTES;
-    }
-
-    context.pendingHapticRemainder = combined.slice(offset);
-    if (context.pendingHapticRemainder.length > 0) {
-      this.scheduleHapticStop(context);
-    }
+    context.pendingHapticRemainder = this.enqueueQueuedHapticBytes(context, combined);
+    this.trimPendingHapticBacklog(context);
+    this.scheduleHapticStop(context);
   }
 
   private scheduleHapticStop(context: DeviceContext) {
@@ -1854,12 +1876,13 @@ class DualSenseHidBridge {
       }
 
       if (context.pendingHapticRemainder.length > 0) {
-        const finalSample = new Uint8Array(DUALSENSE_HAPTIC_SAMPLE_BYTES);
-        finalSample.set(context.pendingHapticRemainder);
+        const remainder = context.pendingHapticRemainder;
         context.pendingHapticRemainder = new Uint8Array(0);
-        context.pendingHapticSamples.push(finalSample);
+        context.pendingHapticRemainder = this.enqueueQueuedHapticBytes(context, remainder);
         this.scheduleQueuedHapticWrite(context);
-        this.scheduleHapticStop(context);
+        if (context.pendingHapticRemainder.length > 0) {
+          this.scheduleHapticStop(context);
+        }
         return;
       }
 
@@ -1870,7 +1893,17 @@ class DualSenseHidBridge {
   }
 
   private scheduleQueuedHapticWrite(context: DeviceContext) {
-    if (context.hapticWriteScheduled) {
+    if (context.hapticWriteScheduled || context.hapticWriteTimer) {
+      return;
+    }
+
+    const now = getMonotonicTimeMs();
+    const delayMs = Math.max(0, context.hapticNextWriteAtMs - now);
+    if (delayMs > 1) {
+      context.hapticWriteTimer = setTimeout(() => {
+        context.hapticWriteTimer = null;
+        this.scheduleQueuedHapticWrite(context);
+      }, delayMs);
       return;
     }
 
@@ -1890,6 +1923,9 @@ class DualSenseHidBridge {
           return false;
         }
 
+        const sendStartedAtMs = Math.max(getMonotonicTimeMs(), context.hapticNextWriteAtMs);
+        const sampleDurationMs = getDualSenseHapticSampleDurationMs(hapticSample.byteLength);
+
         const sent = await this.queueDeviceWrite(context, async () => {
           if (!context.hapticPrimed) {
             const primed = await this.sendHapticPrimePacket(context);
@@ -1907,9 +1943,10 @@ class DualSenseHidBridge {
           context.hapticPrimed = false;
           context.hapticNextWriteAtMs = 0;
         } else {
-          // The incoming Chiaki haptics frames already arrive at real-time pace.
-          // Adding a second JS-side playout clock here only creates latency.
-          context.hapticNextWriteAtMs = 0;
+          context.hapticNextWriteAtMs = Math.max(
+            sendStartedAtMs + sampleDurationMs,
+            getMonotonicTimeMs()
+          );
         }
         return sent;
       } catch {

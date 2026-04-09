@@ -18,6 +18,10 @@ const isHapticsEnabled = (settings?: GamepadHapticsSettings) => {
   return settings?.enabled === true;
 };
 
+export const canUseDualSenseGamepadHaptics = (settings?: GamepadHapticsSettings) => {
+  return isHapticsEnabled(settings) && supportsDualSenseHidHapticsForActiveDevices();
+};
+
 const clampByte = (value: unknown) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -29,6 +33,15 @@ const clampByte = (value: unknown) => {
 const parseByteArrayValue = (value: unknown) => {
   if (value instanceof Uint8Array) {
     return new Uint8Array(value);
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value.slice(0));
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
   }
 
   if (Array.isArray(value)) {
@@ -54,6 +67,15 @@ const parseByteArrayValue = (value: unknown) => {
 };
 
 const decodeBase64ToBytes = (base64: string) => {
+  if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+    try {
+      const buffer = Buffer.from(base64, "base64");
+      return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).slice();
+    } catch {
+      // Fall back to atob when Buffer is unavailable or rejects the payload.
+    }
+  }
+
   if (typeof atob !== "function") {
     return null;
   }
@@ -90,10 +112,7 @@ export const triggerGamepadHapticsFromChiaki = (
   event: unknown,
   settings?: GamepadHapticsSettings
 ) => {
-  if (!isHapticsEnabled(settings)) {
-    return false;
-  }
-  if (!supportsDualSenseHidHapticsForActiveDevices()) {
+  if (!canUseDualSenseGamepadHaptics(settings)) {
     return false;
   }
 
