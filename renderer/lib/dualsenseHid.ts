@@ -150,6 +150,7 @@ type DeviceContext = {
   btOutputSeq: number;
   outputReportBytes: Map<number, number>;
   hapticPacketSeq: number;
+  hapticQuantizationError: [number, number];
   hapticPrimed: boolean;
   hapticStreaming: boolean;
   pendingHapticSamples: Uint8Array[];
@@ -203,8 +204,24 @@ const clampInt8 = (value: number) => {
   return value;
 };
 
-const toSignedPcm8 = (value: number) => {
-  return clampInt8(Math.round(value / 256));
+const quantizePcm16ToSignedPcm8 = (
+  pcm16: number,
+  gain: number,
+  channel: 0 | 1,
+  quantizationError?: [number, number]
+) => {
+  const adjustedPcm16 = pcm16 * gain + (quantizationError?.[channel] ?? 0);
+  const signedPcm8 = clampInt8(Math.round(adjustedPcm16 / 256));
+
+  if (quantizationError) {
+    if (signedPcm8 <= -128 || signedPcm8 >= 127) {
+      quantizationError[channel] = 0;
+    } else {
+      quantizationError[channel] = clamp(adjustedPcm16 - signedPcm8 * 256, -255, 255);
+    }
+  }
+
+  return signedPcm8 & 0xff;
 };
 
 const getDualSenseHapticSampleDurationMs = (sampleBytes: number) => {
@@ -820,7 +837,11 @@ const parseByteArrayValue = (value: unknown) => {
   return null;
 };
 
-const toDualSenseHapticPayload = (frame: Int16Array | Int8Array | Uint8Array, gain: unknown) => {
+const toDualSenseHapticPayload = (
+  frame: Int16Array | Int8Array | Uint8Array,
+  gain: unknown,
+  quantizationError?: [number, number]
+) => {
   const safeGain = normalizeHapticGain(gain);
   // DualSense HID haptics packets carry a continuous 3kHz stereo signed-8 PCM
   // stream. The incoming Chiaki frames are 3kHz stereo s16le, so convert them
@@ -829,7 +850,12 @@ const toDualSenseHapticPayload = (frame: Int16Array | Int8Array | Uint8Array, ga
   if (frame instanceof Int16Array) {
     const sample = new Uint8Array(frame.length - (frame.length % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS));
     for (let index = 0; index < sample.length; index += 1) {
-      sample[index] = toSignedPcm8(frame[index] * safeGain) & 0xff;
+      sample[index] = quantizePcm16ToSignedPcm8(
+        frame[index],
+        safeGain,
+        (index % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS) as 0 | 1,
+        quantizationError
+      );
     }
     return sample;
   }
@@ -848,7 +874,12 @@ const toDualSenseHapticPayload = (frame: Int16Array | Int8Array | Uint8Array, ga
     const inputOffset = index * Int16Array.BYTES_PER_ELEMENT;
     const value = (frame[inputOffset + 1] << 8) | frame[inputOffset];
     const pcm16 = value > 0x7fff ? value - 0x10000 : value;
-    sample[index] = toSignedPcm8(pcm16 * safeGain) & 0xff;
+    sample[index] = quantizePcm16ToSignedPcm8(
+      pcm16,
+      safeGain,
+      (index % DUALSENSE_HAPTIC_PCM_INPUT_CHANNELS) as 0 | 1,
+      quantizationError
+    );
   }
   return sample;
 };
@@ -1249,14 +1280,19 @@ class DualSenseHidBridge {
       return false;
     }
 
-    const hapticPayload = toDualSenseHapticPayload(frame, gain);
-    if (hapticPayload.length < 1) {
-      return false;
-    }
     let queued = false;
 
     for (const context of contexts) {
       if (!this.supportsHidHaptics(context)) {
+        continue;
+      }
+
+      const hapticPayload = toDualSenseHapticPayload(
+        frame,
+        gain,
+        context.hapticQuantizationError
+      );
+      if (hapticPayload.length < 1) {
         continue;
       }
 
@@ -1411,6 +1447,7 @@ class DualSenseHidBridge {
       btOutputSeq: 0,
       outputReportBytes: collectOutputReportBytes(device),
       hapticPacketSeq: 0,
+      hapticQuantizationError: [0, 0],
       hapticPrimed: false,
       hapticStreaming: false,
       pendingHapticSamples: [],
@@ -1482,6 +1519,7 @@ class DualSenseHidBridge {
     context.hapticPrimed = false;
     context.hapticStreaming = false;
     context.hapticPacketSeq = 0;
+    context.hapticQuantizationError = [0, 0];
     context.pendingHapticSamples.length = 0;
     context.pendingHapticRemainder = new Uint8Array(0);
     context.hapticWriteScheduled = false;
@@ -1825,6 +1863,7 @@ class DualSenseHidBridge {
         return;
       }
 
+      context.hapticQuantizationError = [0, 0];
       context.pendingHapticSamples.push(new Uint8Array(DUALSENSE_HAPTIC_SAMPLE_BYTES));
       this.scheduleQueuedHapticWrite(context);
     }, DUALSENSE_HAPTIC_IDLE_STOP_DELAY_MS);
