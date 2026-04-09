@@ -70,19 +70,6 @@ const decodeBase64ToBytes = (base64: string) => {
   }
 };
 
-const toSignedPcm16 = (bytes: Uint8Array) => {
-  const sampleCount = Math.floor(bytes.byteLength / 2);
-  const sample = new Int16Array(sampleCount);
-  for (let index = 0; index < sampleCount; index += 1) {
-    const offset = index * 2;
-    const lo = bytes[offset];
-    const hi = bytes[offset + 1];
-    const value = (hi << 8) | lo;
-    sample[index] = value > 0x7fff ? value - 0x10000 : value;
-  }
-  return sample;
-};
-
 const normalizeHapticPcm = (event: ChiakiHapticAudioEvent) => {
   if (typeof event?.dataBase64 === "string" && event.dataBase64.length > 0) {
     const decoded = decodeBase64ToBytes(event.dataBase64);
@@ -116,6 +103,5 @@ export const triggerGamepadHapticsFromChiaki = (
     return false;
   }
 
-  const pcm16 = toSignedPcm16(pcmBytes);
-  return playDualSenseHidHapticsForActiveDevices(pcm16, settings?.gain ?? 0.5);
+  return playDualSenseHidHapticsForActiveDevices(pcmBytes, settings?.gain ?? 0.5);
 };
