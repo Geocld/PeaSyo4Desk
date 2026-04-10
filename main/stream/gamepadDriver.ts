@@ -8,6 +8,11 @@ import {
   type NativeTriggerAxisName,
   type TriggerNormalizerState,
 } from "../gamepad/triggerNormalization";
+import {
+  parseDigitalButtonBinding,
+  readDigitalButtonPressedFromJoystickBinding,
+  type NativeDigitalButtonBinding,
+} from "../gamepad/digitalButtonBindings";
 
 declare const __non_webpack_require__: undefined | ((id: string) => any);
 const runtimeRequire =
@@ -64,6 +69,7 @@ type NodeGamepadDriverOptions = {
 type MutableControllerState = ControllerStateSnapshot;
 type DeviceTriggerNormalizers = Record<NativeTriggerAxisName, TriggerNormalizerState>;
 type DeviceTriggerBindings = Record<NativeTriggerAxisName, NativeTriggerBinding>;
+type DeviceDigitalButtonBindings = Record<DeviceDigitalButtonBindingName, NativeDigitalButtonBinding>;
 
 type NodeGamepadDriverRumbleRequest = {
   low?: unknown;
@@ -266,6 +272,44 @@ const AXIS_TOKEN_TO_NAME: Record<string, string> = {
   rt: "rightTrigger",
 };
 
+const DIGITAL_BUTTON_BINDING_NAMES = [
+  "dpadLeft",
+  "dpadRight",
+  "dpadUp",
+  "dpadDown",
+  "a",
+  "b",
+  "x",
+  "y",
+  "guide",
+  "back",
+  "start",
+  "leftStick",
+  "rightStick",
+  "leftShoulder",
+  "rightShoulder",
+] as const;
+
+type DeviceDigitalButtonBindingName = (typeof DIGITAL_BUTTON_BINDING_NAMES)[number];
+
+const DIGITAL_BUTTON_BINDING_TO_MASK: Record<DeviceDigitalButtonBindingName, number> = {
+  dpadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
+  dpadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
+  dpadUp: CONTROLLER_BUTTONS.DPAD_UP,
+  dpadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
+  a: CONTROLLER_BUTTONS.CROSS,
+  b: CONTROLLER_BUTTONS.MOON,
+  x: CONTROLLER_BUTTONS.BOX,
+  y: CONTROLLER_BUTTONS.PYRAMID,
+  guide: CONTROLLER_BUTTONS.PS,
+  back: CONTROLLER_BUTTONS.SHARE,
+  start: CONTROLLER_BUTTONS.OPTIONS,
+  leftStick: CONTROLLER_BUTTONS.L3,
+  rightStick: CONTROLLER_BUTTONS.R3,
+  leftShoulder: CONTROLLER_BUTTONS.L1,
+  rightShoulder: CONTROLLER_BUTTONS.R1,
+};
+
 const isPressed = (value: unknown) => {
   if (typeof value === "boolean") return value;
   return Number(value) > 0;
@@ -327,6 +371,24 @@ const createDeviceTriggerBindings = (mapping: unknown): DeviceTriggerBindings =>
   rightTrigger: parseTriggerBinding(mapping, "rightTrigger"),
 });
 
+const createDeviceDigitalButtonBindings = (mapping: unknown): DeviceDigitalButtonBindings => ({
+  dpadLeft: parseDigitalButtonBinding(mapping, "dpadLeft"),
+  dpadRight: parseDigitalButtonBinding(mapping, "dpadRight"),
+  dpadUp: parseDigitalButtonBinding(mapping, "dpadUp"),
+  dpadDown: parseDigitalButtonBinding(mapping, "dpadDown"),
+  a: parseDigitalButtonBinding(mapping, "a"),
+  b: parseDigitalButtonBinding(mapping, "b"),
+  x: parseDigitalButtonBinding(mapping, "x"),
+  y: parseDigitalButtonBinding(mapping, "y"),
+  guide: parseDigitalButtonBinding(mapping, "guide"),
+  back: parseDigitalButtonBinding(mapping, "back"),
+  start: parseDigitalButtonBinding(mapping, "start"),
+  leftStick: parseDigitalButtonBinding(mapping, "leftStick"),
+  rightStick: parseDigitalButtonBinding(mapping, "rightStick"),
+  leftShoulder: parseDigitalButtonBinding(mapping, "leftShoulder"),
+  rightShoulder: parseDigitalButtonBinding(mapping, "rightShoulder"),
+});
+
 const resetDeviceTriggerNormalizers = (
   normalizers: DeviceTriggerNormalizers,
   mapping: unknown
@@ -343,6 +405,15 @@ const resetDeviceTriggerBindings = (
   bindings.rightTrigger = parseTriggerBinding(mapping, "rightTrigger");
 };
 
+const resetDeviceDigitalButtonBindings = (
+  bindings: DeviceDigitalButtonBindings,
+  mapping: unknown
+) => {
+  for (const buttonName of DIGITAL_BUTTON_BINDING_NAMES) {
+    bindings[buttonName] = parseDigitalButtonBinding(mapping, buttonName);
+  }
+};
+
 export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   const onStateChange = options.onStateChange;
   const onError = options.onError;
@@ -355,6 +426,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   const deviceStates = new Map<string, MutableControllerState>();
   const deviceTriggerNormalizers = new Map<string, DeviceTriggerNormalizers>();
   const deviceTriggerBindings = new Map<string, DeviceTriggerBindings>();
+  const deviceDigitalButtonBindings = new Map<string, DeviceDigitalButtonBindings>();
   const lastEmittedState = createIdleState();
   const idleState = createIdleState();
   let hasLastEmittedState = false;
@@ -482,6 +554,33 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     return true;
   };
 
+  const applyJoystickDigitalButtonBindings = (
+    state: MutableControllerState,
+    joystick: any,
+    digitalButtonBindings: DeviceDigitalButtonBindings
+  ) => {
+    if (!joystick) {
+      return;
+    }
+
+    for (const buttonName of DIGITAL_BUTTON_BINDING_NAMES) {
+      const pressed = readDigitalButtonPressedFromJoystickBinding(
+        digitalButtonBindings[buttonName],
+        joystick
+      );
+      if (pressed === null) {
+        continue;
+      }
+
+      const mask = DIGITAL_BUTTON_BINDING_TO_MASK[buttonName];
+      if (pressed) {
+        state.buttons |= mask;
+      } else {
+        state.buttons &= ~mask;
+      }
+    }
+  };
+
   const emitState = (sourceState: MutableControllerState) => {
     const nextState = cloneState(sourceState);
 
@@ -525,7 +624,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     joystick: any,
     state: MutableControllerState,
     triggerBindings: DeviceTriggerBindings,
-    triggerNormalizers: DeviceTriggerNormalizers
+    triggerNormalizers: DeviceTriggerNormalizers,
+    digitalButtonBindings: DeviceDigitalButtonBindings
   ) => {
     state.buttons = 0;
     state.l2State = 0;
@@ -625,6 +725,11 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       state.r2State = Math.max(state.r2State, 255);
       state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
     }
+
+    // Rebuild mapped digital buttons from the raw joystick sidecar when
+    // available. This avoids relying solely on controller button edge events,
+    // which can miss D-Pad hat transitions on some SDL backends.
+    applyJoystickDigitalButtonBindings(state, joystick, digitalButtonBindings);
   };
 
   const closeController = (deviceId: string) => {
@@ -650,6 +755,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     deviceStates.delete(deviceId);
     deviceTriggerNormalizers.delete(deviceId);
     deviceTriggerBindings.delete(deviceId);
+    deviceDigitalButtonBindings.delete(deviceId);
     if (activeDeviceId === deviceId) {
       activeDeviceId = null;
     }
@@ -683,8 +789,12 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         getControllerMapping(controller, device)
       );
       const triggerBindings = createDeviceTriggerBindings(getControllerMapping(controller, device));
+      const digitalButtonBindings = createDeviceDigitalButtonBindings(
+        getControllerMapping(controller, device)
+      );
       deviceTriggerNormalizers.set(deviceId, triggerNormalizers);
       deviceTriggerBindings.set(deviceId, triggerBindings);
+      deviceDigitalButtonBindings.set(deviceId, digitalButtonBindings);
       const controllerState = createIdleState();
       deviceStates.set(deviceId, controllerState);
       syncStateFromControllerInstance(
@@ -692,7 +802,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         joystick,
         controllerState,
         triggerBindings,
-        triggerNormalizers
+        triggerNormalizers,
+        digitalButtonBindings
       );
       if (!activeDeviceId) {
         activeDeviceId = deviceId;
@@ -704,7 +815,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
-        if (!state || !triggerBindings || !triggerNormalizers) return;
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
         const updated = setAxisState(
           state,
           normalizeInputToken(event?.axis),
@@ -719,7 +831,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
             joystick,
             state,
             triggerBindings,
-            triggerNormalizers
+            triggerNormalizers,
+            digitalButtonBindings
           );
         }
         activeDeviceId = deviceId;
@@ -731,7 +844,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
-        if (!state || !triggerBindings || !triggerNormalizers) return;
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
         const updated = setButtonState(state, normalizeInputToken(event?.button), true);
         if (!updated) {
           syncStateFromControllerInstance(
@@ -739,7 +853,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
             joystick,
             state,
             triggerBindings,
-            triggerNormalizers
+            triggerNormalizers,
+            digitalButtonBindings
           );
         }
         activeDeviceId = deviceId;
@@ -751,7 +866,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
-        if (!state || !triggerBindings || !triggerNormalizers) return;
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
         const updated = setButtonState(state, normalizeInputToken(event?.button), false);
         if (!updated) {
           syncStateFromControllerInstance(
@@ -759,7 +875,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
             joystick,
             state,
             triggerBindings,
-            triggerNormalizers
+            triggerNormalizers,
+            digitalButtonBindings
           );
         }
         activeDeviceId = deviceId;
@@ -771,7 +888,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
-        if (!state || !triggerBindings || !triggerNormalizers) {
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
           return;
         }
 
@@ -781,12 +899,14 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
           mapping
         );
         resetDeviceTriggerBindings(triggerBindings, mapping);
+        resetDeviceDigitalButtonBindings(digitalButtonBindings, mapping);
         syncStateFromControllerInstance(
           controller,
           joystick,
           state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
         );
         activeDeviceId = deviceId;
         onLog?.(`node-sdl controller remapped: ${deviceId}`);
@@ -807,6 +927,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         deviceStates.delete(deviceId);
         deviceTriggerNormalizers.delete(deviceId);
         deviceTriggerBindings.delete(deviceId);
+        deviceDigitalButtonBindings.delete(deviceId);
         if (activeDeviceId === deviceId) {
           activeDeviceId = null;
         }
@@ -817,8 +938,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const state = deviceStates.get(deviceId);
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
-        if (!state || !triggerBindings || !triggerNormalizers) {
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
           return;
         }
 
@@ -827,7 +949,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
           joystick,
           state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
         );
         activeDeviceId = deviceId;
         emitState(state);
@@ -837,8 +960,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const state = deviceStates.get(deviceId);
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
-        if (!state || !triggerBindings || !triggerNormalizers) {
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
           return;
         }
 
@@ -847,7 +971,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
           joystick,
           state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
         );
         activeDeviceId = deviceId;
         emitState(state);
@@ -857,8 +982,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const state = deviceStates.get(deviceId);
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
-        if (!state || !triggerBindings || !triggerNormalizers) {
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
           return;
         }
 
@@ -867,7 +993,30 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
           joystick,
           state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
+        );
+        activeDeviceId = deviceId;
+        emitState(state);
+      });
+
+      joystick?.on("hatMotion", () => {
+        const state = deviceStates.get(deviceId);
+        const triggerBindings = deviceTriggerBindings.get(deviceId);
+        const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
+        const joystick = joystickInstances.get(deviceId) ?? null;
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
+          return;
+        }
+
+        syncStateFromControllerInstance(
+          controller,
+          joystick,
+          state,
+          triggerBindings,
+          triggerNormalizers,
+          digitalButtonBindings
         );
         activeDeviceId = deviceId;
         emitState(state);
@@ -877,8 +1026,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         const state = deviceStates.get(deviceId);
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
+        const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         joystickInstances.delete(deviceId);
-        if (!state || !triggerBindings || !triggerNormalizers) {
+        if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
           return;
         }
 
@@ -887,7 +1037,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
           null,
           state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
         );
         emitState(state);
       });
@@ -972,8 +1123,9 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     const state = deviceStates.get(entry.deviceId);
     const triggerBindings = deviceTriggerBindings.get(entry.deviceId);
     const triggerNormalizers = deviceTriggerNormalizers.get(entry.deviceId);
+    const digitalButtonBindings = deviceDigitalButtonBindings.get(entry.deviceId);
     const joystick = joystickInstances.get(entry.deviceId) ?? null;
-    if (!state || !triggerBindings || !triggerNormalizers) {
+    if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) {
       return;
     }
 
@@ -984,7 +1136,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       joystick,
       state,
       triggerBindings,
-      triggerNormalizers
+      triggerNormalizers,
+      digitalButtonBindings
     );
     activeDeviceId = entry.deviceId;
     emitState(state);
@@ -1076,6 +1229,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     deviceStates.clear();
     deviceTriggerNormalizers.clear();
     deviceTriggerBindings.clear();
+    deviceDigitalButtonBindings.clear();
     activeDeviceId = null;
     sdl = null;
     started = false;

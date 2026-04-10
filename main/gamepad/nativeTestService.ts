@@ -8,6 +8,11 @@ import {
   type NativeTriggerAxisName,
   type TriggerNormalizerState,
 } from "./triggerNormalization";
+import {
+  parseDigitalButtonBinding,
+  readDigitalButtonPressedFromJoystickBinding,
+  type NativeDigitalButtonBinding,
+} from "./digitalButtonBindings";
 
 declare const __non_webpack_require__: undefined | ((id: string) => any);
 const runtimeRequire =
@@ -61,6 +66,10 @@ type NativeGamepadTestAxes = Record<NativeGamepadTestAxisName, number>;
 type NativeGamepadTestButtons = Record<NativeGamepadTestButtonName, boolean>;
 type ControllerTriggerNormalizers = Record<NativeTriggerAxisName, TriggerNormalizerState>;
 type ControllerTriggerBindings = Record<NativeTriggerAxisName, NativeTriggerBinding>;
+type ControllerDigitalButtonBindings = Record<
+  NativeGamepadTestButtonName,
+  NativeDigitalButtonBinding
+>;
 
 const createEmptyNativeGamepadAxes = (): NativeGamepadTestAxes => ({
   leftStickX: 0,
@@ -143,6 +152,7 @@ type ControllerEntry = {
   buttons: ReturnType<typeof createEmptyNativeGamepadButtons>;
   triggerNormalizers: ControllerTriggerNormalizers;
   triggerBindings: ControllerTriggerBindings;
+  digitalButtonBindings: ControllerDigitalButtonBindings;
 };
 
 const normalizeDeviceId = (value: unknown) => {
@@ -235,6 +245,30 @@ const createControllerTriggerBindings = (mapping: unknown): ControllerTriggerBin
   rightTrigger: parseTriggerBinding(mapping, "rightTrigger"),
 });
 
+const createControllerDigitalButtonBindings = (
+  mapping: unknown
+): ControllerDigitalButtonBindings => ({
+  dpadLeft: parseDigitalButtonBinding(mapping, "dpadLeft"),
+  dpadRight: parseDigitalButtonBinding(mapping, "dpadRight"),
+  dpadUp: parseDigitalButtonBinding(mapping, "dpadUp"),
+  dpadDown: parseDigitalButtonBinding(mapping, "dpadDown"),
+  a: parseDigitalButtonBinding(mapping, "a"),
+  b: parseDigitalButtonBinding(mapping, "b"),
+  x: parseDigitalButtonBinding(mapping, "x"),
+  y: parseDigitalButtonBinding(mapping, "y"),
+  guide: parseDigitalButtonBinding(mapping, "guide"),
+  back: parseDigitalButtonBinding(mapping, "back"),
+  start: parseDigitalButtonBinding(mapping, "start"),
+  leftStick: parseDigitalButtonBinding(mapping, "leftStick"),
+  rightStick: parseDigitalButtonBinding(mapping, "rightStick"),
+  leftShoulder: parseDigitalButtonBinding(mapping, "leftShoulder"),
+  rightShoulder: parseDigitalButtonBinding(mapping, "rightShoulder"),
+  paddle1: parseDigitalButtonBinding(mapping, "paddle1"),
+  paddle2: parseDigitalButtonBinding(mapping, "paddle2"),
+  paddle3: parseDigitalButtonBinding(mapping, "paddle3"),
+  paddle4: parseDigitalButtonBinding(mapping, "paddle4"),
+});
+
 const resetControllerTriggerNormalizers = (
   normalizers: ControllerTriggerNormalizers,
   mapping: unknown
@@ -249,6 +283,15 @@ const resetControllerTriggerBindings = (
 ) => {
   bindings.leftTrigger = parseTriggerBinding(mapping, "leftTrigger");
   bindings.rightTrigger = parseTriggerBinding(mapping, "rightTrigger");
+};
+
+const resetControllerDigitalButtonBindings = (
+  bindings: ControllerDigitalButtonBindings,
+  mapping: unknown
+) => {
+  for (const buttonName of NATIVE_GAMEPAD_TEST_BUTTON_NAMES) {
+    bindings[buttonName] = parseDigitalButtonBinding(mapping, buttonName);
+  }
 };
 
 class NativeGamepadTestServiceImpl {
@@ -368,6 +411,19 @@ class NativeGamepadTestServiceImpl {
 
     for (const buttonName of NATIVE_GAMEPAD_TEST_BUTTON_NAMES) {
       entry.buttons[buttonName] = !!rawButtons[buttonName];
+    }
+
+    if (entry.joystick) {
+      for (const buttonName of NATIVE_GAMEPAD_TEST_BUTTON_NAMES) {
+        const pressed = readDigitalButtonPressedFromJoystickBinding(
+          entry.digitalButtonBindings[buttonName],
+          entry.joystick
+        );
+        if (pressed === null) {
+          continue;
+        }
+        entry.buttons[buttonName] = pressed;
+      }
     }
 
     entry.device = entry.controller?.device || entry.device;
@@ -492,6 +548,9 @@ class NativeGamepadTestServiceImpl {
         triggerBindings: createControllerTriggerBindings(
           getControllerMapping(controller, device)
         ),
+        digitalButtonBindings: createControllerDigitalButtonBindings(
+          getControllerMapping(controller, device)
+        ),
       };
 
       this.syncEntryFromController(entry);
@@ -593,6 +652,7 @@ class NativeGamepadTestServiceImpl {
           mapping
         );
         resetControllerTriggerBindings(nextEntry.triggerBindings, mapping);
+        resetControllerDigitalButtonBindings(nextEntry.digitalButtonBindings, mapping);
         this.syncEntryFromController(nextEntry);
         this.pushLog(`native gamepad tester: controller remapped ${deviceId}`);
       });
@@ -611,7 +671,7 @@ class NativeGamepadTestServiceImpl {
           return;
         }
 
-        this.refreshTriggerAxes(nextEntry);
+        this.syncEntryFromController(nextEntry);
         this.activeDeviceId = deviceId;
         this.markUpdated();
       });
@@ -622,7 +682,7 @@ class NativeGamepadTestServiceImpl {
           return;
         }
 
-        this.refreshTriggerAxes(nextEntry);
+        this.syncEntryFromController(nextEntry);
         this.activeDeviceId = deviceId;
         this.markUpdated();
       });
@@ -633,7 +693,18 @@ class NativeGamepadTestServiceImpl {
           return;
         }
 
-        this.refreshTriggerAxes(nextEntry);
+        this.syncEntryFromController(nextEntry);
+        this.activeDeviceId = deviceId;
+        this.markUpdated();
+      });
+
+      joystick?.on("hatMotion", () => {
+        const nextEntry = this.controllerEntries.get(deviceId);
+        if (!nextEntry) {
+          return;
+        }
+
+        this.syncEntryFromController(nextEntry);
         this.activeDeviceId = deviceId;
         this.markUpdated();
       });
@@ -645,7 +716,7 @@ class NativeGamepadTestServiceImpl {
         }
 
         nextEntry.joystick = null;
-        this.refreshTriggerAxes(nextEntry);
+        this.syncEntryFromController(nextEntry);
         this.markUpdated();
       });
     } catch (error: any) {
