@@ -407,6 +407,8 @@ type ControllerStatePayload = {
 let pendingDirectControllerState: ControllerStatePayload | null = null;
 let directControllerStateFlushScheduled = false;
 let delayedControllerResetRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let lastControllerDebugLogAt = 0;
+let controllerSetCallCount = 0;
 
 const OGG_CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -426,6 +428,19 @@ const OGG_CRC_TABLE = (() => {
 
 const log = (...args) => {
   console.log("[stream-service]", ...args);
+};
+
+const CONTROLLER_DEBUG_LOG_INTERVAL_MS = 1000;
+
+const formatControllerDebugState = (state: ControllerStateSnapshot) => {
+  const touches = state.touches
+    .map((touch) => (touch.id < 0 ? "-1" : `${touch.id}:${touch.x ?? 0}:${touch.y ?? 0}`))
+    .join(";");
+  return `buttons=0x${(state.buttons >>> 0).toString(16)} l2=${state.l2State} r2=${state.r2State} axes=${state.leftX},${state.leftY},${state.rightX},${state.rightY} touchNext=${state.touchIdNext} touches=[${touches}]`;
+};
+
+const hasControllerDebugActivity = (state: ControllerStateSnapshot) => {
+  return !isNeutralControllerState(state);
 };
 
 const isExistingFile = (filePath: string) => {
@@ -1541,6 +1556,19 @@ const pushControllerState = (reason: string, options?: { force?: boolean }) => {
 
   try {
     streamSession.setControllerState(controllerState);
+    controllerSetCallCount += 1;
+    const now = Date.now();
+    if (
+      hasControllerDebugActivity(controllerState) ||
+      controllerSetCallCount <= 10 ||
+      now - lastControllerDebugLogAt >= CONTROLLER_DEBUG_LOG_INTERVAL_MS
+    ) {
+      log(
+        `setControllerState #${controllerSetCallCount} (${reason})`,
+        formatControllerDebugState(controllerState)
+      );
+      lastControllerDebugLogAt = now;
+    }
     copyControllerState(lastSubmittedControllerState, controllerState);
     hasSubmittedControllerState = true;
   } catch (error: any) {

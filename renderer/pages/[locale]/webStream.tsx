@@ -411,6 +411,30 @@ type ControllerStatePayload = {
   touches: [TouchPoint, TouchPoint];
 };
 
+const CONTROLLER_DEBUG_LOG_INTERVAL_MS = 1000;
+
+const formatControllerDebugTouch = (touch: TouchPoint) => {
+  if (touch.id < 0) return "-1";
+  return `${touch.id}:${touch.x ?? 0}:${touch.y ?? 0}`;
+};
+
+const formatControllerDebugState = (state: ControllerStatePayload) => {
+  return `buttons=0x${(state.buttons >>> 0).toString(16)} l2=${state.l2State} r2=${state.r2State} axes=${state.leftX},${state.leftY},${state.rightX},${state.rightY} touchNext=${state.touchIdNext} touches=[${formatControllerDebugTouch(state.touches[0])};${formatControllerDebugTouch(state.touches[1])}]`;
+};
+
+const hasControllerDebugActivity = (state: ControllerStatePayload) => {
+  return (
+    state.buttons !== 0 ||
+    state.l2State !== 0 ||
+    state.r2State !== 0 ||
+    state.leftX !== 0 ||
+    state.leftY !== 0 ||
+    state.rightX !== 0 ||
+    state.rightY !== 0 ||
+    state.touches.some((touch) => touch.id >= 0)
+  );
+};
+
 type ControllerInputButtonLike = {
   pressed?: boolean;
   value?: number;
@@ -949,6 +973,7 @@ function StreamPage() {
   const actionBarDrawerOpenRef = useRef(false);
   const lastSentControllerStateRef = useRef<ControllerStatePayload>(createIdleControllerState());
   const lastControllerSendAtRef = useRef(0);
+  const lastControllerDebugLogAtRef = useRef(0);
   const pollAndSendControllerStateRef = useRef<() => void>(() => undefined);
   const rumbleEnabledRef = useRef(settings?.rumble !== false);
   const rumbleIntensityRef = useRef(settings?.rumble_intensity);
@@ -3326,6 +3351,14 @@ function StreamPage() {
     }
 
     if (Ipc.sendStreamControllerState(state)) {
+      if (
+        hasControllerDebugActivity(state) ||
+        controlSendCountRef.current < 10 ||
+        now - lastControllerDebugLogAtRef.current >= CONTROLLER_DEBUG_LOG_INTERVAL_MS
+      ) {
+        console.log("[stream-controller] renderer ipc send", formatControllerDebugState(state));
+        lastControllerDebugLogAtRef.current = now;
+      }
       lastControlStateKeyRef.current = stateKey;
       lastSentControllerStateRef.current = cloneControllerState(state);
       lastControllerSendAtRef.current = now;

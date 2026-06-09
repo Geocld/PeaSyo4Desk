@@ -16,6 +16,10 @@ export default class Ipc {
 
     _channels:IpcChannels
 
+    _lastStreamControlStateLogAt = 0
+
+    _streamControlStateLogCount = 0
+
     constructor(application:Application){
         this._application = application
 
@@ -31,6 +35,33 @@ export default class Ipc {
         }
 
         ipcMain.on("stream-control-state", (_event, state) => {
+            this._streamControlStateLogCount += 1
+            const now = Date.now()
+            const buttons = Number(state?.buttons || 0) >>> 0
+            const touches = Array.isArray(state?.touches) ? state.touches : []
+            const hasActiveTouch = touches.some((touch) => Number(touch?.id ?? -1) >= 0)
+            const hasActivity =
+                buttons !== 0 ||
+                Number(state?.l2State || 0) !== 0 ||
+                Number(state?.r2State || 0) !== 0 ||
+                Number(state?.leftX || 0) !== 0 ||
+                Number(state?.leftY || 0) !== 0 ||
+                Number(state?.rightX || 0) !== 0 ||
+                Number(state?.rightY || 0) !== 0 ||
+                hasActiveTouch
+            if(hasActivity || this._streamControlStateLogCount <= 10 || now - this._lastStreamControlStateLogAt >= 1000){
+                const touchSummary = [0, 1].map((index) => {
+                    const touch = touches[index]
+                    const id = Number(touch?.id ?? -1)
+                    if(id < 0) return "-1"
+                    return `${id}:${Number(touch?.x || 0)}:${Number(touch?.y || 0)}`
+                }).join(";")
+                this._application.log(
+                    'Ipc',
+                    `stream-control-state #${this._streamControlStateLogCount} buttons=0x${buttons.toString(16)} l2=${Number(state?.l2State || 0)} r2=${Number(state?.r2State || 0)} axes=${Number(state?.leftX || 0)},${Number(state?.leftY || 0)},${Number(state?.rightX || 0)},${Number(state?.rightY || 0)} touchNext=${Number(state?.touchIdNext || 0)} touches=[${touchSummary}]`
+                )
+                this._lastStreamControlStateLogAt = now
+            }
             StreamSessionManager.setControllerStateDirect(state)
         })
 
