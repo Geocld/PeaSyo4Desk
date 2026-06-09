@@ -6,7 +6,7 @@ import dns from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import peasyo from "peasyo-lib";
+import peasyo from "../peasyoLib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { NativeGamepadTestService } from "../gamepad/nativeTestService";
 import { StreamSessionManager } from "../stream/serviceManager";

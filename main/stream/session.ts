@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
-import peasyo from "peasyo-lib";
+import peasyo from "../peasyoLib";
 import {
   createNodeGamepadDriver,
   type ControllerStateSnapshot as NodeControllerStateSnapshot,
