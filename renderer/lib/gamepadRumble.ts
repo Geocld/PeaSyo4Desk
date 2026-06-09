@@ -138,6 +138,16 @@ const scaleNativeRumbleMagnitude = (value: number, intensityGain: number) => {
   return clamp01(value * intensityGain);
 };
 
+const durationFromMagnitude = (magnitude: number) => {
+  return (
+    GAMEPAD_RUMBLE_CONFIG.minDurationMs +
+    Math.round(
+      (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
+        clamp01(magnitude)
+    )
+  );
+};
+
 const isValidStreamGamepad = (gamepad: Gamepad | null): gamepad is Gamepad => {
   return !!gamepad && gamepad.connected && Array.isArray(gamepad.axes) && gamepad.axes.length === 4;
 };
@@ -229,24 +239,11 @@ export const triggerGamepadRumbleFromChiaki = (
   const strongMotor = toRumbleMotorByte(rumble.left, rumble.peakLeft);
   const weakMotor = toRumbleMotorByte(rumble.right, rumble.peakRight);
   const maxMagnitude = Math.max(strongMagnitude, weakMagnitude);
-  const maxMotorMagnitude = Math.max(strongMotor, weakMotor) / 255;
-  const durationMagnitude = Math.max(maxMagnitude, maxMotorMagnitude);
-  if (durationMagnitude <= 0) {
+  if (maxMagnitude <= 0 && strongMotor <= 0 && weakMotor <= 0) {
     return false;
   }
 
-  const duration =
-    GAMEPAD_RUMBLE_CONFIG.minDurationMs +
-    Math.round(
-      (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
-        durationMagnitude
-    );
-  const hidDuration =
-    GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs +
-    Math.round(
-      (GAMEPAD_RUMBLE_CONFIG.hidMaxDurationMs - GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs) *
-        durationMagnitude
-    );
+  const duration = durationFromMagnitude(maxMagnitude);
   const hidStrongMotor = scaleRumbleMotorByte(
     strongMotor,
     GAMEPAD_RUMBLE_CONFIG.hidMotorScale * intensityGain
@@ -255,6 +252,13 @@ export const triggerGamepadRumbleFromChiaki = (
     weakMotor,
     GAMEPAD_RUMBLE_CONFIG.hidMotorScale * intensityGain
   );
+  const hidDurationMagnitude = Math.max(hidStrongMotor, hidWeakMotor) / 255;
+  const hidDuration =
+    GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs +
+    Math.round(
+      (GAMEPAD_RUMBLE_CONFIG.hidMaxDurationMs - GAMEPAD_RUMBLE_CONFIG.hidMinDurationMs) *
+        hidDurationMagnitude
+    );
 
   let played = playDualSenseHidRumbleForActiveDevices(
     hidWeakMotor,
@@ -327,12 +331,7 @@ export const triggerNativeGamepadRumbleFromChiaki = async (
     return false;
   }
 
-  const duration =
-    GAMEPAD_RUMBLE_CONFIG.minDurationMs +
-    Math.round(
-      (GAMEPAD_RUMBLE_CONFIG.maxDurationMs - GAMEPAD_RUMBLE_CONFIG.minDurationMs) *
-        durationMagnitude
-    );
+  const duration = durationFromMagnitude(durationMagnitude);
 
   try {
     await Ipc.send("app", "triggerStreamNativeGamepadRumble", {
