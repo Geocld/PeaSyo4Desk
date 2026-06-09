@@ -1,11 +1,11 @@
-import { applyDualSenseLedColorFromChiaki } from "./dualsenseHid";
+import { applyDualSenseLedColorFromPeasyo } from "./dualsenseHid";
 
-type ChiakiLedColorEvent = {
+type PeasyoLedColorEvent = {
   color?: Uint8Array;
 };
 
-export const handleGamepadLedColorFromChiaki = (event: unknown) => {
-  const payload = (event || {}) as ChiakiLedColorEvent;
-  applyDualSenseLedColorFromChiaki(payload);
+export const handleGamepadLedColorFromPeasyo = (event: unknown) => {
+  const payload = (event || {}) as PeasyoLedColorEvent;
+  applyDualSenseLedColorFromPeasyo(payload);
   return payload;
 };

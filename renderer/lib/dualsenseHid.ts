@@ -909,7 +909,7 @@ const toDualSenseHapticPayload = (
     frame instanceof Int8Array ? DUALSENSE_HAPTIC_GAIN_COMPENSATION : resolveHapticDetailGainScale(frame);
   const totalGain = safeGain * detailGainScale;
   // DualSense HID haptics packets carry a continuous 3kHz stereo signed-8 PCM
-  // stream. The incoming Chiaki frames are 3kHz stereo s16le, so convert them
+  // stream. The incoming Peasyo frames are 3kHz stereo s16le, so convert them
   // sample-for-sample without changing the channel count. Mobile keeps the
   // source as linear s16 all the way into the native USB haptics endpoint; on
   // WebHID we only have signed-8 payload budget, so apply a mild calibration
@@ -2257,10 +2257,10 @@ export const requestDualSenseHidAccessIfNeeded = () => {
   return bridge.requestAccessIfNeeded();
 };
 
-export const applyDualSenseTriggerEffectsFromChiaki = (event: unknown) => {
+export const applyDualSenseTriggerEffectsFromPeasyo = (event: unknown) => {
   return bridge.applyTriggerEffects(event);
 };
 
-export const applyDualSenseLedColorFromChiaki = (event: unknown) => {
+export const applyDualSenseLedColorFromPeasyo = (event: unknown) => {
   return bridge.applyLedColor(event);
 };

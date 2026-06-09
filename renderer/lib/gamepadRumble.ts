@@ -4,7 +4,7 @@ import {
 } from "./dualsenseHid";
 import Ipc from "./ipc";
 
-type ChiakiRumbleEvent = {
+type PeasyoRumbleEvent = {
   left?: number;
   right?: number;
   peakLeft?: number;
@@ -211,7 +211,7 @@ const playViaHapticActuators = (gamepad: Gamepad, magnitude: number, duration: n
   return played;
 };
 
-export const triggerGamepadRumbleFromChiaki = (
+export const triggerGamepadRumbleFromPeasyo = (
   event: unknown,
   settings?: GamepadRumbleSettings
 ) => {
@@ -224,7 +224,7 @@ export const triggerGamepadRumbleFromChiaki = (
     return false;
   }
 
-  const rumble = (event || {}) as ChiakiRumbleEvent;
+  const rumble = (event || {}) as PeasyoRumbleEvent;
   const intensityGain = resolveRumbleIntensityGain(settings);
   const strongMagnitude = tuneRumbleMagnitude(
     toRumbleMagnitude(rumble.left, rumble.peakLeft),
@@ -308,7 +308,7 @@ export const triggerGamepadRumbleFromChiaki = (
   return played;
 };
 
-export const triggerNativeGamepadRumbleFromChiaki = async (
+export const triggerNativeGamepadRumbleFromPeasyo = async (
   event: unknown,
   settings?: GamepadRumbleSettings
 ) => {
@@ -316,7 +316,7 @@ export const triggerNativeGamepadRumbleFromChiaki = async (
     return false;
   }
 
-  const rumble = (event || {}) as ChiakiRumbleEvent;
+  const rumble = (event || {}) as PeasyoRumbleEvent;
   const intensityGain = resolveRumbleIntensityGain(settings);
   const high = scaleNativeRumbleMagnitude(
     toRumbleMagnitude(rumble.left, rumble.peakLeft),

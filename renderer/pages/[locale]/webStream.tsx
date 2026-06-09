@@ -28,17 +28,17 @@ import {
   subscribeDualSenseHidChanges,
   syncDualSenseHidGamepads,
 } from "../../lib/dualsenseHid";
-import { handleGamepadLedColorFromChiaki } from "../../lib/gamepadLedColor";
+import { handleGamepadLedColorFromPeasyo } from "../../lib/gamepadLedColor";
 import {
   canUseDualSenseGamepadHaptics,
-  triggerGamepadHapticsFromChiaki,
+  triggerGamepadHapticsFromPeasyo,
 } from "../../lib/gamepadHaptics";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import {
-  triggerGamepadRumbleFromChiaki,
-  triggerNativeGamepadRumbleFromChiaki,
+  triggerGamepadRumbleFromPeasyo,
+  triggerNativeGamepadRumbleFromPeasyo,
 } from "../../lib/gamepadRumble";
-import { handleGamepadTriggerEffectsFromChiaki } from "../../lib/gamepadTriggerEffects";
+import { handleGamepadTriggerEffectsFromPeasyo } from "../../lib/gamepadTriggerEffects";
 import Ipc from "../../lib/ipc";
 import {
   FSR_FRAGMENT_SHADER_SOURCE,
@@ -3082,7 +3082,7 @@ function StreamPage() {
         HAPTIC_PACKET_HEADER_BYTES
       );
       const hapticFrameSeq = headerView.getUint32(0, true);
-      const played = triggerGamepadHapticsFromChiaki(
+      const played = triggerGamepadHapticsFromPeasyo(
         {
           data: hapticPacketBytes.subarray(HAPTIC_PACKET_HEADER_BYTES),
           hapticFrameSeq,
@@ -4009,19 +4009,19 @@ function StreamPage() {
                   ) {
                     // Haptic frame already sent through DS5 HID path.
                   } else if (controllerInputKernelRef.current === "node") {
-                    void triggerNativeGamepadRumbleFromChiaki(sessionEvent, {
+                    void triggerNativeGamepadRumbleFromPeasyo(sessionEvent, {
                       enabled: rumbleEnabledRef.current,
                       intensity: rumbleIntensityRef.current,
                     });
                   } else {
-                    triggerGamepadRumbleFromChiaki(sessionEvent, {
+                    triggerGamepadRumbleFromPeasyo(sessionEvent, {
                       enabled: rumbleEnabledRef.current,
                       intensity: rumbleIntensityRef.current,
                     });
                   }
                 } else if (eventName === "haptic_audio") {
                   if (controllerInputKernelRef.current === "web" && hapticEnabledRef.current) {
-                    const played = triggerGamepadHapticsFromChiaki(sessionEvent, {
+                    const played = triggerGamepadHapticsFromPeasyo(sessionEvent, {
                       enabled: true,
                       gain: hapticIntensityRef.current,
                     });
@@ -4036,9 +4036,9 @@ function StreamPage() {
                     }
                   }
                 } else if (eventName === "trigger_effects") {
-                  handleGamepadTriggerEffectsFromChiaki(sessionEvent);
+                  handleGamepadTriggerEffectsFromPeasyo(sessionEvent);
                 } else if (eventName === "led_color") {
-                  handleGamepadLedColorFromChiaki(sessionEvent);
+                  handleGamepadLedColorFromPeasyo(sessionEvent);
                 } else if (eventName === "connected") {
                   sessionConnectedRef.current = true;
                   setConnectState("connected");

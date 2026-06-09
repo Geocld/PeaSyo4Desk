@@ -4277,11 +4277,6 @@ chalk@4.1.2, chalk@^4.0.0, chalk@^4.1.0, chalk@^4.1.2:
     ansi-styles "^4.1.0"
     supports-color "^7.1.0"
 
-chiaki-lib@1.0.1:
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/chiaki-lib/-/chiaki-lib-1.0.1.tgz#39f8da9869f29b5962ff6d2cf17ff8c9113c5c61"
-  integrity sha512-8MjZ9ZN18fpKFUkXcWYJ99S1whEBX7EuHlFLZ3zV0yC26TX2f8J7QyCdwx9BtalAhMnLEKgu4KViUxhnjYZAiw==
-
 chokidar@^3.6.0:
   version "3.6.0"
   resolved "https://registry.yarnpkg.com/chokidar/-/chokidar-3.6.0.tgz#197c6cc669ef2a8dc5e7b4d97ee4e092c3eb0d5b"
@@ -6600,6 +6595,11 @@ path-to-regexp@~0.1.12:
   version "0.1.12"
   resolved "https://registry.yarnpkg.com/path-to-regexp/-/path-to-regexp-0.1.12.tgz#d5e1a12e478a976d432ef3c58d534b9923164bb7"
   integrity sha512-RA1GjUVMnvYFxuqovrEqZoxxW5NUZqbwKtYz/Tt7nXerk0LbLblQmrsgdeOxV5SFHf0UDggjS/bSeOZwt1pmEQ==
+
+peasyo-lib@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/peasyo-lib/-/peasyo-lib-1.0.0.tgz#4df82148a112b0dd1afd3d449f458339d83d790f"
+  integrity sha512-O77XyZD99GoVt19RdtyeFFhPR/84BlGtHPlVl83pzReKb+F+vI0IXOLh5pMPpPRjQJu+VucaqJqOSPzlW/JI0w==
 
 peasyo-sdl-lib@1.0.2:
   version "1.0.2"

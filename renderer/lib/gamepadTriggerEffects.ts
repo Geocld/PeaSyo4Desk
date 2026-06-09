@@ -1,14 +1,14 @@
-import { applyDualSenseTriggerEffectsFromChiaki } from "./dualsenseHid";
+import { applyDualSenseTriggerEffectsFromPeasyo } from "./dualsenseHid";
 
-type ChiakiTriggerEffectsEvent = {
+type PeasyoTriggerEffectsEvent = {
   typeLeft?: number;
   typeRight?: number;
   left?: Uint8Array;
   right?: Uint8Array;
 };
 
-export const handleGamepadTriggerEffectsFromChiaki = (event: unknown) => {
-  const payload = (event || {}) as ChiakiTriggerEffectsEvent;
-  applyDualSenseTriggerEffectsFromChiaki(payload);
+export const handleGamepadTriggerEffectsFromPeasyo = (event: unknown) => {
+  const payload = (event || {}) as PeasyoTriggerEffectsEvent;
+  applyDualSenseTriggerEffectsFromPeasyo(payload);
   return payload;
 };

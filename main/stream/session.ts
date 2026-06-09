@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
-import chiaki from "peasyo-lib";
+import peasyo from "peasyo-lib";
 import {
   createNodeGamepadDriver,
   type ControllerStateSnapshot as NodeControllerStateSnapshot,
@@ -39,7 +39,7 @@ const HDR_STREAM_FORMAT: "I010" | "P010" = "I010";
 const SDR_PIXEL_FORMAT: "yuv420p" | "nv12" = IS_LINUX ? "yuv420p" : "nv12";
 const HDR_PIXEL_FORMAT: "p010le" | "yuv420p10le" = "yuv420p10le";
 
-const BUTTONS = (chiaki as any).controllerButtons || {
+const BUTTONS = (peasyo as any).controllerButtons || {
   CROSS: 1 << 0,
   MOON: 1 << 1,
   BOX: 1 << 2,
@@ -57,7 +57,7 @@ const BUTTONS = (chiaki as any).controllerButtons || {
   TOUCHPAD: 1 << 14,
   PS: 1 << 15,
 };
-const ANALOG_BUTTONS = (chiaki as any).controllerAnalogButtons || {
+const ANALOG_BUTTONS = (peasyo as any).controllerAnalogButtons || {
   L2: 1 << 16,
   R2: 1 << 17,
 };
@@ -695,8 +695,8 @@ const ensureInitialized = () => {
   ffmpeg.setFfmpegPath(nextFfmpegPath);
   log("using ffmpeg binary:", nextFfmpegPath);
 
-  if (typeof (chiaki as any).init === "function") {
-    (chiaki as any).init();
+  if (typeof (peasyo as any).init === "function") {
+    (peasyo as any).init();
   }
 
   initialized = true;
@@ -736,9 +736,9 @@ const ensureBitrateForMode = (
 };
 
 const codecName = (codec: number) => {
-  if (codec === (chiaki as any).codecs.H265) return "H265";
-  if (codec === (chiaki as any).codecs.H265_HDR) return "H265_HDR";
-  if (codec === (chiaki as any).codecs.H264) return "H264";
+  if (codec === (peasyo as any).codecs.H265) return "H265";
+  if (codec === (peasyo as any).codecs.H265_HDR) return "H265_HDR";
+  if (codec === (peasyo as any).codecs.H264) return "H264";
   return String(codec);
 };
 
@@ -749,22 +749,22 @@ const resolveCodec = (codec: string | number | undefined) => {
 
   const raw = String(codec || "H265").toUpperCase();
   if (raw.includes("264")) {
-    return (chiaki as any).codecs.H264;
+    return (peasyo as any).codecs.H264;
   }
   if (raw.includes("HDR")) {
-    return (chiaki as any).codecs.H265_HDR;
+    return (peasyo as any).codecs.H265_HDR;
   }
-  return (chiaki as any).codecs.H265;
+  return (peasyo as any).codecs.H265;
 };
 
 const resolvePlatformCodec = (codec: number) => {
-  if (IS_LINUX && codec === (chiaki as any).codecs.H265_HDR) {
-    return (chiaki as any).codecs.H265;
+  if (IS_LINUX && codec === (peasyo as any).codecs.H265_HDR) {
+    return (peasyo as any).codecs.H265;
   }
   return codec;
 };
 
-const CHIAKI_PS5_TARGET_FLOOR = 1000000;
+const PEASYO_PS5_TARGET_FLOOR = 1000000;
 
 const inferPs5FlagFromText = (value: unknown) => {
   const normalized = String(value || "").trim().toUpperCase();
@@ -799,7 +799,7 @@ const resolveSessionPs5Flag = (
 
   const numericTarget = Number(consoleInfo.target);
   if (Number.isFinite(numericTarget) && numericTarget > 0) {
-    return numericTarget >= CHIAKI_PS5_TARGET_FLOOR;
+    return numericTarget >= PEASYO_PS5_TARGET_FLOOR;
   }
 
   if (typeof consoleInfo.isPs5 === "boolean") {
@@ -823,10 +823,10 @@ const resolveSessionPs5Flag = (
 };
 
 const resolveInputFormat = (codec: number) => {
-  if (codec === (chiaki as any).codecs.H265 || codec === (chiaki as any).codecs.H265_HDR) {
+  if (codec === (peasyo as any).codecs.H265 || codec === (peasyo as any).codecs.H265_HDR) {
     return "hevc";
   }
-  if (codec === (chiaki as any).codecs.H264) {
+  if (codec === (peasyo as any).codecs.H264) {
     return "h264";
   }
   return "h264";
@@ -1313,7 +1313,7 @@ const resolveOutputFormat = (
   width: number,
   height: number
 ): VideoOutputFormat => {
-  const isHdr = codec === (chiaki as any).codecs.H265_HDR;
+  const isHdr = codec === (peasyo as any).codecs.H265_HDR;
   return {
     format: isHdr ? HDR_STREAM_FORMAT : SDR_STREAM_FORMAT,
     outputPixelFormat: isHdr ? HDR_PIXEL_FORMAT : SDR_PIXEL_FORMAT,
@@ -3298,7 +3298,7 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
 };
 
 const createSession = (sessionOptions: any) => {
-  streamSession = new (chiaki as any).Session(sessionOptions, {
+  streamSession = new (peasyo as any).Session(sessionOptions, {
     onEvent: (event) => {
       const eventName = String(event?.name || "unknown");
       if (eventName === "connected" || eventName === "quit") {
@@ -3344,7 +3344,7 @@ const createSession = (sessionOptions: any) => {
       }
     },
     onLog: () => {
-      // console.log(`[chiaki:${event.levelChar}]`, event.message);
+      // console.log(`[peasyo:${event.levelChar}]`, event.message);
     },
     onVideoSample: (sample) => {
       const sampleFramesLost = Number(sample?.framesLost);
@@ -3377,7 +3377,7 @@ const prepareRemoteSessionIfNeeded = async (sessionOptions: any) => {
     return sessionOptions;
   }
 
-  const remote = (chiaki as any).remote;
+  const remote = (peasyo as any).remote;
   if (!remote || typeof remote.prepareSession !== "function") {
     throw new Error("peasyo-lib remote.prepareSession is required for automatic remote connection.");
   }

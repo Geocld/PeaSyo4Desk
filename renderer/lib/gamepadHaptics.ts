@@ -3,7 +3,7 @@ import {
   supportsDualSenseHidHapticsForActiveDevices,
 } from "./dualsenseHid";
 
-type ChiakiHapticAudioEvent = {
+type PeasyoHapticAudioEvent = {
   dataBase64?: string;
   data?: unknown;
   hapticFrameSeq?: number;
@@ -92,7 +92,7 @@ const decodeBase64ToBytes = (base64: string) => {
   }
 };
 
-const normalizeHapticPcm = (event: ChiakiHapticAudioEvent) => {
+const normalizeHapticPcm = (event: PeasyoHapticAudioEvent) => {
   if (typeof event?.dataBase64 === "string" && event.dataBase64.length > 0) {
     const decoded = decodeBase64ToBytes(event.dataBase64);
     if (decoded && decoded.byteLength >= 4) {
@@ -108,7 +108,7 @@ const normalizeHapticPcm = (event: ChiakiHapticAudioEvent) => {
   return null;
 };
 
-export const triggerGamepadHapticsFromChiaki = (
+export const triggerGamepadHapticsFromPeasyo = (
   event: unknown,
   settings?: GamepadHapticsSettings
 ) => {
@@ -116,7 +116,7 @@ export const triggerGamepadHapticsFromChiaki = (
     return false;
   }
 
-  const payload = (event || {}) as ChiakiHapticAudioEvent;
+  const payload = (event || {}) as PeasyoHapticAudioEvent;
   const pcmBytes = normalizeHapticPcm(payload);
   if (!pcmBytes) {
     return false;

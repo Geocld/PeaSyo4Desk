@@ -6,7 +6,7 @@ import dns from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import chiaki from "peasyo-lib";
+import peasyo from "peasyo-lib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { NativeGamepadTestService } from "../gamepad/nativeTestService";
 import { StreamSessionManager } from "../stream/serviceManager";
@@ -18,10 +18,10 @@ const DDP_MODEL = "w";
 const DDP_APP_TYPE = "r";
 const DDP_VERSION = "00030010";
 const DEFAULT_WAKEUP_CREDENTIAL = "4077903901";
-const CHIAKI_DISCOVERY_TIMEOUT_MS = 3000;
-const CHIAKI_REGIST_TIMEOUT_MS = 90000;
-const CHIAKI_PS4_TARGET = 1000;
-const CHIAKI_PS5_TARGET = 1000100;
+const PEASYO_DISCOVERY_TIMEOUT_MS = 3000;
+const PEASYO_REGIST_TIMEOUT_MS = 90000;
+const PEASYO_PS4_TARGET = 1000;
+const PEASYO_PS5_TARGET = 1000100;
 const PSN_LOGIN_USERS_STORE_KEY = "psn-login-users";
 const PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY = "psn-login-current-user-key";
 const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
@@ -30,7 +30,7 @@ const TRANSFER_FILE_PREFIX = "peasyo_export_";
 const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
 const PSN_TOKEN_REFRESH_GRACE_MS = 60_000;
 
-let chiakiInitialized = false;
+let peasyoInitialized = false;
 
 const isPersistableConsoleCache = (value: unknown) => {
   return (
@@ -419,19 +419,19 @@ type RegisterConsoleFailure = {
   logs?: string[];
 };
 
-const ensureChiakiInitialized = () => {
-  if (chiakiInitialized) {
+const ensurePeasyoInitialized = () => {
+  if (peasyoInitialized) {
     return;
   }
 
-  if (typeof (chiaki as any).init === "function") {
-    (chiaki as any).init();
+  if (typeof (peasyo as any).init === "function") {
+    (peasyo as any).init();
   }
 
-  chiakiInitialized = true;
+  peasyoInitialized = true;
 };
 
-const stopChiakiHandle = (handle: any) => {
+const stopPeasyoHandle = (handle: any) => {
   if (!handle) {
     return;
   }
@@ -449,7 +449,7 @@ const stopChiakiHandle = (handle: any) => {
   }
 };
 
-const getChiakiUserCredential = (rpRegistKey: string | undefined) => {
+const getPeasyoUserCredential = (rpRegistKey: string | undefined) => {
   const normalizedKey = String(rpRegistKey || "")
     .replace(/\0+$/g, "")
     .trim();
@@ -593,9 +593,9 @@ const normalizeRegisterFailure = (
   return createRegisterFailure(fallbackCode, fallbackMessage, logs);
 };
 
-const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
+const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
   new Promise<DiscoveryHost[]>((resolve, reject) => {
-    ensureChiakiInitialized();
+    ensurePeasyoInitialized();
 
     let discovery: any = null;
     let timeout: NodeJS.Timeout | undefined;
@@ -612,7 +612,7 @@ const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
         clearTimeout(timeout);
       }
 
-      stopChiakiHandle(discovery);
+      stopPeasyoHandle(discovery);
 
       if (error) {
         reject(error);
@@ -623,7 +623,7 @@ const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
     };
 
     try {
-      discovery = new (chiaki as any).Discovery(
+      discovery = new (peasyo as any).Discovery(
         {
           family: "ipv4",
         },
@@ -637,7 +637,7 @@ const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
           },
           onLog: (event: any) => {
             if (event?.message) {
-              console.log(`[chiaki:${event.levelChar || "?"}]`, event.message);
+              console.log(`[peasyo:${event.levelChar || "?"}]`, event.message);
             }
           },
         }
@@ -648,7 +648,7 @@ const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
 
       timeout = setTimeout(() => {
         complete(null);
-      }, Number(args.timeoutMs || CHIAKI_DISCOVERY_TIMEOUT_MS));
+      }, Number(args.timeoutMs || PEASYO_DISCOVERY_TIMEOUT_MS));
     } catch (error: any) {
       complete(
         error instanceof Error ? error : new Error(String(error || "Discovery failed."))
@@ -656,9 +656,9 @@ const discoverConsolesWithChiaki = (args: DiscoverConsolesArgs = {}) =>
     }
   });
 
-const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
+const registerConsoleWithPeasyo = (args: RegisterConsoleArgs) =>
   new Promise<RegisteredHost & { userCredential?: string }>((resolve, reject) => {
-    ensureChiakiInitialized();
+    ensurePeasyoInitialized();
 
     const host = String(args.host || "").trim();
     const pinText = String(args.pin || "").trim();
@@ -703,7 +703,7 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
         clearTimeout(timeout);
       }
 
-      stopChiakiHandle(regist);
+      stopPeasyoHandle(regist);
 
       if (error) {
         reject(normalizeRegisterFailure(error, registerLogs));
@@ -714,9 +714,9 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
     };
 
     try {
-      regist = new (chiaki as any).Regist(
+      regist = new (peasyo as any).Regist(
         {
-          target: args.ps5 ? CHIAKI_PS5_TARGET : CHIAKI_PS4_TARGET,
+          target: args.ps5 ? PEASYO_PS5_TARGET : PEASYO_PS4_TARGET,
           host,
           pin,
           broadcast: !!args.broadcast,
@@ -729,7 +729,7 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
               const registeredHost = (event?.host || {}) as RegisteredHost;
               complete(null, {
                 ...registeredHost,
-                userCredential: getChiakiUserCredential(registeredHost.rpRegistKey),
+                userCredential: getPeasyoUserCredential(registeredHost.rpRegistKey),
               });
               return;
             }
@@ -752,7 +752,7 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
           onLog: (event: any) => {
             if (event?.message) {
               pushRegisterLog(registerLogs, String(event.message));
-              console.log(`[chiaki:${event.levelChar || "?"}]`, event.message);
+              console.log(`[peasyo:${event.levelChar || "?"}]`, event.message);
             }
           },
         }
@@ -765,12 +765,12 @@ const registerConsoleWithChiaki = (args: RegisterConsoleArgs) =>
           createRegisterFailure(
             "REGIST_TIMEOUT",
             `Host registration timed out after ${
-              Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS) / 1000
+              Number(args.timeoutMs || PEASYO_REGIST_TIMEOUT_MS) / 1000
             } seconds.`,
             registerLogs
           )
         );
-      }, Number(args.timeoutMs || CHIAKI_REGIST_TIMEOUT_MS));
+      }, Number(args.timeoutMs || PEASYO_REGIST_TIMEOUT_MS));
     } catch (error: any) {
       complete(error);
     }
@@ -1141,11 +1141,11 @@ export default class IpcApp extends IpcBase {
   }
 
   discoverConsoles(data: DiscoverConsolesArgs = {}) {
-    return discoverConsolesWithChiaki(data);
+    return discoverConsolesWithPeasyo(data);
   }
 
   registerConsole(data: RegisterConsoleArgs) {
-    return registerConsoleWithChiaki(data);
+    return registerConsoleWithPeasyo(data);
   }
 
   async remoteAutoRegisterConsole(data: RemoteRegisterConsoleArgs = {}) {
@@ -1162,7 +1162,7 @@ export default class IpcApp extends IpcBase {
       throw new Error("PSN OAuth login is required for automatic remote registration.");
     }
 
-    ensureChiakiInitialized();
+    ensurePeasyoInitialized();
 
     const sendProgress = (payload: Record<string, unknown>) => {
       const webContents = this._application._mainWindow?.webContents;
@@ -1178,7 +1178,7 @@ export default class IpcApp extends IpcBase {
 
     sendProgress({ type: "progress", stage: "holepunchInit", progress: 15 });
 
-    const result = await (chiaki as any).remote.autoRegist({
+    const result = await (peasyo as any).remote.autoRegist({
       accessToken,
       psnAccountId,
       nickName: consoleName,
