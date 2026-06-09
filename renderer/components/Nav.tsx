@@ -65,7 +65,9 @@ const getCurrentSection = (
   if (
     pathname.endsWith("/settings") ||
     pathname.endsWith("/map") ||
+    pathname.endsWith("/nativeMap") ||
     pathname.endsWith("/test") ||
+    pathname.endsWith("/nativeTest") ||
     pathname.endsWith("/transfer")
   ) {
     return "settings";
@@ -77,7 +79,9 @@ const getCurrentSection = (
 const isSettingsSubpage = (pathname: string) => {
   return (
     pathname.endsWith("/map") ||
+    pathname.endsWith("/nativeMap") ||
     pathname.endsWith("/test") ||
+    pathname.endsWith("/nativeTest") ||
     pathname.endsWith("/transfer")
   );
 };

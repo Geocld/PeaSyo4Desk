@@ -139,6 +139,7 @@ type StreamSessionSettings = {
   remote_codec?: string;
   remote_fps?: number;
   gamepad_kernel?: unknown;
+  native_gamepad_maping?: unknown;
 };
 
 type ClientVideoCapabilities = {
@@ -1633,7 +1634,7 @@ const stopNodeGamepadDriver = () => {
   resetNodeControllerState(nodeControllerState);
 };
 
-const startNodeGamepadDriver = () => {
+const startNodeGamepadDriver = (settings: StreamSessionSettings | null | undefined) => {
   if (controllerKernel !== "node") {
     stopNodeGamepadDriver();
     return;
@@ -1650,6 +1651,7 @@ const startNodeGamepadDriver = () => {
       onLog: (message) => {
         log(message);
       },
+      buttonMapping: settings?.native_gamepad_maping,
     });
   }
 
@@ -1663,7 +1665,7 @@ const startNodeGamepadDriver = () => {
 const configureControllerKernel = (settings: StreamSessionSettings | null | undefined) => {
   controllerKernel = resolveControllerKernel(settings);
   if (controllerKernel === "node") {
-    startNodeGamepadDriver();
+    startNodeGamepadDriver(settings);
   } else {
     stopNodeGamepadDriver();
   }

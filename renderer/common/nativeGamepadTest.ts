@@ -38,6 +38,7 @@ export const NATIVE_GAMEPAD_TEST_BUTTON_NAMES = [
   "rightStick",
   "leftShoulder",
   "rightShoulder",
+  "touchpad",
   "paddle1",
   "paddle2",
   "paddle3",
@@ -66,6 +67,7 @@ export const NATIVE_GAMEPAD_TEST_BUTTON_LABELS: Record<
   rightStick: "R3",
   leftShoulder: "L1",
   rightShoulder: "R1",
+  touchpad: "Touchpad",
   paddle1: "Paddle 1",
   paddle2: "Paddle 2",
   paddle3: "Paddle 3",
@@ -103,6 +105,7 @@ export const createEmptyNativeGamepadButtons = (): NativeGamepadTestButtons => (
   rightStick: false,
   leftShoulder: false,
   rightShoulder: false,
+  touchpad: false,
   paddle1: false,
   paddle2: false,
   paddle3: false,
@@ -153,4 +156,3 @@ export type NativeGamepadTestSnapshot = {
   activeDeviceId: string | null;
   controllers: NativeGamepadTestControllerSnapshot[];
 };
-

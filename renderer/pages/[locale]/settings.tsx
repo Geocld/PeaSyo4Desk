@@ -239,13 +239,10 @@ function SettingsPage() {
         if (item.action === "open-feedback") {
           return shouldShowFeedbackEntry;
         }
-        if (item.action === "open-map") {
-          return isWebGamepadKernel;
-        }
         return true;
       }
     ),
-    [settingsMetas, shouldShowFeedbackEntry, isWebGamepadKernel]
+    [settingsMetas, shouldShowFeedbackEntry]
   );
 
   const syncDraft = (nextDraft: BasicStreamDraft) => {
@@ -486,7 +483,7 @@ function SettingsPage() {
     switch (item.action) {
       case "open-map":
         router.push({
-          pathname: `/${locale}/map`,
+          pathname: `/${locale}/${isWebGamepadKernel ? "map" : "nativeMap"}`,
         });
         return;
       case "open-test":

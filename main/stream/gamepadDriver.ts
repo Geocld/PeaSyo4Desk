@@ -64,6 +64,7 @@ type NodeGamepadDriverOptions = {
   onStateChange: (state: ControllerStateSnapshot) => void;
   onError?: (error: Error) => void;
   onLog?: (message: string) => void;
+  buttonMapping?: unknown;
 };
 
 type MutableControllerState = ControllerStateSnapshot;
@@ -163,115 +164,6 @@ const isTriggerPressed = (value: unknown) => {
   return numeric >= TRIGGER_DIGITAL_PRESS_STATE;
 };
 
-const normalizeInputToken = (value: unknown) => {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-};
-
-const BUTTON_TOKEN_TO_MASK: Record<string, number> = {
-  "0": CONTROLLER_BUTTONS.CROSS,
-  "1": CONTROLLER_BUTTONS.MOON,
-  "2": CONTROLLER_BUTTONS.BOX,
-  "3": CONTROLLER_BUTTONS.PYRAMID,
-  "4": CONTROLLER_BUTTONS.L1,
-  "5": CONTROLLER_BUTTONS.R1,
-  "6": CONTROLLER_ANALOG_BUTTONS.L2,
-  "7": CONTROLLER_ANALOG_BUTTONS.R2,
-  "8": CONTROLLER_BUTTONS.SHARE,
-  "9": CONTROLLER_BUTTONS.OPTIONS,
-  "10": CONTROLLER_BUTTONS.L3,
-  "11": CONTROLLER_BUTTONS.R3,
-  "12": CONTROLLER_BUTTONS.DPAD_UP,
-  "13": CONTROLLER_BUTTONS.DPAD_DOWN,
-  "14": CONTROLLER_BUTTONS.DPAD_LEFT,
-  "15": CONTROLLER_BUTTONS.DPAD_RIGHT,
-  "16": CONTROLLER_BUTTONS.PS,
-  a: CONTROLLER_BUTTONS.CROSS,
-  b: CONTROLLER_BUTTONS.MOON,
-  x: CONTROLLER_BUTTONS.BOX,
-  y: CONTROLLER_BUTTONS.PYRAMID,
-  cross: CONTROLLER_BUTTONS.CROSS,
-  circle: CONTROLLER_BUTTONS.MOON,
-  square: CONTROLLER_BUTTONS.BOX,
-  triangle: CONTROLLER_BUTTONS.PYRAMID,
-  south: CONTROLLER_BUTTONS.CROSS,
-  east: CONTROLLER_BUTTONS.MOON,
-  west: CONTROLLER_BUTTONS.BOX,
-  north: CONTROLLER_BUTTONS.PYRAMID,
-  leftshoulder: CONTROLLER_BUTTONS.L1,
-  leftbumper: CONTROLLER_BUTTONS.L1,
-  lb: CONTROLLER_BUTTONS.L1,
-  l1: CONTROLLER_BUTTONS.L1,
-  rightshoulder: CONTROLLER_BUTTONS.R1,
-  rightbumper: CONTROLLER_BUTTONS.R1,
-  rb: CONTROLLER_BUTTONS.R1,
-  r1: CONTROLLER_BUTTONS.R1,
-  back: CONTROLLER_BUTTONS.SHARE,
-  share: CONTROLLER_BUTTONS.SHARE,
-  view: CONTROLLER_BUTTONS.SHARE,
-  select: CONTROLLER_BUTTONS.SHARE,
-  start: CONTROLLER_BUTTONS.OPTIONS,
-  options: CONTROLLER_BUTTONS.OPTIONS,
-  menu: CONTROLLER_BUTTONS.OPTIONS,
-  leftstick: CONTROLLER_BUTTONS.L3,
-  leftthumb: CONTROLLER_BUTTONS.L3,
-  l3: CONTROLLER_BUTTONS.L3,
-  rightstick: CONTROLLER_BUTTONS.R3,
-  rightthumb: CONTROLLER_BUTTONS.R3,
-  r3: CONTROLLER_BUTTONS.R3,
-  dpadup: CONTROLLER_BUTTONS.DPAD_UP,
-  dpup: CONTROLLER_BUTTONS.DPAD_UP,
-  up: CONTROLLER_BUTTONS.DPAD_UP,
-  dpaddown: CONTROLLER_BUTTONS.DPAD_DOWN,
-  dpdown: CONTROLLER_BUTTONS.DPAD_DOWN,
-  down: CONTROLLER_BUTTONS.DPAD_DOWN,
-  dpadleft: CONTROLLER_BUTTONS.DPAD_LEFT,
-  dpleft: CONTROLLER_BUTTONS.DPAD_LEFT,
-  left: CONTROLLER_BUTTONS.DPAD_LEFT,
-  dpadright: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  dpright: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  right: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  guide: CONTROLLER_BUTTONS.PS,
-  nexus: CONTROLLER_BUTTONS.PS,
-  home: CONTROLLER_BUTTONS.PS,
-  ps: CONTROLLER_BUTTONS.PS,
-  touchpad: CONTROLLER_BUTTONS.TOUCHPAD,
-  misc1: CONTROLLER_BUTTONS.TOUCHPAD,
-  lefttrigger: CONTROLLER_ANALOG_BUTTONS.L2,
-  triggerleft: CONTROLLER_ANALOG_BUTTONS.L2,
-  lt: CONTROLLER_ANALOG_BUTTONS.L2,
-  l2: CONTROLLER_ANALOG_BUTTONS.L2,
-  righttrigger: CONTROLLER_ANALOG_BUTTONS.R2,
-  triggerright: CONTROLLER_ANALOG_BUTTONS.R2,
-  rt: CONTROLLER_ANALOG_BUTTONS.R2,
-  r2: CONTROLLER_ANALOG_BUTTONS.R2,
-};
-
-const AXIS_TOKEN_TO_NAME: Record<string, string> = {
-  "0": "leftX",
-  "1": "leftY",
-  "2": "rightX",
-  "3": "rightY",
-  "4": "leftTrigger",
-  "5": "rightTrigger",
-  leftstickx: "leftX",
-  leftsticky: "leftY",
-  rightstickx: "rightX",
-  rightsticky: "rightY",
-  leftx: "leftX",
-  lefty: "leftY",
-  rightx: "rightX",
-  righty: "rightY",
-  lefttrigger: "leftTrigger",
-  triggerleft: "leftTrigger",
-  righttrigger: "rightTrigger",
-  triggerright: "rightTrigger",
-  lt: "leftTrigger",
-  rt: "rightTrigger",
-};
-
 const DIGITAL_BUTTON_BINDING_NAMES = [
   "dpadLeft",
   "dpadRight",
@@ -288,31 +180,176 @@ const DIGITAL_BUTTON_BINDING_NAMES = [
   "rightStick",
   "leftShoulder",
   "rightShoulder",
+  "touchpad",
 ] as const;
 
 type DeviceDigitalButtonBindingName = (typeof DIGITAL_BUTTON_BINDING_NAMES)[number];
 
-const DIGITAL_BUTTON_BINDING_TO_MASK: Record<DeviceDigitalButtonBindingName, number> = {
-  dpadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
-  dpadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  dpadUp: CONTROLLER_BUTTONS.DPAD_UP,
-  dpadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
-  a: CONTROLLER_BUTTONS.CROSS,
-  b: CONTROLLER_BUTTONS.MOON,
-  x: CONTROLLER_BUTTONS.BOX,
-  y: CONTROLLER_BUTTONS.PYRAMID,
-  guide: CONTROLLER_BUTTONS.PS,
-  back: CONTROLLER_BUTTONS.SHARE,
-  start: CONTROLLER_BUTTONS.OPTIONS,
-  leftStick: CONTROLLER_BUTTONS.L3,
-  rightStick: CONTROLLER_BUTTONS.R3,
-  leftShoulder: CONTROLLER_BUTTONS.L1,
-  rightShoulder: CONTROLLER_BUTTONS.R1,
+const GAMEPAD_MAPPING_ACTIONS = [
+  "A",
+  "B",
+  "X",
+  "Y",
+  "DPadUp",
+  "DPadDown",
+  "DPadLeft",
+  "DPadRight",
+  "LeftShoulder",
+  "RightShoulder",
+  "LeftThumb",
+  "RightThumb",
+  "LeftTrigger",
+  "RightTrigger",
+  "Menu",
+  "View",
+  "Nexus",
+  "Touchpad",
+] as const;
+
+type GamepadMappingAction = (typeof GAMEPAD_MAPPING_ACTIONS)[number];
+
+type GamepadButtonMapping = Record<GamepadMappingAction, number>;
+
+type NativeButtonSource = {
+  pressed: boolean;
+  value: number;
 };
 
-const isPressed = (value: unknown) => {
-  if (typeof value === "boolean") return value;
-  return Number(value) > 0;
+const DEFAULT_GAMEPAD_BUTTON_MAPPING: GamepadButtonMapping = {
+  A: 0,
+  B: 1,
+  X: 2,
+  Y: 3,
+  DPadUp: 12,
+  DPadDown: 13,
+  DPadLeft: 14,
+  DPadRight: 15,
+  LeftShoulder: 4,
+  RightShoulder: 5,
+  LeftThumb: 10,
+  RightThumb: 11,
+  LeftTrigger: 6,
+  RightTrigger: 7,
+  Menu: 9,
+  View: 8,
+  Nexus: 16,
+  Touchpad: 17,
+};
+
+const GAMEPAD_MAPPING_ACTION_TO_MASK: Partial<Record<GamepadMappingAction, number>> = {
+  A: CONTROLLER_BUTTONS.CROSS,
+  B: CONTROLLER_BUTTONS.MOON,
+  X: CONTROLLER_BUTTONS.BOX,
+  Y: CONTROLLER_BUTTONS.PYRAMID,
+  DPadUp: CONTROLLER_BUTTONS.DPAD_UP,
+  DPadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
+  DPadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
+  DPadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
+  LeftShoulder: CONTROLLER_BUTTONS.L1,
+  RightShoulder: CONTROLLER_BUTTONS.R1,
+  LeftThumb: CONTROLLER_BUTTONS.L3,
+  RightThumb: CONTROLLER_BUTTONS.R3,
+  Menu: CONTROLLER_BUTTONS.OPTIONS,
+  View: CONTROLLER_BUTTONS.SHARE,
+  Nexus: CONTROLLER_BUTTONS.PS,
+  Touchpad: CONTROLLER_BUTTONS.TOUCHPAD,
+};
+
+const normalizeGamepadButtonMapping = (value: unknown): GamepadButtonMapping => {
+  const nextMapping: GamepadButtonMapping = { ...DEFAULT_GAMEPAD_BUTTON_MAPPING };
+
+  if (value && typeof value === "object") {
+    const raw = value as Record<string, unknown>;
+    for (const action of GAMEPAD_MAPPING_ACTIONS) {
+      const nextValue = Number(raw[action]);
+      if (Number.isFinite(nextValue)) {
+        const normalizedValue = Math.trunc(nextValue);
+        if (normalizedValue === -1 || normalizedValue >= 0) {
+          nextMapping[action] = normalizedValue;
+        }
+      }
+    }
+  }
+
+  const usedButtons = new Set<number>();
+  for (const action of GAMEPAD_MAPPING_ACTIONS) {
+    const buttonIndex = nextMapping[action];
+    if (buttonIndex < 0) {
+      continue;
+    }
+
+    if (usedButtons.has(buttonIndex)) {
+      nextMapping[action] = -1;
+      continue;
+    }
+
+    usedButtons.add(buttonIndex);
+  }
+
+  return nextMapping;
+};
+
+const DIGITAL_BUTTON_BINDING_TO_INDEX: Record<DeviceDigitalButtonBindingName, number> = {
+  dpadLeft: 14,
+  dpadRight: 15,
+  dpadUp: 12,
+  dpadDown: 13,
+  a: 0,
+  b: 1,
+  x: 2,
+  y: 3,
+  guide: 16,
+  back: 8,
+  start: 9,
+  leftStick: 10,
+  rightStick: 11,
+  leftShoulder: 4,
+  rightShoulder: 5,
+  touchpad: 17,
+};
+
+const toButtonSourceValue = (value: unknown) => {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 0;
+  }
+
+  if (numeric <= 1) {
+    return numeric;
+  }
+
+  return Math.min(1, numeric / 255);
+};
+
+const setNativeButtonSource = (
+  sources: Record<number, NativeButtonSource>,
+  index: number,
+  value: unknown
+) => {
+  const sourceValue = toButtonSourceValue(value);
+  sources[index] = {
+    pressed: sourceValue > 0,
+    value: sourceValue,
+  };
+};
+
+const setNativeTriggerButtonSource = (
+  sources: Record<number, NativeButtonSource>,
+  index: number,
+  triggerState: number,
+  buttonValue: unknown
+) => {
+  const triggerValue = Math.max(0, Math.min(1, triggerState / 255));
+  const buttonSourceValue = isTriggerPressed(buttonValue) ? 1 : toButtonSourceValue(buttonValue);
+  const sourceValue = Math.max(triggerValue, buttonSourceValue);
+  sources[index] = {
+    pressed: sourceValue > TRIGGER_DEADZONE,
+    value: sourceValue,
+  };
 };
 
 const getAxisValue = (axes: Record<string, unknown>, keys: string[]) => {
@@ -331,6 +368,45 @@ const getButtonValue = (buttons: Record<string, unknown>, keys: string[]) => {
     }
   }
   return false;
+};
+
+const buildNativeButtonSources = (
+  buttons: Record<string, unknown>,
+  l2State: number,
+  r2State: number
+) => {
+  const sources: Record<number, NativeButtonSource> = {};
+
+  setNativeButtonSource(sources, 0, getButtonValue(buttons, ["a", "cross", "0"]));
+  setNativeButtonSource(sources, 1, getButtonValue(buttons, ["b", "circle", "1"]));
+  setNativeButtonSource(sources, 2, getButtonValue(buttons, ["x", "square", "2"]));
+  setNativeButtonSource(sources, 3, getButtonValue(buttons, ["y", "triangle", "3"]));
+  setNativeButtonSource(sources, 4, getButtonValue(buttons, ["leftShoulder", "leftBumper", "l1", "4"]));
+  setNativeButtonSource(sources, 5, getButtonValue(buttons, ["rightShoulder", "rightBumper", "r1", "5"]));
+  setNativeTriggerButtonSource(
+    sources,
+    6,
+    l2State,
+    getButtonValue(buttons, ["leftTriggerButton", "leftTrigger", "6"])
+  );
+  setNativeTriggerButtonSource(
+    sources,
+    7,
+    r2State,
+    getButtonValue(buttons, ["rightTriggerButton", "rightTrigger", "7"])
+  );
+  setNativeButtonSource(sources, 8, getButtonValue(buttons, ["back", "share", "view", "8"]));
+  setNativeButtonSource(sources, 9, getButtonValue(buttons, ["start", "menu", "options", "9"]));
+  setNativeButtonSource(sources, 10, getButtonValue(buttons, ["leftStick", "leftThumb", "l3", "10"]));
+  setNativeButtonSource(sources, 11, getButtonValue(buttons, ["rightStick", "rightThumb", "r3", "11"]));
+  setNativeButtonSource(sources, 12, getButtonValue(buttons, ["dpadUp", "up", "12"]));
+  setNativeButtonSource(sources, 13, getButtonValue(buttons, ["dpadDown", "down", "13"]));
+  setNativeButtonSource(sources, 14, getButtonValue(buttons, ["dpadLeft", "left", "14"]));
+  setNativeButtonSource(sources, 15, getButtonValue(buttons, ["dpadRight", "right", "15"]));
+  setNativeButtonSource(sources, 16, getButtonValue(buttons, ["guide", "ps", "home", "16"]));
+  setNativeButtonSource(sources, 17, getButtonValue(buttons, ["touchpad", "misc1", "17"]));
+
+  return sources;
 };
 
 const resolveDeviceId = (device: any) => {
@@ -387,6 +463,7 @@ const createDeviceDigitalButtonBindings = (mapping: unknown): DeviceDigitalButto
   rightStick: parseDigitalButtonBinding(mapping, "rightStick"),
   leftShoulder: parseDigitalButtonBinding(mapping, "leftShoulder"),
   rightShoulder: parseDigitalButtonBinding(mapping, "rightShoulder"),
+  touchpad: parseDigitalButtonBinding(mapping, "touchpad"),
 });
 
 const resetDeviceTriggerNormalizers = (
@@ -418,6 +495,7 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
   const onStateChange = options.onStateChange;
   const onError = options.onError;
   const onLog = options.onLog;
+  const userButtonMapping = normalizeGamepadButtonMapping(options.buttonMapping);
 
   let started = false;
   let sdl: any = null;
@@ -470,92 +548,8 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     return toTriggerState(controllerValue, normalizer);
   };
 
-  const setButtonState = (state: MutableControllerState, token: string, pressed: boolean) => {
-    const mask = BUTTON_TOKEN_TO_MASK[token];
-    if (!mask) {
-      return false;
-    }
-
-    if (pressed) {
-      state.buttons |= mask;
-    } else {
-      state.buttons &= ~mask;
-    }
-
-    if (mask === CONTROLLER_ANALOG_BUTTONS.L2) {
-      state.l2State = pressed ? 255 : 0;
-    } else if (mask === CONTROLLER_ANALOG_BUTTONS.R2) {
-      state.r2State = pressed ? 255 : 0;
-    }
-
-    return true;
-  };
-
-  const setAxisState = (
-    state: MutableControllerState,
-    axisToken: string,
-    rawValue: unknown,
-    joystick: any,
-    triggerBindings: DeviceTriggerBindings,
-    triggerNormalizers: DeviceTriggerNormalizers
-  ) => {
-    const axisName = AXIS_TOKEN_TO_NAME[axisToken];
-    if (!axisName) {
-      return false;
-    }
-
-    if (axisName === "leftX") {
-      state.leftX = toSignedAxisValue(rawValue);
-      return true;
-    }
-    if (axisName === "leftY") {
-      state.leftY = toSignedAxisValue(rawValue);
-      return true;
-    }
-    if (axisName === "rightX") {
-      state.rightX = toSignedAxisValue(rawValue);
-      return true;
-    }
-    if (axisName === "rightY") {
-      state.rightY = toSignedAxisValue(rawValue);
-      return true;
-    }
-
-    const triggerValue =
-      axisName === "leftTrigger"
-        ? resolveTriggerState(
-            rawValue,
-            joystick,
-            triggerBindings.leftTrigger,
-            triggerNormalizers.leftTrigger
-          )
-        : resolveTriggerState(
-            rawValue,
-            joystick,
-            triggerBindings.rightTrigger,
-            triggerNormalizers.rightTrigger
-          );
-    if (axisName === "leftTrigger") {
-      state.l2State = triggerValue;
-      if (triggerValue > 0) {
-        state.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
-      } else {
-        state.buttons &= ~CONTROLLER_ANALOG_BUTTONS.L2;
-      }
-      return true;
-    }
-
-    state.r2State = triggerValue;
-    if (triggerValue > 0) {
-      state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
-    } else {
-      state.buttons &= ~CONTROLLER_ANALOG_BUTTONS.R2;
-    }
-    return true;
-  };
-
-  const applyJoystickDigitalButtonBindings = (
-    state: MutableControllerState,
+  const applyJoystickDigitalButtonSources = (
+    sources: Record<number, NativeButtonSource>,
     joystick: any,
     digitalButtonBindings: DeviceDigitalButtonBindings
   ) => {
@@ -572,11 +566,44 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
         continue;
       }
 
-      const mask = DIGITAL_BUTTON_BINDING_TO_MASK[buttonName];
-      if (pressed) {
+      setNativeButtonSource(sources, DIGITAL_BUTTON_BINDING_TO_INDEX[buttonName], pressed);
+    }
+  };
+
+  const applyUserButtonMapping = (
+    state: MutableControllerState,
+    sources: Record<number, NativeButtonSource>
+  ) => {
+    state.buttons = 0;
+    state.l2State = 0;
+    state.r2State = 0;
+
+    for (const action of GAMEPAD_MAPPING_ACTIONS) {
+      const sourceIndex = userButtonMapping[action];
+      if (sourceIndex < 0) {
+        continue;
+      }
+
+      const source = sources[sourceIndex];
+      if (!source?.pressed) {
+        continue;
+      }
+
+      if (action === "LeftTrigger") {
+        state.l2State = Math.max(state.l2State, Math.round(source.value * 255));
+        state.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
+        continue;
+      }
+
+      if (action === "RightTrigger") {
+        state.r2State = Math.max(state.r2State, Math.round(source.value * 255));
+        state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
+        continue;
+      }
+
+      const mask = GAMEPAD_MAPPING_ACTION_TO_MASK[action];
+      if (mask) {
         state.buttons |= mask;
-      } else {
-        state.buttons &= ~mask;
       }
     }
   };
@@ -661,75 +688,13 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       triggerBindings.rightTrigger,
       triggerNormalizers.rightTrigger
     );
-    if (state.l2State > 0) {
-      state.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
-    }
-    if (state.r2State > 0) {
-      state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
-    }
-
-    if (isPressed(getButtonValue(buttons, ["a", "cross", "0"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.CROSS;
-    }
-    if (isPressed(getButtonValue(buttons, ["b", "circle", "1"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.MOON;
-    }
-    if (isPressed(getButtonValue(buttons, ["x", "square", "2"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.BOX;
-    }
-    if (isPressed(getButtonValue(buttons, ["y", "triangle", "3"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.PYRAMID;
-    }
-    if (isPressed(getButtonValue(buttons, ["leftShoulder", "leftBumper", "l1", "4"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.L1;
-    }
-    if (isPressed(getButtonValue(buttons, ["rightShoulder", "rightBumper", "r1", "5"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.R1;
-    }
-    if (isPressed(getButtonValue(buttons, ["back", "share", "view", "8"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.SHARE;
-    }
-    if (isPressed(getButtonValue(buttons, ["start", "menu", "options", "9"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.OPTIONS;
-    }
-    if (isPressed(getButtonValue(buttons, ["leftStick", "leftThumb", "l3", "10"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.L3;
-    }
-    if (isPressed(getButtonValue(buttons, ["rightStick", "rightThumb", "r3", "11"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.R3;
-    }
-    if (isPressed(getButtonValue(buttons, ["dpadUp", "up", "12"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.DPAD_UP;
-    }
-    if (isPressed(getButtonValue(buttons, ["dpadDown", "down", "13"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.DPAD_DOWN;
-    }
-    if (isPressed(getButtonValue(buttons, ["dpadLeft", "left", "14"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.DPAD_LEFT;
-    }
-    if (isPressed(getButtonValue(buttons, ["dpadRight", "right", "15"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.DPAD_RIGHT;
-    }
-    if (isPressed(getButtonValue(buttons, ["guide", "ps", "home", "16"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.PS;
-    }
-    if (isPressed(getButtonValue(buttons, ["touchpad", "misc1", "17"]))) {
-      state.buttons |= CONTROLLER_BUTTONS.TOUCHPAD;
-    }
-
-    if (isTriggerPressed(getButtonValue(buttons, ["leftTriggerButton", "leftTrigger", "6"]))) {
-      state.l2State = Math.max(state.l2State, 255);
-      state.buttons |= CONTROLLER_ANALOG_BUTTONS.L2;
-    }
-    if (isTriggerPressed(getButtonValue(buttons, ["rightTriggerButton", "rightTrigger", "7"]))) {
-      state.r2State = Math.max(state.r2State, 255);
-      state.buttons |= CONTROLLER_ANALOG_BUTTONS.R2;
-    }
 
     // Rebuild mapped digital buttons from the raw joystick sidecar when
     // available. This avoids relying solely on controller button edge events,
     // which can miss D-Pad hat transitions on some SDL backends.
-    applyJoystickDigitalButtonBindings(state, joystick, digitalButtonBindings);
+    const nativeButtonSources = buildNativeButtonSources(buttons, state.l2State, state.r2State);
+    applyJoystickDigitalButtonSources(nativeButtonSources, joystick, digitalButtonBindings);
+    applyUserButtonMapping(state, nativeButtonSources);
   };
 
   const closeController = (deviceId: string) => {
@@ -810,75 +775,59 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
       }
       emitActiveDeviceState();
 
-      controller.on("axisMotion", (event: any) => {
+      controller.on("axisMotion", () => {
         const state = deviceStates.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
         const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
-        const updated = setAxisState(
-          state,
-          normalizeInputToken(event?.axis),
-          event?.value,
+        syncStateFromControllerInstance(
+          controller,
           joystick,
+          state,
           triggerBindings,
-          triggerNormalizers
+          triggerNormalizers,
+          digitalButtonBindings
         );
-        if (!updated) {
-          syncStateFromControllerInstance(
-            controller,
-            joystick,
-            state,
-            triggerBindings,
-            triggerNormalizers,
-            digitalButtonBindings
-          );
-        }
         activeDeviceId = deviceId;
         emitState(state);
       });
 
-      controller.on("buttonDown", (event: any) => {
+      controller.on("buttonDown", () => {
         const state = deviceStates.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
         const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
-        const updated = setButtonState(state, normalizeInputToken(event?.button), true);
-        if (!updated) {
-          syncStateFromControllerInstance(
-            controller,
-            joystick,
-            state,
-            triggerBindings,
-            triggerNormalizers,
-            digitalButtonBindings
-          );
-        }
+        syncStateFromControllerInstance(
+          controller,
+          joystick,
+          state,
+          triggerBindings,
+          triggerNormalizers,
+          digitalButtonBindings
+        );
         activeDeviceId = deviceId;
         emitState(state);
       });
 
-      controller.on("buttonUp", (event: any) => {
+      controller.on("buttonUp", () => {
         const state = deviceStates.get(deviceId);
         const joystick = joystickInstances.get(deviceId) ?? null;
         const triggerBindings = deviceTriggerBindings.get(deviceId);
         const triggerNormalizers = deviceTriggerNormalizers.get(deviceId);
         const digitalButtonBindings = deviceDigitalButtonBindings.get(deviceId);
         if (!state || !triggerBindings || !triggerNormalizers || !digitalButtonBindings) return;
-        const updated = setButtonState(state, normalizeInputToken(event?.button), false);
-        if (!updated) {
-          syncStateFromControllerInstance(
-            controller,
-            joystick,
-            state,
-            triggerBindings,
-            triggerNormalizers,
-            digitalButtonBindings
-          );
-        }
+        syncStateFromControllerInstance(
+          controller,
+          joystick,
+          state,
+          triggerBindings,
+          triggerNormalizers,
+          digitalButtonBindings
+        );
         activeDeviceId = deviceId;
         emitState(state);
       });

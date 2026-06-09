@@ -62,5 +62,20 @@ export const normalizeGamepadButtonMapping = (value: unknown): GamepadButtonMapp
     }
   }
 
+  const usedButtons = new Set<number>();
+  for (const action of GAMEPAD_MAPPING_ACTIONS) {
+    const buttonIndex = nextMapping[action];
+    if (buttonIndex < 0) {
+      continue;
+    }
+
+    if (usedButtons.has(buttonIndex)) {
+      nextMapping[action] = -1;
+      continue;
+    }
+
+    usedButtons.add(buttonIndex);
+  }
+
   return nextMapping;
 };
