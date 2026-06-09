@@ -53,5 +53,15 @@
   "Current FSR sharpness": "當前 FSR 銳化強度",
   "Reset": "重置",
   "Confirm": "確定",
+  "holepunchInit": "正在初始化遠端連線",
+  "holepunchWebSocketOpen": "正在連線 PSN 訊號服務",
+  "holepunchClientJoined": "用戶端已加入遠端連線",
+  "holepunchOfferSent": "正在傳送連線請求",
+  "holepunchCustomDataReceived": "已接收主機連線資訊",
+  "holepunchCtrlOfferReceived": "已接收控制連線資訊",
+  "holepunchCtrlEstablished": "控制連線已建立",
+  "holepunchDataOfferReceived": "已接收資料連線資訊",
+  "holepunchDataEstablished": "遠端連線已建立",
+  "psnTokenExpired": "PSN 登入已過期，請重新登入",
   "Touchpad opacity": "觸控板透明度"
 }

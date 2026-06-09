@@ -151,6 +151,11 @@ function Home() {
     setSelectedConsole(null);
   };
 
+  const handleRemoteLoginRequired = () => {
+    handleCloseStartStreamModal();
+    setShowLoginModal(true);
+  };
+
   const handleConsoleUpdated = (updatedConsole: ConsoleCacheItem) => {
     setConsoles((prevConsoles) => {
       const nextConsoles = upsertConsoleCache(prevConsoles, updatedConsole);
@@ -240,6 +245,7 @@ function Home() {
     consoleInfo: ConsoleCacheItem;
     streamHost: string;
     isRemote: boolean;
+    autoRemote?: boolean;
     wakeBeforeConnect: boolean;
   }) => {
     const pendingConfig = {
@@ -305,6 +311,7 @@ function Home() {
         consoleItem={selectedConsole}
         onClose={handleCloseStartStreamModal}
         onConsoleUpdated={handleConsoleUpdated}
+        onLoginRequired={handleRemoteLoginRequired}
         onStartPrepared={handleStartPrepared}
       />
       <Modal isOpen={showEditHostModal} onClose={handleCloseEditHostModal} size="lg">

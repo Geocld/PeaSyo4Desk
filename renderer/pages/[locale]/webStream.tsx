@@ -201,6 +201,7 @@ const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAc
 type PendingStreamConfig = {
   streamHost?: string;
   isRemote?: boolean;
+  autoRemote?: boolean;
   consoleInfo?: {
     apName?: string;
     host?: string;
@@ -461,7 +462,24 @@ const NON_ERROR_SESSION_EVENT_NAMES = new Set([
   "haptic_intensity",
   "trigger_intensity",
   "haptic_audio",
+  "remote_progress",
 ]);
+
+const formatProgressStatus = (
+  t: (key: string, options?: Record<string, any>) => string,
+  stage: unknown,
+  progress: unknown
+) => {
+  const stageKey = typeof stage === "string" ? stage : "";
+  if (stageKey === "psnTokenExpired") {
+    return t("psnTokenExpired");
+  }
+  const text = stageKey ? t(stageKey) : t("Connecting...");
+  const numericProgress = Number(progress);
+  return Number.isFinite(numericProgress) && numericProgress >= 0
+    ? `${text} ${Math.round(numericProgress)}%`
+    : text;
+};
 
 const buildSessionEventErrorMessage = (
   event: any,
@@ -3792,6 +3810,8 @@ function StreamPage() {
     let active = true;
 
     const start = async () => {
+      let rawStreamListener: any = null;
+      let streamProgressListener: any = null;
       try {
         disconnectingRef.current = false;
         connectedToastShownRef.current = false;
@@ -3869,6 +3889,13 @@ function StreamPage() {
 
         setStatus(t("Connecting..."));
         setConnectState("starting");
+        streamProgressListener = Ipc.onRaw?.("stream-progress", (_event, message) => {
+          if (!active || message?.type !== "remote_progress") {
+            return;
+          }
+          setConnectState("starting");
+          setStatus(formatProgressStatus(t, message.stage, message.progress));
+        });
         const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
           () => null
         );
@@ -3889,6 +3916,7 @@ function StreamPage() {
         const serverInfo: any = await Ipc.send("app", "startStreamSession", {
           streamHost,
           isRemote: !!pendingConfig?.isRemote,
+          autoRemote: !!pendingConfig?.autoRemote,
           consoleInfo: pendingConfig?.consoleInfo || {},
           loginInfo: currentLoginInfo || undefined,
           sessionType: "webcodec",
@@ -3902,7 +3930,12 @@ function StreamPage() {
               }
             : {}),
         });
-        if (!active) return;
+        if (!active) {
+          if (streamProgressListener) {
+            Ipc.removeListener("stream-progress", streamProgressListener);
+          }
+          return;
+        }
 
         const prefersNativeBinary = serverInfo?.binaryTransport === "electron-ipc";
         nativeBinaryTransportRef.current = false;
@@ -3912,7 +3945,7 @@ function StreamPage() {
         wsUrlRef.current = url;
         setStatus(t("Connecting..."));
 
-        const rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
+        rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
           if (!active || !prefersNativeBinary) {
             return;
           }
@@ -4011,6 +4044,9 @@ function StreamPage() {
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   showConnectedToastThenEnableAudio();
+                } else if (eventName === "holepunch" && sessionEvent?.finished) {
+                  setConnectState("starting");
+                  setStatus(formatProgressStatus(t, "holepunchDataEstablished", 100));
                 } else if (!NON_ERROR_SESSION_EVENT_NAMES.has(eventName)) {
                   openSessionAlert(
                     buildSessionEventErrorMessage(sessionEvent, t),
@@ -4019,6 +4055,9 @@ function StreamPage() {
                 } else if (typeof eventName === "string") {
                   updateSessionActivityStatus();
                 }
+              } else if (msg?.type === "remote_progress") {
+                setConnectState("starting");
+                setStatus(formatProgressStatus(t, msg.stage, msg.progress));
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
                   sessionConnectedRef.current = true;
@@ -4094,8 +4133,17 @@ function StreamPage() {
           if (rawStreamListener) {
             Ipc.removeListener("stream-binary", rawStreamListener);
           }
+          if (streamProgressListener) {
+            Ipc.removeListener("stream-progress", streamProgressListener);
+          }
         };
       } catch (error: any) {
+        if (rawStreamListener) {
+          Ipc.removeListener("stream-binary", rawStreamListener);
+        }
+        if (streamProgressListener) {
+          Ipc.removeListener("stream-progress", streamProgressListener);
+        }
         setStatus(
           t("StartSessionFailedWithReason", {
             reason: error?.message || String(error),

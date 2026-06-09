@@ -19,6 +19,8 @@ type ConsoleItem = {
   host?: string;
   remoteHost?: string;
   parsedRemoteHost?: string;
+  remoteDeviceUid?: string;
+  deviceUid?: string;
   rpRegistKey?: string;
   userCredential?: string | number;
   hostId?: string;
@@ -33,16 +35,18 @@ type StartStreamModalsProps = {
   consoleItem: ConsoleItem | null;
   onClose: () => void;
   onConsoleUpdated: (updatedConsole: ConsoleItem) => void;
+  onLoginRequired?: () => void;
   onStartPrepared: (payload: {
     consoleInfo: ConsoleItem;
     streamHost: string;
     isRemote: boolean;
+    autoRemote?: boolean;
     wakeBeforeConnect: boolean;
   }) => void;
 };
 
 type Step = "mode" | "remote";
-type LoadingType = "local" | "direct" | "wake" | null;
+type LoadingType = "local" | "auto" | "direct" | "wake" | null;
 
 type DiscoveredConsole = {
   id: string;
@@ -172,6 +176,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       consoleInfo: consoleInfo || props.consoleItem,
       streamHost,
       isRemote: false,
+      autoRemote: false,
       wakeBeforeConnect,
     });
   };
@@ -402,11 +407,56 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           },
           streamHost: resolved.preferredAddress,
           isRemote: true,
+          autoRemote: false,
           wakeBeforeConnect: false,
         });
       }
     } catch (error) {
       setErrorText(getErrorMessage(error, t("Failed to resolve host.")));
+      return;
+    } finally {
+      setLoadingType(null);
+    }
+
+    props.onClose();
+  };
+
+  const handleRemoteAutoConnect = async () => {
+    if (!props.consoleItem) {
+      return;
+    }
+
+    setErrorText("");
+    setInfoText("");
+    setLoadingType("auto");
+    try {
+      const streamHost =
+        props.consoleItem.parsedRemoteHost ||
+        props.consoleItem.remoteHost ||
+        props.consoleItem.host ||
+        "127.0.0.1";
+
+      console.log("[home] Remote auto connect prepared:", {
+        streamHost,
+        consoleId: props.consoleItem.consoleId,
+        serverNickname: props.consoleItem.serverNickname,
+      });
+
+      await Ipc.send("app", "refreshPsnLoginInfoForRemotePlay");
+
+      props.onStartPrepared({
+        consoleInfo: props.consoleItem,
+        streamHost,
+        isRemote: true,
+        autoRemote: true,
+        wakeBeforeConnect: false,
+      });
+    } catch (error) {
+      if (props.onLoginRequired) {
+        props.onLoginRequired();
+        return;
+      }
+      setErrorText(getErrorMessage(error, t("Failed to prepare remote stream.")));
       return;
     } finally {
       setLoadingType(null);
@@ -447,6 +497,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           },
           streamHost: resolved.preferredAddress,
           isRemote: true,
+          autoRemote: false,
           wakeBeforeConnect: true,
         });
       }
@@ -536,6 +587,13 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
                 isDisabled={loadingType !== null}
               >
                 {tCommon("Back")}
+              </Button>
+              <Button
+                variant="flat"
+                onPress={handleRemoteAutoConnect}
+                isLoading={loadingType === "auto"}
+              >
+                {t("Auto connect")}
               </Button>
               <Button
                 variant="flat"

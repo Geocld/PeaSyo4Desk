@@ -53,5 +53,15 @@
   "Current FSR sharpness": "Current FSR sharpness",
   "Reset": "Reset",
   "Confirm": "Confirm",
+  "holepunchInit": "Initializing remote connection",
+  "holepunchWebSocketOpen": "Connecting to PSN signaling",
+  "holepunchClientJoined": "Client joined remote session",
+  "holepunchOfferSent": "Sending connection offer",
+  "holepunchCustomDataReceived": "Console connection data received",
+  "holepunchCtrlOfferReceived": "Control connection offer received",
+  "holepunchCtrlEstablished": "Control connection established",
+  "holepunchDataOfferReceived": "Data connection offer received",
+  "holepunchDataEstablished": "Remote connection established",
+  "psnTokenExpired": "PSN login expired. Please sign in again",
   "Touchpad opacity": "Touchpad opacity"
 }

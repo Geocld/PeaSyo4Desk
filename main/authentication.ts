@@ -293,6 +293,43 @@ export default class Authentication {
     };
   }
 
+  async refreshAccessToken(refreshToken: string) {
+    const normalizedRefreshToken = String(refreshToken || "").trim();
+    if (!normalizedRefreshToken) {
+      throw new Error("PSN refreshToken is required.");
+    }
+
+    const body = new URLSearchParams({
+      refresh_token: normalizedRefreshToken,
+      grant_type: "refresh_token",
+      scope: AUTH_SCOPE,
+    }).toString();
+
+    const response = await axios.post(
+      "https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/token",
+      body,
+      {
+        auth: {
+          username: CLIENT_ID,
+          password: CLIENT_SECRET,
+        },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+
+    if (!response.data?.access_token) {
+      throw new Error("PSN token endpoint returned empty access token.");
+    }
+
+    return {
+      accessToken: response.data.access_token as string,
+      refreshToken: (response.data.refresh_token || normalizedRefreshToken) as string,
+      tokenExpiry: Date.now() + Number(response.data.expires_in || 0) * 1000,
+    };
+  }
+
   async getUserInfoFromToken(token: string) {
     const response = await axios.get(
       `https://auth.api.sonyentertainmentnetwork.com/2.0/oauth/token/${token}`,

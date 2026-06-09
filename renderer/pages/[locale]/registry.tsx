@@ -27,6 +27,7 @@ import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
 
 type ConsoleType = "ps5" | "ps4";
+type RegistryType = "local" | "remote";
 
 type DiscoveredConsole = {
   id: string;
@@ -107,6 +108,22 @@ const buildConsoleId = () => {
   return `console-${Date.now()}`;
 };
 
+const formatProgressStatus = (
+  t: (key: string, options?: Record<string, any>) => string,
+  stage: unknown,
+  progress: unknown
+) => {
+  const stageKey = typeof stage === "string" ? stage : "";
+  if (stageKey === "psnTokenExpired") {
+    return t("psnTokenExpired");
+  }
+  const text = stageKey ? t(stageKey) : t("PSNConnecting");
+  const numericProgress = Number(progress);
+  return Number.isFinite(numericProgress) && numericProgress >= 0
+    ? `${text} ${Math.round(numericProgress)}%`
+    : text;
+};
+
 const mapDiscoveredConsole = (item: any): DiscoveredConsole => {
   const host = String(item?.hostAddr || "").trim();
   const hostId = String(item?.hostId || "").trim();
@@ -131,6 +148,7 @@ function RegistryPage() {
 
   const [isLogined, setIsLogined] = useState(false);
   const [consoleType, setConsoleType] = useState<ConsoleType>("ps5");
+  const [registryType, setRegistryType] = useState<RegistryType>("local");
   const [consoles, setConsoles] = useState<DiscoveredConsole[]>([]);
   const [selectedConsoleId, setSelectedConsoleId] = useState("");
   const [hostInput, setHostInput] = useState("");
@@ -139,6 +157,7 @@ function RegistryPage() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [successText, setSuccessText] = useState("");
+  const [progressText, setProgressText] = useState("");
   const [loginInfo, setLoginInfo] = useState<PsnLoginInfo | null>(null);
 
   useEffect(() => {
@@ -165,6 +184,24 @@ function RegistryPage() {
       active = false;
     };
   }, [locale, router]);
+
+  useEffect(() => {
+    const listener = Ipc.onRaw?.("remote-registry-progress", (_event, message) => {
+      if (message?.type === "holepunchFinished") {
+        setProgressText(formatProgressStatus(t, "holepunchDataEstablished", 100));
+        return;
+      }
+      if (message?.type === "progress") {
+        setProgressText(formatProgressStatus(t, message.stage, message.progress));
+      }
+    });
+
+    return () => {
+      if (listener) {
+        Ipc.removeListener("remote-registry-progress", listener);
+      }
+    };
+  }, [t]);
 
   const refreshDiscoveredConsoles = async (type: ConsoleType = consoleType) => {
     const requestId = discoverRequestIdRef.current + 1;
@@ -235,7 +272,102 @@ function RegistryPage() {
     }
   };
 
+  const handleConsoleTypeChange = (value: ConsoleType) => {
+    setConsoleType(value);
+    if (value !== "ps5") {
+      setRegistryType("local");
+    }
+  };
+
+  const saveRegisteredConsole = async (
+    registeredConsole: ConsoleCacheItem,
+    host: string,
+    selectedConsole?: DiscoveredConsole
+  ) => {
+    const nextConsole = {
+      ...registeredConsole,
+      consoleId: selectedConsole?.id || buildConsoleId(),
+      host,
+      serverNickname:
+        registeredConsole.serverNickname || selectedConsole?.name || host || "PS5",
+      apName:
+        registeredConsole.apName ||
+        selectedConsole?.type ||
+        (consoleType === "ps5" ? "PS5" : "PS4"),
+      hostType: selectedConsole?.type,
+      hostId: selectedConsole?.hostId || selectedConsole?.id,
+      isPs5: selectedConsole?.isPs5 ?? consoleType === "ps5",
+      // @ts-ignore
+      target: registeredConsole.target || selectedConsole?.target,
+      stateName: selectedConsole?.stateName,
+      registedTime: Date.now(),
+    } satisfies ConsoleCacheItem;
+
+    const cachedConsoles = parseCachedConsoles(
+      await Ipc.send("app", "getCachedConsoles").catch(() => [])
+    );
+    const nextConsoles = upsertConsoleCache(cachedConsoles, nextConsole);
+    await Ipc.send("app", "setCachedConsoles", {
+      consoles: nextConsoles,
+    });
+  };
+
+  const handleRemoteRegisterHost = async () => {
+    if (consoleType !== "ps5") {
+      setErrorText(t("RemoteRegisterPs5Only"));
+      return;
+    }
+
+    if (!loginInfo || !hasLoginCredential(loginInfo)) {
+      setErrorText(t("Please login first."));
+      router.replace(`/${locale}/home`);
+      return;
+    }
+
+    const selectedConsole = consoles.find((item) => item.id === selectedConsoleId);
+    const consoleName = String(selectedConsole?.name || hostInput || "PS5").trim();
+
+    setIsRegistering(true);
+    setErrorText("");
+    setSuccessText("");
+    setProgressText(formatProgressStatus(t, "holepunchInit", 15));
+
+    try {
+      const result = await Ipc.send("app", "remoteAutoRegisterConsole", {
+        consoleName,
+        loginInfo,
+      });
+      const registeredConsole = (result || {}) as ConsoleCacheItem;
+      if (!registeredConsole.rpKey || !registeredConsole.rpRegistKey) {
+        throw new Error(t("Failed to register host."));
+      }
+
+      await saveRegisteredConsole(
+        registeredConsole,
+        selectedConsole?.host || hostInput.trim(),
+        selectedConsole
+      );
+
+      setSuccessText(t("Host registered successfully."));
+      router.push(`/${locale}/home`);
+    } catch (error: any) {
+      const code = String(error?.code || "").trim();
+      if (code === "PSN_TOKEN_INVALID" || error?.stage === "psnTokenExpired") {
+        setErrorText(t("RemoteRegisterLoginRequiredMessage"));
+      } else {
+        setErrorText(t("RemoteRegisterFailed"));
+      }
+    } finally {
+      setIsRegistering(false);
+      setProgressText("");
+    }
+  };
+
   const handleRegisterHost = async () => {
+    if (registryType === "remote") {
+      await handleRemoteRegisterHost();
+      return;
+    }
 
     const host = hostInput.trim();
     if (!host) {
@@ -263,6 +395,7 @@ function RegistryPage() {
     setIsRegistering(true);
     setErrorText("");
     setSuccessText("");
+    setProgressText("");
 
     try {
       const result = await Ipc.send("app", "registerConsole", {
@@ -279,32 +412,7 @@ function RegistryPage() {
       }
 
       const selectedConsole = consoles.find((item) => item.id === selectedConsoleId);
-      const nextConsole = {
-        ...registeredConsole,
-        consoleId: selectedConsole?.id || buildConsoleId(),
-        host,
-        serverNickname:
-          registeredConsole.serverNickname || selectedConsole?.name || host,
-        apName:
-          registeredConsole.apName ||
-          selectedConsole?.type ||
-          (consoleType === "ps5" ? "PS5" : "PS4"),
-        hostType: selectedConsole?.type,
-        hostId: selectedConsole?.hostId || selectedConsole?.id,
-        isPs5: selectedConsole?.isPs5 ?? consoleType === "ps5",
-        // @ts-ignore
-        target: registeredConsole.target || selectedConsole?.target,
-        stateName: selectedConsole?.stateName,
-        registedTime: Date.now(),
-      } satisfies ConsoleCacheItem;
-
-      const cachedConsoles = parseCachedConsoles(
-        await Ipc.send("app", "getCachedConsoles").catch(() => [])
-      );
-      const nextConsoles = upsertConsoleCache(cachedConsoles, nextConsole);
-      await Ipc.send("app", "setCachedConsoles", {
-        consoles: nextConsoles,
-      });
+      await saveRegisteredConsole(registeredConsole, host, selectedConsole);
 
       setSuccessText(t("Host registered successfully."));
       router.push(`/${locale}/home`);
@@ -354,7 +462,7 @@ function RegistryPage() {
                 <RadioGroup
                   orientation="horizontal"
                   value={consoleType}
-                  onValueChange={(value) => setConsoleType(value as ConsoleType)}
+                  onValueChange={(value) => handleConsoleTypeChange(value as ConsoleType)}
                 >
                   <Radio value="ps5">PS5</Radio>
                   <Radio value="ps4">PS4</Radio>
@@ -410,9 +518,22 @@ function RegistryPage() {
                 <div>
                   <p className="text-lg font-semibold">{t("Register host")}</p>
                   <p className="text-sm text-gray-500">
-                    {t("Registration will save rpKey and rpRegistKey to local cache for later streaming.")}
+                    {registryType === "remote"
+                      ? t("RemoteRegisterSummary")
+                      : t("Registration will save rpKey and rpRegistKey to local cache for later streaming.")}
                   </p>
                 </div>
+
+                <RadioGroup
+                  orientation="horizontal"
+                  value={registryType}
+                  onValueChange={(value) => setRegistryType(value as RegistryType)}
+                >
+                  <Radio value="local">{t("Local register")}</Radio>
+                  <Radio value="remote" isDisabled={consoleType !== "ps5"}>
+                    {t("Remote register")}
+                  </Radio>
+                </RadioGroup>
 
                 {errorText ? (
                   <p className="text-danger text-sm break-all">{errorText}</p>
@@ -422,23 +543,30 @@ function RegistryPage() {
                   <p className="text-success text-sm break-all">{successText}</p>
                 ) : null}
 
+                {progressText ? (
+                  <p className="text-primary text-sm break-all">{progressText}</p>
+                ) : null}
+
                 <Input
                   label={t("Host")}
                   labelPlacement="outside"
                   placeholder="192.168.1.100"
                   value={hostInput}
                   onValueChange={setHostInput}
+                  isDisabled={registryType === "remote"}
                 />
 
-                <Input
-                  label={t("Registration PIN")}
-                  labelPlacement="outside"
-                  placeholder="12345678"
-                  value={pinInput}
-                  onValueChange={(value) => {
-                    setPinInput(value.replace(/\D/g, "").slice(0, 8));
-                  }}
-                />
+                {registryType === "local" ? (
+                  <Input
+                    label={t("Registration PIN")}
+                    labelPlacement="outside"
+                    placeholder="12345678"
+                    value={pinInput}
+                    onValueChange={(value) => {
+                      setPinInput(value.replace(/\D/g, "").slice(0, 8));
+                    }}
+                  />
+                ) : null}
               </CardBody>
               <Divider />
               <CardFooter className="flex items-center justify-end gap-3">

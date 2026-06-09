@@ -6,7 +6,7 @@ import dns from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import chiaki from "chiaki-lib";
+import chiaki from "peasyo-lib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { NativeGamepadTestService } from "../gamepad/nativeTestService";
 import { StreamSessionManager } from "../stream/serviceManager";
@@ -28,6 +28,7 @@ const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
 const TRANSFER_SECRET_KEY = "pEa3yo";
 const TRANSFER_FILE_PREFIX = "peasyo_export_";
 const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
+const PSN_TOKEN_REFRESH_GRACE_MS = 60_000;
 
 let chiakiInitialized = false;
 
@@ -389,6 +390,11 @@ type RegisterConsoleArgs = {
   psnAccountId: string;
   psnOnlineId?: string;
   timeoutMs?: number;
+};
+
+type RemoteRegisterConsoleArgs = {
+  consoleName?: string;
+  loginInfo?: PsnLoginInfo;
 };
 
 type RegisteredHost = {
@@ -983,6 +989,13 @@ export default class IpcApp extends IpcBase {
     return Promise.resolve(getCurrentStoredLoginInfo(this._application._store));
   }
 
+  async refreshPsnLoginInfoForRemotePlay() {
+    const streamData = await this.refreshPsnLoginInfoBeforeStream({
+      autoRemote: true,
+    });
+    return streamData.loginInfo || getCurrentStoredLoginInfo(this._application._store);
+  }
+
   getCachedPsnLoginUsers() {
     return Promise.resolve(
       readStoredLoginUsersState(this._application._store).users
@@ -1135,6 +1148,54 @@ export default class IpcApp extends IpcBase {
     return registerConsoleWithChiaki(data);
   }
 
+  async remoteAutoRegisterConsole(data: RemoteRegisterConsoleArgs = {}) {
+    const refreshed = await this.refreshPsnLoginInfoBeforeStream({
+      autoRemote: true,
+      loginInfo: isPersistableLoginInfo(data.loginInfo) ? data.loginInfo : undefined,
+    });
+    const loginInfo = refreshed.loginInfo as PsnLoginInfo | undefined;
+    const accessToken = String(loginInfo?.accessToken || "").trim();
+    const psnAccountId = getPsnAccountId(loginInfo);
+    const consoleName = String(data.consoleName || "PS5").trim() || "PS5";
+
+    if (!accessToken || !psnAccountId) {
+      throw new Error("PSN OAuth login is required for automatic remote registration.");
+    }
+
+    ensureChiakiInitialized();
+
+    const sendProgress = (payload: Record<string, unknown>) => {
+      const webContents = this._application._mainWindow?.webContents;
+      if (!webContents || webContents.isDestroyed()) {
+        return;
+      }
+      try {
+        webContents.send("remote-registry-progress", payload);
+      } catch {
+        // ignore renderer progress send failures
+      }
+    };
+
+    sendProgress({ type: "progress", stage: "holepunchInit", progress: 15 });
+
+    const result = await (chiaki as any).remote.autoRegist({
+      accessToken,
+      psnAccountId,
+      nickName: consoleName,
+      onProgress: (event: any) => {
+        sendProgress({
+          type: "progress",
+          stage: typeof event?.stage === "string" ? event.stage : "",
+          progress: Number.isFinite(Number(event?.progress)) ? Number(event.progress) : undefined,
+          state: Number.isFinite(Number(event?.state)) ? Number(event.state) : undefined,
+        });
+      },
+    });
+
+    sendProgress({ type: "holepunchFinished", stage: "holepunchDataEstablished", progress: 100 });
+    return result;
+  }
+
   resolveHost(data: { host: string }) {
     return resolveHostInfo(data.host);
   }
@@ -1279,10 +1340,69 @@ export default class IpcApp extends IpcBase {
     return Promise.resolve(StreamSessionManager.triggerNativeGamepadRumble(data || {}));
   }
 
-  startStreamSession(data: any) {
+  async refreshPsnLoginInfoBeforeStream(data: any) {
+    const requireRemotePlayToken = !!data?.autoRemote;
+    const requestedLoginInfo = isPersistableLoginInfo(data?.loginInfo)
+      ? data.loginInfo
+      : null;
+    const loginInfo =
+      requestedLoginInfo || getCurrentStoredLoginInfo(this._application._store);
+
+    if (!loginInfo) {
+      if (requireRemotePlayToken) {
+        throw new Error("PSN OAuth login is required for automatic remote connection.");
+      }
+      return data;
+    }
+
+    const accessToken = String(loginInfo.accessToken || "").trim();
+    const refreshToken = String(loginInfo.refreshToken || "").trim();
+    if (!accessToken || !refreshToken) {
+      if (requireRemotePlayToken) {
+        throw new Error("PSN OAuth login is required for automatic remote connection.");
+      }
+      return {
+        ...data,
+        loginInfo,
+      };
+    }
+
+    const tokenExpiry = Number(loginInfo.tokenExpiry || 0);
+    if (tokenExpiry > Date.now() + PSN_TOKEN_REFRESH_GRACE_MS) {
+      return {
+        ...data,
+        loginInfo,
+      };
+    }
+
+    try {
+      const refreshedToken =
+        await this._application._authentication.refreshAccessToken(refreshToken);
+      const refreshedLoginInfo = upsertStoredLoginInfo(this._application._store, {
+        ...loginInfo,
+        ...refreshedToken,
+      });
+      return {
+        ...data,
+        loginInfo: refreshedLoginInfo,
+      };
+    } catch (error) {
+      if (requireRemotePlayToken) {
+        throw error;
+      }
+      console.warn("[app] best effort PSN token refresh before stream failed:", error);
+      return {
+        ...data,
+        loginInfo,
+      };
+    }
+  }
+
+  async startStreamSession(data: any) {
     const settings = this.getSettings();
+    const streamData = await this.refreshPsnLoginInfoBeforeStream(data);
     return StreamSessionManager.startSession({
-      ...data,
+      ...streamData,
       settings,
       targetWebContents: this._application._mainWindow?.webContents || null,
     });

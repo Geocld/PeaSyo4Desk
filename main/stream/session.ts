@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import type { WebContents } from "electron";
 import ffmpeg from "fluent-ffmpeg";
 import WS from "ws";
-import chiaki from "chiaki-lib";
+import chiaki from "peasyo-lib";
 import {
   createNodeGamepadDriver,
   type ControllerStateSnapshot as NodeControllerStateSnapshot,
@@ -139,6 +139,7 @@ type StartStreamSessionArgs = {
   streamHost?: string;
   host?: string;
   isRemote?: boolean;
+  autoRemote?: boolean;
   loginInfo?: Record<string, any>;
   settings?: StreamSessionSettings;
   ps5?: boolean;
@@ -162,6 +163,8 @@ type StartStreamSessionArgs = {
     hostType?: string;
     isPs5?: boolean;
     serverNickname?: string;
+    remoteDeviceUid?: string;
+    deviceUid?: string;
     target?: number;
   };
 };
@@ -621,6 +624,31 @@ const resolvePsnAccountId = (loginInfo: Record<string, any> | undefined) => {
   return String(
     loginInfo?.userInfo?.account_id ||
     loginInfo?.account_id ||
+    ""
+  ).trim();
+};
+
+const resolvePsnAccessToken = (loginInfo: Record<string, any> | undefined) => {
+  return String(
+    loginInfo?.accessToken ||
+    loginInfo?.access_token ||
+    loginInfo?.userInfo?.accessToken ||
+    loginInfo?.userInfo?.access_token ||
+    ""
+  ).trim();
+};
+
+const resolveRemoteDeviceUid = (consoleInfo: Record<string, any>) => {
+  const uid = String(consoleInfo.remoteDeviceUid || consoleInfo.deviceUid || "").trim();
+  return /^[0-9a-fA-F]{64}$/.test(uid) ? uid : "";
+};
+
+const resolveRemoteNickname = (consoleInfo: Record<string, any>) => {
+  return String(
+    consoleInfo.serverNickname ||
+    consoleInfo.nickname ||
+    consoleInfo.nickName ||
+    consoleInfo.apName ||
     ""
   ).trim();
 };
@@ -1730,6 +1758,18 @@ const sendWsText = (client: any, payload: unknown) => {
 const broadcastText = (payload: unknown) => {
   for (const client of wsClients) {
     sendWsText(client, payload);
+  }
+};
+
+const sendStreamProgress = (payload: unknown) => {
+  broadcastText(payload);
+  if (!streamWebContents || streamWebContents.isDestroyed()) {
+    return;
+  }
+  try {
+    streamWebContents.send("stream-progress", payload);
+  } catch {
+    // ignore renderer progress send failures
   }
 };
 
@@ -3207,7 +3247,14 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     profileResolution.height
   );
   const psnAccountId = resolvePsnAccountId(args.loginInfo);
+  const psnAccessToken = resolvePsnAccessToken(args.loginInfo);
   const ps5 = resolveSessionPs5Flag(args.ps5, consoleInfo);
+  const autoRemote = !!args.autoRemote;
+  if (autoRemote && !psnAccessToken) {
+    throw new Error("PSN accessToken is required for automatic remote connection.");
+  }
+  const remoteDeviceUid = resolveRemoteDeviceUid(consoleInfo);
+  const remoteNickname = resolveRemoteNickname(consoleInfo);
 
   streamVideoConfig = {
     width: profileResolution.width,
@@ -3231,6 +3278,14 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     registKey,
     morning,
     ...(psnAccountId ? { psnAccountId } : {}),
+    ...(autoRemote
+      ? {
+          autoRemote: true,
+          accessToken: psnAccessToken,
+          ...(remoteDeviceUid ? { remoteDeviceUid } : {}),
+          ...(remoteNickname ? { nickName: remoteNickname } : {}),
+        }
+      : {}),
     videoProfile: {
       width: streamVideoConfig.width,
       height: streamVideoConfig.height,
@@ -3251,6 +3306,16 @@ const createSession = (sessionOptions: any) => {
           name: eventName,
           reason: String(event?.reasonName || event?.reason || ""),
         });
+      }
+
+      if (eventName === "remote_progress") {
+        sendStreamProgress({
+          type: "remote_progress",
+          stage: typeof event?.stage === "string" ? event.stage : "",
+          progress: Number.isFinite(Number(event?.progress)) ? Number(event.progress) : undefined,
+          state: Number.isFinite(Number(event?.state)) ? Number(event.state) : undefined,
+        });
+        return;
       }
 
       if (eventName === "rumble") {
@@ -3305,6 +3370,45 @@ const createSession = (sessionOptions: any) => {
       dispatchHapticsFrameAsRumble(frame, frameSeq);
     },
   });
+};
+
+const prepareRemoteSessionIfNeeded = async (sessionOptions: any) => {
+  if (!sessionOptions?.autoRemote) {
+    return sessionOptions;
+  }
+
+  const remote = (chiaki as any).remote;
+  if (!remote || typeof remote.prepareSession !== "function") {
+    throw new Error("peasyo-lib remote.prepareSession is required for automatic remote connection.");
+  }
+
+  const onProgress = (event: any) => {
+    sendStreamProgress({
+      type: "remote_progress",
+      stage: typeof event?.stage === "string" ? event.stage : "",
+      progress: Number.isFinite(Number(event?.progress)) ? Number(event.progress) : undefined,
+      state: Number.isFinite(Number(event?.state)) ? Number(event.state) : undefined,
+    });
+  };
+
+  onProgress({ stage: "holepunchInit", progress: 15, state: 0 });
+  const startedAt = performance.now();
+  log("auto remote prepare started");
+  const preparedRemote = await remote.prepareSession({
+    accessToken: sessionOptions.accessToken,
+    ...(sessionOptions.remoteDeviceUid ? { remoteDeviceUid: sessionOptions.remoteDeviceUid } : {}),
+    ...(sessionOptions.deviceUid ? { deviceUid: sessionOptions.deviceUid } : {}),
+    ...(sessionOptions.nickName ? { nickName: sessionOptions.nickName } : {}),
+    ...(sessionOptions.nickname ? { nickname: sessionOptions.nickname } : {}),
+    onProgress,
+  });
+  log(`auto remote prepare finished in ${Math.round(performance.now() - startedAt)}ms`);
+
+  return {
+    ...sessionOptions,
+    autoRemote: false,
+    preparedRemote,
+  };
 };
 
 const getPerformanceStats = (): StreamPerformanceStats => {
@@ -3439,7 +3543,8 @@ const startSession = async (args: StartStreamSessionArgs) => {
     nativeBinaryAvailable: canUseNativeStreamBinary(),
   });
   createVideoDecodePipeline();
-  createSession(sessionOptions);
+  const preparedSessionOptions = await prepareRemoteSessionIfNeeded(sessionOptions);
+  createSession(preparedSessionOptions);
 
   streamSession.start();
   streamSessionStarted = true;
