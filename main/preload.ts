@@ -73,6 +73,14 @@ export const Preload = {
         ipcRenderer.send("stream-video-rendered", sampleId)
     },
 
+    sendStreamKeyboardCommand(command){
+        ipcRenderer.send("stream-keyboard-command", command)
+    },
+
+    sendStreamLoginPin(pin){
+        ipcRenderer.send("stream-login-pin", pin)
+    },
+
     removeListener(channel:string, listener){
         ipcRenderer.removeListener(channel, listener)
     },

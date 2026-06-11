@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { useTranslation } from "next-i18next";
-import { addToast } from "@heroui/react";
+import {
+  addToast,
+  Button,
+  Input,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  Textarea,
+} from "@heroui/react";
 import ActionBar from "../../components/ActionBar";
 import Alert from "../../components/Alert";
 import Loading from "../../components/Loading";
@@ -243,6 +253,7 @@ const NON_ERROR_SESSION_EVENT_NAMES = new Set([
   "connected",
   "holepunch",
   "nickname_received",
+  "login_pin_request",
   "keyboard_open",
   "keyboard_text_change",
   "keyboard_remote_close",
@@ -289,14 +300,6 @@ const buildSessionEventErrorMessage = (
       lines.push(`${t("DetailLabel")}: ${String(sessionEvent.reasonText)}`);
     }
     return lines.join("\n");
-  }
-
-  if (name === "login_pin_request") {
-    return [
-      `${t("EventLabel")}: ${name}`,
-      `${t("PinIncorrectLabel")}: ${String(!!sessionEvent.pinIncorrect)}`,
-      t("LoginPinRequestNotHandled"),
-    ].join("\n");
   }
 
   return JSON.stringify(sessionEvent, null, 2);
@@ -610,6 +613,103 @@ const toFsrShaderSharpness = (sharpness: number) => {
   return normalized * 0.1;
 };
 
+const RemoteKeyboardModal = ({
+  show,
+  text,
+  onTextChange,
+  onAccept,
+  onReject,
+}: {
+  show: boolean;
+  text: string;
+  onTextChange: (text: string) => void;
+  onAccept: (text: string) => void;
+  onReject: () => void;
+}) => {
+  const { t } = useTranslation("stream");
+
+  return (
+    <Modal isOpen={show} hideCloseButton placement="center">
+      <ModalContent>
+        <>
+          <ModalBody>
+            <Textarea
+              autoFocus
+              minRows={3}
+              value={text}
+              label={t("Text")}
+              onValueChange={onTextChange}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onReject}>
+              {t("Exit remote keyboard")}
+            </Button>
+            <Button color="primary" onPress={() => onAccept(text)}>
+              {t("Confirm")}
+            </Button>
+          </ModalFooter>
+        </>
+      </ModalContent>
+    </Modal>
+  );
+};
+
+const LoginPinModal = ({
+  show,
+  pin,
+  pinIncorrect,
+  onPinChange,
+  onConfirm,
+  onCancel,
+}: {
+  show: boolean;
+  pin: string;
+  pinIncorrect: boolean;
+  onPinChange: (pin: string) => void;
+  onConfirm: (pin: string) => void;
+  onCancel: () => void;
+}) => {
+  const { t } = useTranslation("stream");
+  const normalizedPin = normalizeLoginPin(pin);
+
+  return (
+    <Modal isOpen={show} placement="center" onClose={onCancel}>
+      <ModalContent>
+        <>
+          <ModalHeader className="flex flex-col gap-1">{t("Login PIN")}</ModalHeader>
+          <ModalBody>
+            <Input
+              autoFocus
+              value={pin}
+              label={t("Login PIN")}
+              isInvalid={pinIncorrect}
+              errorMessage={pinIncorrect ? t("Login PIN incorrect") : undefined}
+              inputMode="numeric"
+              maxLength={8}
+              onValueChange={(value) => onPinChange(normalizeLoginPin(value))}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onCancel}>
+              {t("Exit")}
+            </Button>
+            <Button
+              color="primary"
+              isDisabled={normalizedPin.length < 1}
+              onPress={() => onConfirm(normalizedPin)}
+            >
+              {t("Confirm")}
+            </Button>
+          </ModalFooter>
+        </>
+      </ModalContent>
+    </Modal>
+  );
+};
+
+const normalizeLoginPin = (pin: string) => String(pin || "").replace(/\D/g, "");
+
 function StreamPage() {
   const { t } = useTranslation("stream");
   const router = useRouter();
@@ -625,6 +725,11 @@ function StreamPage() {
   const [showTouchpadOverlay, setShowTouchpadOverlay] = useState(false);
   const [showBrightnessModal, setShowBrightnessModal] = useState(false);
   const [showFsrModal, setShowFsrModal] = useState(false);
+  const [showRemoteKeyboardModal, setShowRemoteKeyboardModal] = useState(false);
+  const [remoteKeyboardText, setRemoteKeyboardText] = useState("");
+  const [showLoginPinModal, setShowLoginPinModal] = useState(false);
+  const [loginPin, setLoginPin] = useState("");
+  const [loginPinIncorrect, setLoginPinIncorrect] = useState(false);
   const [isPs5Console, setIsPs5Console] = useState(true);
   const [brightness, setBrightness] = useState(BRIGHTNESS_DEFAULT);
   const [disconnectAndStandbyOnExit, setDisconnectAndStandbyOnExit] = useState(false);
@@ -704,6 +809,7 @@ function StreamPage() {
   const audioStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardPressedKeysRef = useRef<Map<string, string>>(new Map());
   const keyboardMappingRef = useRef<Record<string, string>>(DEFAULT_KEYBOARD_MAPPING);
+  const remoteKeyboardActiveRef = useRef(false);
   const gamepadMappingRef = useRef({ ...DEFAULT_GAMEPAD_BUTTON_MAPPING });
   const controllerInputKernelRef = useRef<ControllerInputKernel>(
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
@@ -2611,6 +2717,136 @@ function StreamPage() {
     }
   };
 
+  const sendRemoteKeyboardCommand = (command: Record<string, unknown>) => {
+    if (disconnectingRef.current) {
+      return;
+    }
+
+    if (Ipc.sendStreamKeyboardCommand(command)) {
+      return;
+    }
+
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "keyboard_command",
+          ...command,
+        })
+      );
+    } catch {
+      // ignore transient command send failures
+    }
+  };
+
+  const handleRemoteKeyboardTextChange = (text: string) => {
+    remoteKeyboardActiveRef.current = true;
+    setRemoteKeyboardText(text);
+    sendRemoteKeyboardCommand({
+      action: "setText",
+      text,
+    });
+  };
+
+  const handleRemoteKeyboardAccept = (text: string) => {
+    sendRemoteKeyboardCommand({
+      action: "setText",
+      text,
+    });
+    sendRemoteKeyboardCommand({ action: "accept" });
+    remoteKeyboardActiveRef.current = false;
+    setShowRemoteKeyboardModal(false);
+    setRemoteKeyboardText("");
+  };
+
+  const handleRemoteKeyboardReject = () => {
+    sendRemoteKeyboardCommand({ action: "reject" });
+    remoteKeyboardActiveRef.current = false;
+    setShowRemoteKeyboardModal(false);
+    setRemoteKeyboardText("");
+  };
+
+  const handleRemoteKeyboardOpen = (event: any) => {
+    remoteKeyboardActiveRef.current = true;
+    setRemoteKeyboardText(String(event?.text || ""));
+    setShowRemoteKeyboardModal(true);
+  };
+
+  const handleRemoteKeyboardTextChanged = (event: any) => {
+    if (!remoteKeyboardActiveRef.current) {
+      return;
+    }
+    setRemoteKeyboardText(String(event?.text || ""));
+  };
+
+  const handleRemoteKeyboardClose = () => {
+    remoteKeyboardActiveRef.current = false;
+    setShowRemoteKeyboardModal(false);
+    setRemoteKeyboardText("");
+  };
+
+  const sendLoginPin = (pin: string) => {
+    if (disconnectingRef.current) {
+      return;
+    }
+    const normalizedPin = normalizeLoginPin(pin);
+    if (!normalizedPin) {
+      return;
+    }
+
+    if (Ipc.sendStreamLoginPin(normalizedPin)) {
+      return;
+    }
+
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "login_pin",
+          pin: normalizedPin,
+        })
+      );
+    } catch {
+      // ignore transient PIN send failures
+    }
+  };
+
+  const handleLoginPinRequest = (event: any) => {
+    const pinIncorrect = !!(event?.pinIncorrect ?? event?.pin_incorrect);
+    setLoginPinIncorrect(pinIncorrect);
+    if (pinIncorrect) {
+      setLoginPin("");
+    }
+    setShowLoginPinModal(true);
+  };
+
+  const handleLoginPinConfirm = (pin: string) => {
+    const normalizedPin = normalizeLoginPin(pin);
+    if (!normalizedPin) {
+      return;
+    }
+    setLoginPin(normalizedPin);
+    setLoginPinIncorrect(false);
+    sendLoginPin(normalizedPin);
+    setShowLoginPinModal(false);
+    setLoginPin("");
+  };
+
+  const handleLoginPinCancel = () => {
+    setShowLoginPinModal(false);
+    setLoginPin("");
+    setLoginPinIncorrect(false);
+    void handleDisconnect();
+  };
+
   const buildMergedControllerState = () => {
     const useWebGamepadKernel = controllerInputKernelRef.current === "web";
     const gamepads =
@@ -3132,8 +3368,19 @@ function StreamPage() {
                   handleGamepadTriggerEffectsFromPeasyo(sessionEvent);
                 } else if (eventName === "led_color") {
                   handleGamepadLedColorFromPeasyo(sessionEvent);
+                } else if (eventName === "keyboard_open") {
+                  handleRemoteKeyboardOpen(sessionEvent);
+                } else if (eventName === "keyboard_text_change") {
+                  handleRemoteKeyboardTextChanged(sessionEvent);
+                } else if (eventName === "keyboard_remote_close") {
+                  handleRemoteKeyboardClose();
+                } else if (eventName === "login_pin_request") {
+                  handleLoginPinRequest(sessionEvent);
                 } else if (eventName === "connected") {
                   sessionConnectedRef.current = true;
+                  setShowLoginPinModal(false);
+                  setLoginPin("");
+                  setLoginPinIncorrect(false);
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   showConnectedToastThenEnableAudio();
@@ -3154,6 +3401,9 @@ function StreamPage() {
               } else if (msg?.type === "session_status") {
                 if (msg?.status === "connected") {
                   sessionConnectedRef.current = true;
+                  setShowLoginPinModal(false);
+                  setLoginPin("");
+                  setLoginPinIncorrect(false);
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   showConnectedToastThenEnableAudio();
@@ -3279,6 +3529,12 @@ function StreamPage() {
       controlTransportReadyRef.current = false;
       lastSentControllerStateRef.current = createIdleControllerState();
       lastControllerSendAtRef.current = 0;
+      remoteKeyboardActiveRef.current = false;
+      setShowRemoteKeyboardModal(false);
+      setRemoteKeyboardText("");
+      setShowLoginPinModal(false);
+      setLoginPin("");
+      setLoginPinIncorrect(false);
       touchpadStateRef.current = createIdleTouchState();
       touchpadButtonPressedRef.current = false;
       if (touchpadButtonTimerRef.current) {
@@ -3376,6 +3632,10 @@ function StreamPage() {
 
   useEffect(() => {
     const handleKeyboardChange = (event: KeyboardEvent, pressed: boolean) => {
+      if (remoteKeyboardActiveRef.current) {
+        return;
+      }
+
       if (isEditableKeyboardTarget(event.target)) {
         return;
       }
@@ -3718,7 +3978,24 @@ function StreamPage() {
         onReset={() => setFsrSharpness(normalizeFsrSharpness(defaultSettings.fsr_sharpness))}
       />
 
-      {!shouldShowVideo && !sessionAlert ? (
+      <RemoteKeyboardModal
+        show={showRemoteKeyboardModal}
+        text={remoteKeyboardText}
+        onTextChange={handleRemoteKeyboardTextChange}
+        onAccept={handleRemoteKeyboardAccept}
+        onReject={handleRemoteKeyboardReject}
+      />
+
+      <LoginPinModal
+        show={showLoginPinModal}
+        pin={loginPin}
+        pinIncorrect={loginPinIncorrect}
+        onPinChange={setLoginPin}
+        onConfirm={handleLoginPinConfirm}
+        onCancel={handleLoginPinCancel}
+      />
+
+      {!shouldShowVideo && !sessionAlert && !showLoginPinModal ? (
         <Loading loadingText={status || t("Connecting...")} />
       ) : null}
     </div>

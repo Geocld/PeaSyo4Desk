@@ -10,6 +10,10 @@ import peasyo from "../peasyoLib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
 import { NativeGamepadTestService } from "../gamepad/nativeTestService";
 import { StreamSessionManager } from "../stream/serviceManager";
+import {
+  getVerboseStreamLogFiles,
+  getVerboseStreamLogsDir,
+} from "../stream/verboseLogger";
 
 const WAKEUP_PORT = 9302;
 const DDP_CLIENT_TYPE = "vr";
@@ -27,6 +31,7 @@ const PSN_LOGIN_CURRENT_USER_KEY_STORE_KEY = "psn-login-current-user-key";
 const LOCAL_CONSOLES_STORE_KEY = "local-consoles";
 const TRANSFER_SECRET_KEY = "pEa3yo";
 const TRANSFER_FILE_PREFIX = "peasyo_export_";
+const VERBOSE_LOG_EXPORT_PREFIX = "peasyo_stream_logs_";
 const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
 const PSN_TOKEN_REFRESH_GRACE_MS = 60_000;
 
@@ -1137,6 +1142,84 @@ export default class IpcApp extends IpcBase {
       canceled: false,
       filePath,
       ...result,
+    };
+  }
+
+  getVerboseLogInfo() {
+    const files = getVerboseStreamLogFiles();
+    return Promise.resolve({
+      logsDir: getVerboseStreamLogsDir(),
+      files: files.slice(0, 3).map((file) => ({
+        fileName: file.fileName,
+        filePath: file.filePath,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+      })),
+    });
+  }
+
+  async exportVerboseLogs() {
+    const logsDir = getVerboseStreamLogsDir();
+    const files = getVerboseStreamLogFiles().slice(0, 3);
+    if (files.length < 1) {
+      return {
+        canceled: false,
+        noLogs: true,
+        logsDir,
+      };
+    }
+
+    const saveResult = await dialog.showSaveDialog(this._application._mainWindow, {
+      title: "Export PeaSyo Stream Logs",
+      defaultPath: path.join(
+        ElectronApp.getPath("downloads"),
+        `${VERBOSE_LOG_EXPORT_PREFIX}${Date.now()}.log`
+      ),
+      filters: [
+        {
+          name: "Log",
+          extensions: ["log", "txt"],
+        },
+      ],
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return {
+        canceled: true,
+        logsDir,
+      };
+    }
+
+    const parts: string[] = [
+      "PeaSyo stream verbose logs export",
+      `Exported at: ${new Date().toISOString()}`,
+      `Source logs dir: ${logsDir}`,
+      `Files: ${files.length}`,
+      "",
+    ];
+
+    for (const file of [...files].reverse()) {
+      const content = await readFile(file.filePath, "utf8").catch((error) => {
+        return `Failed to read ${file.fileName}: ${error?.message || String(error)}`;
+      });
+      parts.push(
+        `===== ${file.fileName} =====`,
+        `mtime: ${new Date(file.mtimeMs).toISOString()}`,
+        `size: ${file.size}`,
+        "",
+        content.trimEnd(),
+        ""
+      );
+    }
+
+    await writeFile(saveResult.filePath, parts.join("\n"), "utf8");
+
+    return {
+      canceled: false,
+      noLogs: false,
+      filePath: saveResult.filePath,
+      logsDir,
+      filesCount: files.length,
     };
   }
 

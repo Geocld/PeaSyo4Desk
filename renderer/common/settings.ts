@@ -107,6 +107,16 @@ const getSettingsMetas = (t, options = {}) => {
         ],
       },
       {
+        name: "keyboard",
+        type: "radio",
+        title: t("Remote keyboard input"),
+        description: t("Enable remote keyboard input"),
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
         name: "rumble",
         type: "radio",
         title: t("Rumble"),
@@ -265,6 +275,24 @@ const getSettingsMetas = (t, options = {}) => {
       },
     ],
     others: [
+      {
+        name: "log_verbose",
+        type: "radio",
+        title: t("Verbose logs"),
+        description: t("Verbose logs desc"),
+        data: [
+          { value: false, label: t("Disable") },
+          { value: true, label: t("Enable") },
+        ],
+      },
+      {
+        name: "export_verbose_logs",
+        type: "action",
+        title: t("Export verbose logs"),
+        description: t("Export verbose logs desc"),
+        buttonText: t("Export"),
+        action: "export-verbose-logs",
+      },
       {
         name: "configuration_transfer",
         type: "action",

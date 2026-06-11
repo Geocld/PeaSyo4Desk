@@ -13,6 +13,10 @@ import {
   createNodeGamepadDriver,
   type ControllerStateSnapshot as NodeControllerStateSnapshot,
 } from "./gamepadDriver";
+import {
+  startVerboseStreamLog,
+  type VerboseStreamLogger,
+} from "./verboseLogger";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_MACOS = process.platform === "darwin";
@@ -140,6 +144,8 @@ type StreamSessionSettings = {
   remote_fps?: number;
   gamepad_kernel?: unknown;
   native_gamepad_maping?: unknown;
+  keyboard?: unknown;
+  log_verbose?: unknown;
 };
 
 type ClientVideoCapabilities = {
@@ -266,6 +272,8 @@ let streamWebContents: WebContents | null = null;
 
 let streamSession: any = null;
 let streamSessionStarted = false;
+let streamSessionSequence = 0;
+let activeStreamSessionDebugId = 0;
 
 let streamVideoConfig: VideoConfig | null = null;
 let ffmpegInput: PassThrough | null = null;
@@ -408,8 +416,10 @@ type ControllerStatePayload = {
 let pendingDirectControllerState: ControllerStatePayload | null = null;
 let directControllerStateFlushScheduled = false;
 let delayedControllerResetRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let deferredKeyboardEnableTimer: ReturnType<typeof setTimeout> | null = null;
 let lastControllerDebugLogAt = 0;
 let controllerSetCallCount = 0;
+let verboseLogger: VerboseStreamLogger | null = null;
 
 const OGG_CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -429,6 +439,11 @@ const OGG_CRC_TABLE = (() => {
 
 const log = (...args) => {
   console.log("[stream-service]", ...args);
+  verboseLogger?.write("stream-service", String(args[0] || ""), args.length > 1 ? { args: args.slice(1) } : undefined);
+};
+
+const verboseLog = (scope: string, message: string, details?: unknown) => {
+  verboseLogger?.write(scope, message, details);
 };
 
 const CONTROLLER_DEBUG_LOG_INTERVAL_MS = 1000;
@@ -669,6 +684,10 @@ const resolveRemoteNickname = (consoleInfo: Record<string, any>) => {
     consoleInfo.apName ||
     ""
   ).trim();
+};
+
+const hasConsoleAccessToken = (consoleInfo: Record<string, any>) => {
+  return !!String(consoleInfo.accessToken || consoleInfo.access_token || "").trim();
 };
 
 const serializeSessionEventValue = (value: any, depth = 0): any => {
@@ -1469,6 +1488,45 @@ const clearDelayedControllerResetRetry = () => {
   }
 };
 
+const clearDeferredKeyboardEnable = () => {
+  if (deferredKeyboardEnableTimer) {
+    clearTimeout(deferredKeyboardEnableTimer);
+    deferredKeyboardEnableTimer = null;
+  }
+};
+
+const enableKeyboardNow = () => {
+  if (!streamSession) {
+    return;
+  }
+
+  if (typeof streamSession.enableKeyboard !== "function") {
+    log("remote keyboard runtime enable skipped: peasyo-lib does not expose enableKeyboard");
+    return;
+  }
+
+  try {
+    verboseLog("remote-keyboard", "runtime enable requested");
+    streamSession.enableKeyboard();
+    verboseLog("remote-keyboard", "runtime enable sent");
+  } catch (error: any) {
+    log("remote keyboard runtime enable failed:", error?.message || String(error));
+  }
+};
+
+const scheduleDeferredKeyboardEnable = (sessionOptions: any) => {
+  if (!sessionOptions?.deferKeyboardEnable) {
+    return;
+  }
+
+  clearDeferredKeyboardEnable();
+  verboseLog("remote-keyboard", "runtime enable scheduled", { delayMs: 3000 });
+  deferredKeyboardEnableTimer = setTimeout(() => {
+    deferredKeyboardEnableTimer = null;
+    enableKeyboardNow();
+  }, 3000);
+};
+
 const setNormalizedNodeControllerState = (
   target: NodeControllerStateSnapshot,
   state: NodeControllerStateSnapshot | ControllerStatePayload
@@ -1981,6 +2039,65 @@ const setControllerStateDirect = (state: ControllerStatePayload) => {
   setImmediate(flushPendingDirectControllerState);
 };
 
+const sendKeyboardCommand = (command: any) => {
+  if (!streamSession || !command || typeof command !== "object") {
+    return;
+  }
+
+  const action = String(command.action || "").trim();
+  verboseLog("remote-keyboard", "command received", {
+    action,
+    textLength: action === "setText" ? String(command.text || "").length : undefined,
+  });
+  try {
+    if (action === "setText") {
+      streamSession.keyboardSetText(String(command.text || ""));
+      return;
+    }
+    if (action === "accept") {
+      streamSession.keyboardAccept();
+      return;
+    }
+    if (action === "reject") {
+      streamSession.keyboardReject();
+    }
+  } catch (error: any) {
+    log("remote keyboard command failed:", error?.message || String(error));
+  }
+};
+
+const setLoginPin = (pin: any, source = "ipc") => {
+  if (!streamSession) {
+    verboseLog("login-pin", "ignored without active session", { source });
+    return;
+  }
+
+  const normalizedPin = String(pin || "").replace(/\D/g, "");
+  if (!normalizedPin) {
+    verboseLog("login-pin", "ignored empty pin", { source });
+    return;
+  }
+
+  try {
+    verboseLog("login-pin", "submit to native binding", {
+      source,
+      pinLength: normalizedPin.length,
+    });
+    streamSession.setLoginPin(normalizedPin);
+    verboseLog("login-pin", "native binding accepted pin submission", {
+      source,
+      pinLength: normalizedPin.length,
+    });
+  } catch (error: any) {
+    verboseLog("login-pin", "native binding rejected pin submission", {
+      source,
+      pinLength: normalizedPin.length,
+      error: error?.message || String(error),
+    });
+    log("set login pin failed:", error?.message || String(error));
+  }
+};
+
 const onWsMessage = (socket: any, raw: Buffer) => {
   let message: any = null;
   try {
@@ -2002,6 +2119,16 @@ const onWsMessage = (socket: any, raw: Buffer) => {
 
   if (message?.type === "control_state") {
     handleWsControlState(message);
+    return;
+  }
+
+  if (message?.type === "keyboard_command") {
+    sendKeyboardCommand(message);
+    return;
+  }
+
+  if (message?.type === "login_pin") {
+    setLoginPin(message?.pin, "websocket");
     return;
   }
 
@@ -3111,6 +3238,7 @@ const dispatchHapticsFrameAsRumble = (frame: any, frameSeq: number) => {
 
 const cleanupSessionOnly = () => {
   clearDelayedControllerResetRetry();
+  clearDeferredKeyboardEnable();
   for (const socket of wsClients) {
     releaseClientPressedButtons(socket, "session-stop");
   }
@@ -3157,6 +3285,8 @@ const cleanupSessionOnly = () => {
   queuedVideoSampleIdNext = 1;
   destroyAudioPipeline();
   audioHeaderInfo = null;
+  verboseLogger?.close();
+  verboseLogger = null;
 };
 
 const buildSessionOptions = (args: StartStreamSessionArgs) => {
@@ -3232,6 +3362,9 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
   if (autoRemote && !psnAccessToken) {
     throw new Error("PSN accessToken is required for automatic remote connection.");
   }
+  const keyboardEnabledSetting = !!settings.keyboard;
+  const enableKeyboard = keyboardEnabledSetting && !hasConsoleAccessToken(consoleInfo);
+  const deferKeyboardEnable = keyboardEnabledSetting && autoRemote;
   const remoteDeviceUid = resolveRemoteDeviceUid(consoleInfo);
   const remoteNickname = resolveRemoteNickname(consoleInfo);
 
@@ -3253,7 +3386,8 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
     host,
     ps5,
     enableDualsense: args.enableDualsense !== false,
-    enableKeyboard: false,
+    enableKeyboard,
+    deferKeyboardEnable,
     registKey,
     morning,
     ...(psnAccountId ? { psnAccountId } : {}),
@@ -3280,6 +3414,13 @@ const createSession = (sessionOptions: any) => {
   streamSession = new (peasyo as any).Session(sessionOptions, {
     onEvent: (event) => {
       const eventName = String(event?.name || "unknown");
+      verboseLog("peasyo-event", "session event", {
+        name: eventName,
+        reason: String(event?.reasonName || event?.reason || ""),
+        stage: event?.stage,
+        progress: event?.progress,
+        state: event?.state,
+      });
       if (eventName === "remote_progress") {
         sendStreamProgress({
           type: "remote_progress",
@@ -3309,14 +3450,23 @@ const createSession = (sessionOptions: any) => {
       if (eventName === "connected") {
         broadcastText({ type: "session_status", status: "connected" });
         pushControllerState("connected-init");
+        scheduleDeferredKeyboardEnable(sessionOptions);
       } else if (eventName === "quit") {
         broadcastText({ type: "session_status", status: "quit" });
       } else {
         broadcastText({ type: "session_status", status: eventName });
       }
     },
-    onLog: () => {
-      // console.log(`[peasyo:${event.levelChar}]`, event.message);
+    onLog: (event) => {
+      const message =
+        event && typeof event === "object" && "message" in event
+          ? (event as any).message
+          : event;
+      const level =
+        event && typeof event === "object"
+          ? (event as any).levelChar ?? (event as any).level
+          : undefined;
+      verboseLog("peasyo-lib", String(message || ""), level ? { level } : undefined);
     },
     onVideoSample: (sample) => {
       const sampleFramesLost = Number(sample?.framesLost);
@@ -3354,6 +3504,11 @@ const prepareRemoteSessionIfNeeded = async (sessionOptions: any) => {
   }
 
   const onProgress = (event: any) => {
+    verboseLog("auto-remote", "prepare progress", {
+      stage: typeof event?.stage === "string" ? event.stage : "",
+      progress: Number.isFinite(Number(event?.progress)) ? Number(event.progress) : undefined,
+      state: Number.isFinite(Number(event?.state)) ? Number(event.state) : undefined,
+    });
     sendStreamProgress({
       type: "remote_progress",
       stage: typeof event?.stage === "string" ? event.stage : "",
@@ -3473,60 +3628,113 @@ const gotoBedAndStop = async (closeSocketServer = true) => {
 };
 
 const startSession = async (args: StartStreamSessionArgs) => {
-  ensureInitialized();
-  attachStreamWebContents(args.targetWebContents);
-  const wsInfo = await startSocketServer();
-  activeClientIsSteamOs = !!args.clientVideoCapabilities?.isSteamOs;
-
   if (streamSession || streamSessionStarted) {
     await stopSession(false);
   }
 
-  activeSteamOsWebCodecsProfile = resolveSteamOsWebCodecsProfile(args.steamOsWebCodecsProfile);
-  configureControllerKernel(args.settings);
-  const sessionOptions = buildSessionOptions(args);
-  if (shouldUseCompressedVideoTransport(args)) {
-    activateCompressedVideoTransport();
-    log(
-      `using compressed video transport (${streamVideoConfig?.inputFormat || "unknown"} -> WebCodecs)`
-    );
-  } else {
-    throw new Error("WebCodec video transport is unavailable on this device or for the selected codec.");
-  }
-  const preparedSessionOptions = await prepareRemoteSessionIfNeeded(sessionOptions);
-  createSession(preparedSessionOptions);
-
-  streamSession.start();
-  streamSessionStarted = true;
-
-  broadcastText({
-    type: "session_status",
-    status: "starting",
-    codec: streamVideoConfig?.codecName,
+  activeStreamSessionDebugId = streamSessionSequence + 1;
+  streamSessionSequence = activeStreamSessionDebugId;
+  verboseLogger = startVerboseStreamLog(!!args.settings?.log_verbose, {
+    sessionId: activeStreamSessionDebugId,
+    sessionType: "webcodec",
+    streamHost: String(args.streamHost || args.host || ""),
+    isRemote: !!args.isRemote,
+    autoRemote: !!args.autoRemote,
+    gamepadKernel: args.settings?.gamepad_kernel,
+    codec: args.videoProfile?.codec || (args.isRemote ? args.settings?.remote_codec : args.settings?.codec),
+    resolution: args.isRemote ? args.settings?.remote_resolution : args.settings?.resolution,
+    fps: args.isRemote ? args.settings?.remote_fps : args.settings?.fps,
+    clientVideoCapabilities: args.clientVideoCapabilities,
   });
 
-  if (streamVideoConfig) {
-    broadcastText({
-      type: "config",
-      width: streamVideoConfig.width,
-      height: streamVideoConfig.height,
-      fps: streamVideoConfig.fps,
-      format: streamVideoConfig.format,
-      frameSize: streamVideoConfig.frameSize,
-      transport: activeVideoTransportMode,
-      codecName: streamVideoConfig.codecName,
-      inputFormat: streamVideoConfig.inputFormat,
+  try {
+    log("startSession requested", {
+      streamHost: String(args.streamHost || args.host || ""),
+      isRemote: !!args.isRemote,
+      autoRemote: !!args.autoRemote,
+      targetWebContentsAttached: !!args.targetWebContents,
     });
-  }
-  broadcastAudioConfig();
 
-  return {
-    ...wsInfo,
-    video: streamVideoConfig,
-    audioEnabled: !!audioHeaderInfo,
-    binaryTransport: canUseNativeStreamBinary() ? "electron-ipc" : "websocket",
-    videoTransport: activeVideoTransportMode,
-  };
+    ensureInitialized();
+    attachStreamWebContents(args.targetWebContents);
+    const wsInfo = await startSocketServer();
+    activeClientIsSteamOs = !!args.clientVideoCapabilities?.isSteamOs;
+
+    activeSteamOsWebCodecsProfile = resolveSteamOsWebCodecsProfile(args.steamOsWebCodecsProfile);
+    configureControllerKernel(args.settings);
+    const sessionOptions = buildSessionOptions(args);
+    log("resolved webcodec session options", {
+      wsPort: wsInfo.port,
+      wsReused: !!wsInfo.reused,
+      host: sessionOptions.host,
+      resolution: `${streamVideoConfig?.width || 0}x${streamVideoConfig?.height || 0}`,
+      fps: streamVideoConfig?.fps || 0,
+      bitrate: streamVideoConfig?.bitrate || 0,
+      codec: streamVideoConfig?.codecName || "unknown",
+      inputFormat: streamVideoConfig?.inputFormat || "unknown",
+      outputFormat: streamVideoConfig?.format || "unknown",
+      nativeBinaryAvailable: canUseNativeStreamBinary(),
+      videoTransport: activeVideoTransportMode,
+      keyboardEnabled: !!sessionOptions.enableKeyboard,
+      keyboardDeferred: !!sessionOptions.deferKeyboardEnable,
+      autoRemote: !!sessionOptions.autoRemote,
+    });
+    if (shouldUseCompressedVideoTransport(args)) {
+      activateCompressedVideoTransport();
+      log(
+        `using compressed video transport (${streamVideoConfig?.inputFormat || "unknown"} -> WebCodecs)`
+      );
+      verboseLog("video", "compressed webcodec transport activated", {
+        inputFormat: streamVideoConfig?.inputFormat || "unknown",
+        videoTransport: activeVideoTransportMode,
+      });
+    } else {
+      throw new Error("WebCodec video transport is unavailable on this device or for the selected codec.");
+    }
+    const preparedSessionOptions = await prepareRemoteSessionIfNeeded(sessionOptions);
+    createSession(preparedSessionOptions);
+
+    streamSession.start();
+    streamSessionStarted = true;
+
+    broadcastText({
+      type: "session_status",
+      status: "starting",
+      codec: streamVideoConfig?.codecName,
+    });
+
+    if (streamVideoConfig) {
+      broadcastText({
+        type: "config",
+        width: streamVideoConfig.width,
+        height: streamVideoConfig.height,
+        fps: streamVideoConfig.fps,
+        format: streamVideoConfig.format,
+        frameSize: streamVideoConfig.frameSize,
+        transport: activeVideoTransportMode,
+        codecName: streamVideoConfig.codecName,
+        inputFormat: streamVideoConfig.inputFormat,
+      });
+    }
+    broadcastAudioConfig();
+
+    return {
+      ...wsInfo,
+      video: streamVideoConfig,
+      audioEnabled: !!audioHeaderInfo,
+      binaryTransport: canUseNativeStreamBinary() ? "electron-ipc" : "websocket",
+      videoTransport: activeVideoTransportMode,
+      verboseLogPath: verboseLogger?.filePath,
+    };
+  } catch (error: any) {
+    verboseLog("stream-service", "startSession failed", {
+      error: error?.message || String(error),
+      stack: error?.stack,
+    });
+    verboseLogger?.close();
+    verboseLogger = null;
+    throw error;
+  }
 };
 
 export const StreamSessionService = {
@@ -3535,6 +3743,8 @@ export const StreamSessionService = {
   stopSocketServer,
   startSession,
   setControllerStateDirect,
+  sendKeyboardCommand,
+  setLoginPin,
   triggerNativeGamepadRumble,
   notifyVideoFrameRendered,
   stopSession,

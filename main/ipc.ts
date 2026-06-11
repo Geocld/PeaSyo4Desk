@@ -68,6 +68,20 @@ export default class Ipc {
         ipcMain.on("stream-video-rendered", (_event, sampleId) => {
             StreamSessionManager.notifyVideoFrameRendered(sampleId)
         })
+
+        ipcMain.on("stream-keyboard-command", (_event, command) => {
+            StreamSessionManager.sendKeyboardCommand(command)
+        })
+
+        ipcMain.on("stream-login-pin", (_event, pin) => {
+            const rawPinText = String(pin ?? "")
+            const normalizedPinText = rawPinText.replace(/\D/g, "")
+            this._application.log(
+                'Ipc',
+                `stream-login-pin received rawLength=${rawPinText.length} normalizedLength=${normalizedPinText.length}`
+            )
+            StreamSessionManager.setLoginPin(pin)
+        })
         
     }
 

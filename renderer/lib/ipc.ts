@@ -74,6 +74,32 @@ export default {
     return false;
   },
 
+  sendStreamKeyboardCommand(command) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamKeyboardCommand === "function") {
+      window.PeaSyo.sendStreamKeyboardCommand(command);
+      return true;
+    }
+
+    return false;
+  },
+
+  sendStreamLoginPin(pin) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamLoginPin === "function") {
+      window.PeaSyo.sendStreamLoginPin(pin);
+      return true;
+    }
+
+    return false;
+  },
+
   removeListener(channel: string, listener) {
     if (window.PeaSyo === undefined) {
       // Electron API Not available. Lets mock!
@@ -113,6 +139,12 @@ export default {
         return false;
       },
       sendStreamVideoFrameRendered() {
+        return false;
+      },
+      sendStreamKeyboardCommand() {
+        return false;
+      },
+      sendStreamLoginPin() {
         return false;
       },
       removeListener(channel, listener) {

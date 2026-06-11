@@ -58,6 +58,8 @@ export const defaultSettings = {
   mouse_sensitive: 0.5,
   performance_style: true,
   background_keepalive: false,
+  log_verbose: false,
+  keyboard: false,
   input_mousekeyboard_maping: {
     ArrowLeft: 'DPadLeft',
     ArrowUp: 'DPadUp',

@@ -157,6 +157,8 @@ function SettingsPage() {
   const [psnUsers, setPsnUsers] = useState<PsnLoginInfo[]>([]);
   const [currentPsnUserKey, setCurrentPsnUserKey] = useState("");
   const [selectedPsnUserKey, setSelectedPsnUserKey] = useState("");
+  const [verboseLogInfo, setVerboseLogInfo] = useState<any>(null);
+  const [otherActionLoading, setOtherActionLoading] = useState<string | null>(null);
   const [accountActionLoading, setAccountActionLoading] = useState<
     "switch" | "delete" | null
   >(null);
@@ -209,6 +211,17 @@ function SettingsPage() {
     void loadPsnUsers();
   }, []);
 
+  const loadVerboseLogInfo = async () => {
+    const info = await Ipc.send("app", "getVerboseLogInfo").catch(() => null);
+    if (info) {
+      setVerboseLogInfo(info);
+    }
+  };
+
+  useEffect(() => {
+    void loadVerboseLogInfo();
+  }, []);
+
   const settingsMetas = useMemo(
     () =>
       getSettingsMetas(t, {
@@ -243,6 +256,14 @@ function SettingsPage() {
       }
     ),
     [settingsMetas, shouldShowFeedbackEntry]
+  );
+  const visibleOtherSettingMetas = useMemo(
+    () => visibleOtherMetas.filter((item: any) => item.type !== "action"),
+    [visibleOtherMetas]
+  );
+  const visibleOtherActionMetas = useMemo(
+    () => visibleOtherMetas.filter((item: any) => item.type === "action"),
+    [visibleOtherMetas]
   );
 
   const syncDraft = (nextDraft: BasicStreamDraft) => {
@@ -479,6 +500,46 @@ function SettingsPage() {
     }
   };
 
+  const handleExportVerboseLogs = async () => {
+    setOtherActionLoading("export-verbose-logs");
+    try {
+      const result: any = await Ipc.send("app", "exportVerboseLogs");
+      await loadVerboseLogInfo();
+
+      if (result?.canceled) {
+        addToast({
+          title: t("UserCancel"),
+        });
+        return;
+      }
+
+      if (result?.noLogs) {
+        addToast({
+          title: t("No verbose logs"),
+          description: result?.logsDir
+            ? `${t("Verbose logs path")}: ${result.logsDir}`
+            : undefined,
+          color: "warning",
+        });
+        return;
+      }
+
+      addToast({
+        title: t("Verbose logs exported"),
+        description: result?.filePath || "",
+        color: "success",
+      });
+    } catch (error: any) {
+      addToast({
+        title: t("Verbose logs export failed"),
+        description: String(error?.message || error || ""),
+        color: "danger",
+      });
+    } finally {
+      setOtherActionLoading(null);
+    }
+  };
+
   const handleOtherAction = (item: any) => {
     switch (item.action) {
       case "open-map":
@@ -507,6 +568,9 @@ function SettingsPage() {
         return;
       case "clear-cache":
         void handleClearCache();
+        return;
+      case "export-verbose-logs":
+        void handleExportVerboseLogs();
         return;
       case "exit":
         Ipc.send("app", "quit");
@@ -767,6 +831,10 @@ function SettingsPage() {
       item.action === "check-update"
         ? `${item.description} ${pkg.version}`
         : item.description;
+    const isVerboseLogExport = item.action === "export-verbose-logs";
+    const verboseLogFilesCount = Array.isArray(verboseLogInfo?.files)
+      ? verboseLogInfo.files.length
+      : 0;
 
     return (
       <Card
@@ -779,13 +847,26 @@ function SettingsPage() {
             {description ? (
               <div className="setting-description">{description}</div>
             ) : null}
+            {isVerboseLogExport && verboseLogInfo?.logsDir ? (
+              <div className="mt-2 space-y-1 text-xs text-default-500">
+                <div className="break-all">
+                  {t("Verbose logs path")}: {verboseLogInfo.logsDir}
+                </div>
+                <div>
+                  {t("Verbose logs files count", { count: verboseLogFilesCount })}
+                </div>
+              </div>
+            ) : null}
           </div>
           <Button
             size={compact ? "sm" : "md"}
             radius={compact ? "full" : "md"}
             className={compact ? "self-start md:self-center md:min-w-[112px]" : ""}
             color={item.color || "primary"}
-            isLoading={item.action === "check-update" && isChecking}
+            isLoading={
+              (item.action === "check-update" && isChecking) ||
+              otherActionLoading === item.action
+            }
             onPress={() => handleOtherAction(item)}
           >
             {item.buttonText}
@@ -859,11 +940,19 @@ function SettingsPage() {
           </Tab>
 
           <Tab key="Others" title={t("Others")}>
+            {visibleOtherSettingMetas.map((item) => (
+              <SettingItem
+                key={item.name}
+                item={item}
+                onRestartWarn={() => setShowRestartModal(true)}
+              />
+            ))}
+
             <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
-              {visibleOtherMetas.map((item) => renderOtherActionCard(item, true))}
+              {visibleOtherActionMetas.map((item) => renderOtherActionCard(item, true))}
             </div>
 
-            {visibleOtherMetas.some((item) => item.name === "gamepad_tester") ? (
+            {visibleOtherActionMetas.some((item) => item.name === "gamepad_tester") ? (
               <KeyboardMap />
             ) : null}
           </Tab>

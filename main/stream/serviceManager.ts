@@ -62,6 +62,12 @@ export const StreamSessionManager = {
   setControllerStateDirect(state: any) {
     getActiveService().setControllerStateDirect(state);
   },
+  sendKeyboardCommand(command: any) {
+    (getActiveService() as any).sendKeyboardCommand(command);
+  },
+  setLoginPin(pin: any) {
+    (getActiveService() as any).setLoginPin(pin);
+  },
   triggerNativeGamepadRumble(data: {
     low?: unknown;
     high?: unknown;
