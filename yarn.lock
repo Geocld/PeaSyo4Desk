@@ -6596,10 +6596,10 @@ path-to-regexp@~0.1.12:
   resolved "https://registry.yarnpkg.com/path-to-regexp/-/path-to-regexp-0.1.12.tgz#d5e1a12e478a976d432ef3c58d534b9923164bb7"
   integrity sha512-RA1GjUVMnvYFxuqovrEqZoxxW5NUZqbwKtYz/Tt7nXerk0LbLblQmrsgdeOxV5SFHf0UDggjS/bSeOZwt1pmEQ==
 
-peasyo-lib@1.0.1:
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/peasyo-lib/-/peasyo-lib-1.0.1.tgz#807e8d4fa4137edf49b281c8991fbaff61c27255"
-  integrity sha512-px/aJ9oSqmTHOBHrs0/jrUItWBF/wUTFBQbBaKRci3c/WFt6PtpvBUPlSceA96KTEcvvEiebczHy/F8fGs50rQ==
+peasyo-lib@1.0.2:
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/peasyo-lib/-/peasyo-lib-1.0.2.tgz#ebdd246116395ad095939c7cd1896d175dc92a77"
+  integrity sha512-3cEy2AzgVRB/yT9bDkA4qDqA+dAA6yCVIM3tjd6Vl6+3u1o48lw0IVLxwheZBgjnubfdEWi6uUY+JoYpVAV/xw==
 
 peasyo-sdl-lib@1.0.2:
   version "1.0.2"
