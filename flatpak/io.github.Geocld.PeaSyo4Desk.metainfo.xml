@@ -23,7 +23,7 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="2.0.0" date="2026-06-11">
+    <release version="2.0.0" date="2026-06-12">
      <description>
         <ul>
           <li>Use PeaSyo-rust as backend</li>
