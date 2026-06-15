@@ -725,6 +725,26 @@ const serializeSessionEvent = (event: any) => {
   return serializeSessionEventValue(event, 0);
 };
 
+const SESSION_EVENT_NAME_BY_TYPE: Record<number, string> = {
+  13: "haptic_intensity",
+  14: "trigger_intensity",
+};
+
+const normalizeSessionEvent = (event: any) => {
+  const eventType = Number(event?.type);
+  const rawName = String(event?.name || "");
+  if ((rawName && rawName !== "unknown") || !Number.isInteger(eventType)) {
+    return event;
+  }
+
+  const knownName = SESSION_EVENT_NAME_BY_TYPE[eventType];
+  if (knownName) {
+    return { ...(event || {}), name: knownName };
+  }
+
+  return event;
+};
+
 const ensureInitialized = () => {
   if (initialized) return;
 
@@ -3413,20 +3433,25 @@ const buildSessionOptions = (args: StartStreamSessionArgs) => {
 const createSession = (sessionOptions: any) => {
   streamSession = new (peasyo as any).Session(sessionOptions, {
     onEvent: (event) => {
-      const eventName = String(event?.name || "unknown");
+      const sessionEvent = normalizeSessionEvent(event);
+      const eventName = String(sessionEvent?.name || "unknown");
       verboseLog("peasyo-event", "session event", {
         name: eventName,
-        reason: String(event?.reasonName || event?.reason || ""),
-        stage: event?.stage,
-        progress: event?.progress,
-        state: event?.state,
+        reason: String(sessionEvent?.reasonName || sessionEvent?.reason || ""),
+        stage: sessionEvent?.stage,
+        progress: sessionEvent?.progress,
+        state: sessionEvent?.state,
       });
       if (eventName === "remote_progress") {
         sendStreamProgress({
           type: "remote_progress",
-          stage: typeof event?.stage === "string" ? event.stage : "",
-          progress: Number.isFinite(Number(event?.progress)) ? Number(event.progress) : undefined,
-          state: Number.isFinite(Number(event?.state)) ? Number(event.state) : undefined,
+          stage: typeof sessionEvent?.stage === "string" ? sessionEvent.stage : "",
+          progress: Number.isFinite(Number(sessionEvent?.progress))
+            ? Number(sessionEvent.progress)
+            : undefined,
+          state: Number.isFinite(Number(sessionEvent?.state))
+            ? Number(sessionEvent.state)
+            : undefined,
         });
         return;
       }
@@ -3434,16 +3459,16 @@ const createSession = (sessionOptions: any) => {
       if (eventName === "rumble") {
         // Session rumble packets already carry direct motor levels, so forward
         // them as-is without the haptics-audio peak filtering path.
-        broadcastRumbleEvent(event);
+        broadcastRumbleEvent(sessionEvent);
       } else if (eventName === "trigger_effects") {
         // Forward adaptive trigger mode and raw 10-byte params so the renderer
         // can write them into the DualSense HID output report.
-        broadcastTriggerEffectsEvent(event);
+        broadcastTriggerEffectsEvent(sessionEvent);
       } else {
         broadcastText({
           type: "session_event",
           name: eventName,
-          event: serializeSessionEvent(event),
+          event: serializeSessionEvent(sessionEvent),
         });
       }
 

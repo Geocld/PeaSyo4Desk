@@ -73,6 +73,7 @@ export interface SessionEvent {
   progress?: number;
   state?: number;
   reset?: boolean;
+  intensity?: number;
   [key: string]: unknown;
 }
 
