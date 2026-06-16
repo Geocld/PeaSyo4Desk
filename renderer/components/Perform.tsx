@@ -110,12 +110,12 @@ function Perform({ connectState }: PerformProps) {
                 {t("PL")}: {performance.pl || "--"} | &nbsp;
               </span>
               <span className="text-xs">
-                {t("Bitrate")}: {performance.br || "--"}
+                {t("BT")}: {performance.br || "--"}({codec})
                 {showDecode ? " | " : ""}
               </span>
               {showDecode ? (
                 <span className="text-xs">
-                  {t("DT")}: {performance.decode || "--"}({codec})
+                  {t("DT")}: {performance.decode || "--"}
                 </span>
               ) : null}
             </span>
@@ -132,11 +132,11 @@ function Perform({ connectState }: PerformProps) {
               {t("PL")}: {performance.pl || "--"}
             </div>
             <div className="px-1 text-sm">
-              {t("Bitrate")}: {performance.br || "--"}
+              {t("BT")}: {performance.br || "--"} ({codec})
             </div>
             {showDecode ? (
               <div className="px-1 text-sm">
-                {t("DT")}: {performance.decode || "--"}({codec})
+                {t("DT")}: {performance.decode || "--"}
               </div>
             ) : null}
           </div>

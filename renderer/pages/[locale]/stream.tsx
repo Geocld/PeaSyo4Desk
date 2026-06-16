@@ -1042,7 +1042,7 @@ function StreamPage() {
         (touch) => touch.id >= 0
       );
       const shouldKeepActionbarVisible = actionBarDrawerOpenRef.current;
-      const isActive = hasTouchpadInteraction || Date.now() - lastUserInputAtRef.current < 2000;
+      const isActive = hasTouchpadInteraction || Date.now() - lastUserInputAtRef.current < 5000;
       setShowActionbar(shouldKeepActionbarVisible || isActive);
       setShowTouchpadOverlay(isActive);
     }, 100);
