@@ -1,8 +1,10 @@
+import { useState } from "react";
 import Image from "next/image";
 import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
 import { Button, Card, CardBody, CardFooter, Divider } from "@heroui/react";
-import { ConsoleCacheItem } from "../common/remotePlay";
+import { ConsoleCacheItem, getWakeupCredentialFromRegistKey } from "../common/remotePlay";
+import Ipc from "../lib/ipc";
 
 type ConsoleHostCardProps = {
   item: ConsoleCacheItem;
@@ -60,6 +62,14 @@ const EditIcon = () => {
   );
 };
 
+const PowerIcon = () => {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v8.25" />
+    </svg>
+  );
+};
+
 function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHostCardProps) {
   const { t } = useTranslation("home");
   const { theme, resolvedTheme } = useTheme();
@@ -69,8 +79,25 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
   const hostText = item.host || "-";
   const registeredTimeText = formatRegisteredTime(item.registedTime);
   const { isPs5, isPs5Pro } = resolveConsoleVariant(item);
+  const [waking, setWaking] = useState(false);
   const isLightTheme =
     theme === "xbox-light" || theme === "light" || resolvedTheme === "light";
+
+  const handleWakeHost = async () => {
+    const host = item.host;
+    if (!host || waking) return;
+    setWaking(true);
+    try {
+      const credential =
+        item.userCredential ?? getWakeupCredentialFromRegistKey(item.rpRegistKey);
+      await Ipc.send("app", "sendWakeupPacket", {
+        host,
+        userCredential: credential || undefined,
+      });
+    } finally {
+      setWaking(false);
+    }
+  };
 
   let consoleImage = "/images/console.svg";
   if (isPs5) {
@@ -81,8 +108,24 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
     }
   }
 
+  console.log('item.host', item.host)
+
   return (
     <Card className="relative">
+      {
+        item.host ? (
+          <Button
+            size="sm"
+            variant="light"
+            color="warning"
+            className="absolute right-12 top-2 z-10 min-w-0 px-2"
+            onPress={handleWakeHost}
+            aria-label={t("Wake host")}
+          >
+            <PowerIcon/>
+          </Button>
+        ) : null
+      }
       {onEditHost ? (
         <Button
           size="sm"

@@ -78,6 +78,7 @@
   "Direct connect": "直接連接",
   "Auto connect": "自動連接",
   "Wakeup and connect": "喚醒並連接",
+  "Wake host": "喚醒主機",
   "Checking local console status...": "正在檢查主機狀態...",
   "Local console is powered on, starting stream...": "主機已開機，正在進入串流...",
   "Local console is in standby, sending wakeup packet...": "主機處於待機，正在喚醒...",

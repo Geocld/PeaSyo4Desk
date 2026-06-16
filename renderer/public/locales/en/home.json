@@ -78,6 +78,7 @@
   "Direct connect": "Direct connect",
   "Auto connect": "Auto connect",
   "Wakeup and connect": "Wakeup and connect",
+  "Wake host": "Wake host",
   "Checking local console status...": "Checking console status...",
   "Local console is powered on, starting stream...": "Console is powered on, starting stream...",
   "Local console is in standby, sending wakeup packet...": "Console is in standby, waking up...",

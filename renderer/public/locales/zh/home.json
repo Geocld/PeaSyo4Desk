@@ -78,6 +78,7 @@
   "Direct connect": "直接连接",
   "Auto connect": "自动连接",
   "Wakeup and connect": "唤醒并连接",
+  "Wake host": "唤醒主机",
   "Checking local console status...": "正在检查主机状态...",
   "Local console is powered on, starting stream...": "已开机，正在进入串流...",
   "Local console is in standby, sending wakeup packet...": "主机处于待机，正在唤醒...",
