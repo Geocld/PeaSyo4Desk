@@ -21,6 +21,9 @@ type PsnLoginModalsProps = {
   onClose?: () => void;
 };
 
+const PSN_ACCOUNT_ID_INVALID_MESSAGE =
+  "PSN account id format is invalid. Please sign in again, or enter a valid Base64 PSN account id.";
+
 const getErrorMessage = (error: any, fallback: string) => {
   if (typeof error === "string" && error.trim().length > 0) {
     return error;
@@ -29,6 +32,16 @@ const getErrorMessage = (error: any, fallback: string) => {
     return error.message;
   }
   return fallback;
+};
+
+const isAccountIdFormatError = (error: any, message: string) => {
+  const code = String(error?.code || "").trim();
+  return (
+    code === "PSN_ACCOUNT_ID_INVALID" ||
+    /invalid base64 input/i.test(message) ||
+    /psnAccountId must be 8 bytes/i.test(message) ||
+    /PSN account id format is invalid/i.test(message)
+  );
 };
 
 const copyText = async (text: string) => {
@@ -147,7 +160,12 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
       });
       props.onLoginSuccess(loginInfo);
     } catch (error) {
-      setLoginError(getErrorMessage(error, t("Account id login failed")));
+      const message = getErrorMessage(error, t("Account id login failed"));
+      setLoginError(
+        isAccountIdFormatError(error, message)
+          ? t(PSN_ACCOUNT_ID_INVALID_MESSAGE)
+          : message
+      );
     } finally {
       setLoadingMethod(null);
     }

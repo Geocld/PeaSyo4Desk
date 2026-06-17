@@ -3,6 +3,10 @@ import { session } from "electron";
 import { randomBytes } from "node:crypto";
 import type Application from "./application";
 import { createWindow } from "./helpers";
+import {
+  createPsnAccountIdFormatError,
+  isValidPsnAccountId,
+} from "./psnAccountId";
 
 const CLIENT_ID = "ba495a24-818c-472b-b12d-ff231c1b5745";
 const CLIENT_SECRET = "mvaiZkRsAsI1IBkY";
@@ -241,6 +245,9 @@ export default class Authentication {
     const normalizedAccountId = (accountId || "").trim();
     if (!normalizedAccountId) {
       throw new Error("Account ID is required.");
+    }
+    if (!isValidPsnAccountId(normalizedAccountId)) {
+      throw createPsnAccountIdFormatError();
     }
 
     const result = this.buildDirectLoginResult(

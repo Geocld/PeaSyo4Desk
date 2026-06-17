@@ -70,6 +70,7 @@
   "PIN must be 8 digits.": "PIN 必須為 8 位數字。",
   "Please login first.": "請先登入。",
   "PSN account id is missing.": "缺少 PSN 帳號 ID。",
+  "PSN account id format is invalid. Please sign in again, or enter a valid Base64 PSN account id.": "PSN 帳號 ID 格式無效，請重新登入，或者輸入有效的 Base64 PSN 帳號 ID。",
   "Choose local network or remote network streaming.": "請選擇本地網路串流或遠端串流。",
   "Local stream": "本地串流",
   "Remote stream": "遠端串流",

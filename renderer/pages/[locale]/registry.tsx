@@ -59,12 +59,24 @@ const getErrorMessage = (error: any, fallback: string) => {
   return fallback;
 };
 
+const PSN_ACCOUNT_ID_INVALID_MESSAGE =
+  "PSN account id format is invalid. Please sign in again, or enter a valid Base64 PSN account id.";
+
 const getRegisterErrorMessage = (
   error: RegisterConsoleFailure | Error | string | unknown,
   t: (key: string) => string
 ) => {
   const code = String((error as RegisterConsoleFailure)?.code || "").trim();
   const rawMessage = getErrorMessage(error, t("Failed to register host."));
+
+  if (
+    code === "PSN_ACCOUNT_ID_INVALID" ||
+    /invalid base64 input/i.test(rawMessage) ||
+    /psnAccountId must be 8 bytes/i.test(rawMessage) ||
+    /PSN account id format is invalid/i.test(rawMessage)
+  ) {
+    return t(PSN_ACCOUNT_ID_INVALID_MESSAGE);
+  }
 
   if (code === "REGIST_INVALID_PIN" || /invalid PIN/i.test(rawMessage)) {
     return t(

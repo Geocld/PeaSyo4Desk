@@ -70,6 +70,7 @@
   "PIN must be 8 digits.": "PIN must be 8 digits.",
   "Please login first.": "Please login first.",
   "PSN account id is missing.": "PSN account id is missing.",
+  "PSN account id format is invalid. Please sign in again, or enter a valid Base64 PSN account id.": "PSN account id format is invalid. Please sign in again, or enter a valid Base64 PSN account id.",
   "Choose local network or remote network streaming.": "Choose local network or remote network streaming.",
   "Local stream": "Local stream",
   "Remote stream": "Remote stream",

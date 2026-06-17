@@ -14,6 +14,12 @@ import {
   getVerboseStreamLogFiles,
   getVerboseStreamLogsDir,
 } from "../stream/verboseLogger";
+import {
+  isPsnAccountIdFormatError,
+  isValidPsnAccountId,
+  PSN_ACCOUNT_ID_INVALID_CODE,
+  PSN_ACCOUNT_ID_INVALID_MESSAGE,
+} from "../psnAccountId";
 
 const WAKEUP_PORT = 9302;
 const DDP_CLIENT_TYPE = "vr";
@@ -562,6 +568,14 @@ const normalizeRegisterFailure = (
   fallbackCode = "REGIST_FAILED",
   fallbackMessage = "Host registration failed."
 ): RegisterConsoleFailure => {
+  if (isPsnAccountIdFormatError(error)) {
+    return createRegisterFailure(
+      PSN_ACCOUNT_ID_INVALID_CODE,
+      PSN_ACCOUNT_ID_INVALID_MESSAGE,
+      logs
+    );
+  }
+
   if (error && typeof error === "object") {
     const currentCode = String((error as RegisterConsoleFailure).code || "").trim();
     const currentMessage = String((error as RegisterConsoleFailure).message || "").trim();
@@ -681,6 +695,16 @@ const registerConsoleWithPeasyo = (args: RegisterConsoleArgs) =>
 
     if (!psnAccountId) {
       reject(new Error("PSN account id is required."));
+      return;
+    }
+    if (!isValidPsnAccountId(psnAccountId)) {
+      reject(
+        createRegisterFailure(
+          PSN_ACCOUNT_ID_INVALID_CODE,
+          PSN_ACCOUNT_ID_INVALID_MESSAGE,
+          []
+        )
+      );
       return;
     }
 
