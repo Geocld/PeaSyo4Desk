@@ -517,7 +517,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         isOpen={props.show && step === "mode"}
         isDismissable={false}
         hideCloseButton
-        size="lg"
+        size="2xl"
       >
         <ModalContent>
           <>
@@ -560,7 +560,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         isOpen={props.show && step === "remote"}
         isDismissable={false}
         hideCloseButton
-        size="lg"
+        size="2xl"
       >
         <ModalContent>
           <>

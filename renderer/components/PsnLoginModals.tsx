@@ -247,9 +247,9 @@ export default function PsnLoginModals(props: PsnLoginModalsProps) {
                 {t("If you cannot open PSN login page, try the fallback methods below.")}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full">
-                <Button variant="flat" onPress={() => switchMethod("username")}>
+                {/* <Button variant="flat" onPress={() => switchMethod("username")}>
                   {t("Login with username")}
-                </Button>
+                </Button> */}
                 <Button variant="flat" onPress={() => switchMethod("accountId")}>
                   {t("Login with account id")}
                 </Button>

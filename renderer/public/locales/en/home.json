@@ -78,6 +78,7 @@
   "Please input remote host": "Please input remote host",
   "Direct connect": "Direct connect",
   "Auto connect": "Auto connect",
+  "WakePacketSent": "Wake packet send",
   "Wakeup and connect": "Wakeup and connect",
   "Wake host": "Wake host",
   "Checking local console status...": "Checking console status...",

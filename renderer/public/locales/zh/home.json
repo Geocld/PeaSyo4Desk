@@ -78,6 +78,7 @@
   "Please input remote host": "请输入远程地址",
   "Direct connect": "直接连接",
   "Auto connect": "自动连接",
+  "WakePacketSent": "已发送唤醒包",
   "Wakeup and connect": "唤醒并连接",
   "Wake host": "唤醒主机",
   "Checking local console status...": "正在检查主机状态...",

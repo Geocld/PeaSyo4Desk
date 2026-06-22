@@ -2,7 +2,7 @@ import { useState } from "react";
 import Image from "next/image";
 import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
-import { Button, Card, CardBody, CardFooter, Divider } from "@heroui/react";
+import { Button, Card, CardBody, CardFooter, Divider, addToast } from "@heroui/react";
 import { ConsoleCacheItem, getWakeupCredentialFromRegistKey } from "../common/remotePlay";
 import Ipc from "../lib/ipc";
 
@@ -93,6 +93,10 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
       await Ipc.send("app", "sendWakeupPacket", {
         host,
         userCredential: credential || undefined,
+      });
+      addToast({
+        title: t("WakePacketSent"),
+        color: "success",
       });
     } finally {
       setWaking(false);

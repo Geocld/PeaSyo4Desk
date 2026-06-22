@@ -76,6 +76,8 @@ const HAPTIC_PACKET_HEADER_BYTES = 4;
 const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
 const DISPLAY_REFRESH_INTERVAL_DEFAULT_US = Math.round(1000000 / 60);
 const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
+const MAX_PENDING_NATIVE_PACKETS = 64;
+const FIRST_FRAME_WATCHDOG_MS = 8000;
 const AUDIO_CONTEXT_LATENCY_SEC = 0.02;
 const AUDIO_SCHEDULE_LEAD_SEC = 0.01;
 const AUDIO_START_BUFFER_SEC = 0.06;
@@ -1059,7 +1061,13 @@ function StreamPage() {
     resolveControllerInputKernel(defaultSettings as Record<string, any>)
   );
   const nativeBinaryTransportRef = useRef(false);
+  const nativeBinaryReadyRef = useRef(false);
+  const pendingNativePacketsRef = useRef<Uint8Array[]>([]);
+  const nativeVideoPacketReceivedRef = useRef(false);
+  const videoConfigAppliedRef = useRef(false);
+  const videoConfigSignatureRef = useRef("");
   const nativeVideoFrameRenderedAckPendingQueueRef = useRef<Array<number | null>>([]);
+  const firstFrameWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webCodecsCapabilitiesRef = useRef<ClientVideoCapabilities | null>(null);
   const webCodecsVideoDecoderRef = useRef<VideoDecoder | null>(null);
   const webCodecsAwaitingKeyFrameRef = useRef(false);
@@ -1289,6 +1297,100 @@ function StreamPage() {
     });
   };
 
+  const clearFirstFrameWatchdog = () => {
+    if (firstFrameWatchdogTimerRef.current) {
+      clearTimeout(firstFrameWatchdogTimerRef.current);
+      firstFrameWatchdogTimerRef.current = null;
+    }
+  };
+
+  const scheduleFirstFrameWatchdog = () => {
+    if (
+      firstFrameWatchdogTimerRef.current ||
+      videoReadyRef.current ||
+      sessionErrorHandledRef.current ||
+      disconnectingRef.current ||
+      !sessionConnectedRef.current ||
+      !videoConfigAppliedRef.current ||
+      !nativeVideoPacketReceivedRef.current
+    ) {
+      return;
+    }
+
+    firstFrameWatchdogTimerRef.current = setTimeout(() => {
+      firstFrameWatchdogTimerRef.current = null;
+      if (
+        videoReadyRef.current ||
+        sessionErrorHandledRef.current ||
+        disconnectingRef.current
+      ) {
+        return;
+      }
+
+      openSessionAlert(
+        [
+          "Video startup timed out before the first frame was rendered.",
+          `transport=${videoTransportRef.current}`,
+          `nativePacketsPending=${pendingNativePacketsRef.current.length}`,
+          `received=${receivedFramesRef.current}`,
+          `rendered=${renderedFramesRef.current}`,
+          `dropped=${droppedFramesRef.current}`,
+        ].join("\n"),
+        "Video startup timed out"
+      );
+    }, FIRST_FRAME_WATCHDOG_MS);
+  };
+
+  const enqueuePendingNativePacket = (packet: Uint8Array) => {
+    const kind = packet[0];
+    if (kind === WS_BINARY_VIDEO || kind === WS_BINARY_VIDEO_ENCODED) {
+      nativeVideoPacketReceivedRef.current = true;
+      scheduleFirstFrameWatchdog();
+    }
+
+    const queue = pendingNativePacketsRef.current;
+    queue.push(new Uint8Array(packet));
+    while (queue.length > MAX_PENDING_NATIVE_PACKETS) {
+      const droppedPacket = queue.shift();
+      if (droppedPacket) {
+        ackDroppedNativePacket(droppedPacket);
+      }
+      droppedFramesRef.current += 1;
+    }
+  };
+
+  const ackDroppedNativePacket = (packet: Uint8Array) => {
+    const kind = packet[0];
+    if (kind === WS_BINARY_VIDEO) {
+      Ipc.sendStreamVideoFrameRendered();
+      return;
+    }
+
+    if (kind === WS_BINARY_VIDEO_ENCODED) {
+      const encodedSamplePacket = parseEncodedVideoSamplePacket(packet.subarray(1));
+      Ipc.sendStreamVideoFrameRendered(
+        typeof encodedSamplePacket?.sampleId === "number" &&
+          Number.isFinite(encodedSamplePacket.sampleId)
+          ? encodedSamplePacket.sampleId
+          : undefined
+      );
+    }
+  };
+
+  const flushPendingNativePackets = () => {
+    if (!nativeBinaryReadyRef.current) {
+      return;
+    }
+
+    const queue = pendingNativePacketsRef.current;
+    while (queue.length > 0) {
+      const packet = queue.shift();
+      if (packet) {
+        handleBinaryPacket(packet);
+      }
+    }
+  };
+
   useEffect(() => {
     setBrightness(persistedBrightness);
   }, [persistedBrightness]);
@@ -1446,6 +1548,18 @@ function StreamPage() {
     const frameSize =
       Number(config?.frameSize) ||
       (isHdrVideoFormat(format) ? width * height * 3 : Math.floor((width * height * 3) / 2));
+    const nextConfigSignature = [
+      width,
+      height,
+      fps,
+      format,
+      frameSize,
+      transport,
+      inputFormat,
+    ].join(":");
+    if (videoConfigAppliedRef.current && videoConfigSignatureRef.current === nextConfigSignature) {
+      return;
+    }
 
     widthRef.current = width;
     heightRef.current = height;
@@ -1486,6 +1600,12 @@ function StreamPage() {
       destroySdrRenderer();
       try {
         ensureWebCodecsDecoder(inputFormat);
+        webCodecsAwaitingKeyFrameRef.current = true;
+        videoConfigAppliedRef.current = true;
+        videoConfigSignatureRef.current = nextConfigSignature;
+        nativeBinaryReadyRef.current = true;
+        scheduleFirstFrameWatchdog();
+        flushPendingNativePackets();
       } catch (error) {
         openSessionAlert(
           [
@@ -1508,7 +1628,14 @@ function StreamPage() {
 
     if (isHdrVideoFormat(format) && !window.WebGL2RenderingContext) {
       openSessionAlert(t("HdrWebgl2Required"));
+      return;
     }
+
+    videoConfigAppliedRef.current = true;
+    videoConfigSignatureRef.current = nextConfigSignature;
+    nativeBinaryReadyRef.current = true;
+    scheduleFirstFrameWatchdog();
+    flushPendingNativePackets();
   };
 
   const setAudioMutedState = (muted: boolean) => {
@@ -3232,10 +3359,14 @@ function StreamPage() {
     const kind = packetBytes[0];
     const payload = packetBytes.subarray(1);
     if (kind === WS_BINARY_VIDEO) {
+      nativeVideoPacketReceivedRef.current = true;
+      scheduleFirstFrameWatchdog();
       handleVideoFrameBytes(payload);
       return;
     }
     if (kind === WS_BINARY_VIDEO_ENCODED) {
+      nativeVideoPacketReceivedRef.current = true;
+      scheduleFirstFrameWatchdog();
       handleEncodedVideoSampleBytes(payload);
       return;
     }
@@ -4000,6 +4131,7 @@ function StreamPage() {
 
         if (!videoReadyRef.current) {
           videoReadyRef.current = true;
+          clearFirstFrameWatchdog();
           setVideoReady(true);
           showConnectedToastThenEnableAudio();
         }
@@ -4047,6 +4179,7 @@ function StreamPage() {
 
         if (!videoReadyRef.current) {
           videoReadyRef.current = true;
+          clearFirstFrameWatchdog();
           setVideoReady(true);
           showConnectedToastThenEnableAudio();
         }
@@ -4096,6 +4229,11 @@ function StreamPage() {
         fsrGpuRenderingDisabledRef.current = false;
         fsrFrameRenderedRef.current = false;
         nativeBinaryTransportRef.current = false;
+        nativeBinaryReadyRef.current = false;
+        pendingNativePacketsRef.current = [];
+        nativeVideoPacketReceivedRef.current = false;
+        videoConfigAppliedRef.current = false;
+        videoConfigSignatureRef.current = "";
         nativeVideoFrameRenderedAckPendingQueueRef.current = [];
         webCodecsCapabilitiesRef.current = null;
         videoTransportRef.current = "ffmpeg-rawvideo";
@@ -4115,6 +4253,7 @@ function StreamPage() {
         setShowTouchpadOverlay(false);
         setIsPs5Console(true);
         clearConnectedFeedbackTimers();
+        clearFirstFrameWatchdog();
         setFsrFrameRendered(false);
         setVideoReady(false);
         setDisconnectAndStandbyOnExit(false);
@@ -4166,6 +4305,24 @@ function StreamPage() {
           setConnectState("starting");
           setStatus(formatProgressStatus(t, message.stage, message.progress));
         });
+        rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
+          if (!active) {
+            return;
+          }
+
+          const packet = resolveRawBinaryMessageToPacket(message);
+          if (!packet || packet.byteLength < 2) {
+            return;
+          }
+
+          nativeBinaryTransportRef.current = true;
+          if (!nativeBinaryReadyRef.current) {
+            enqueuePendingNativePacket(packet);
+            return;
+          }
+
+          handleBinaryPacket(packet);
+        });
         const currentLoginInfo = await Ipc.send("app", "getCachedPsnLoginInfo").catch(
           () => null
         );
@@ -4201,33 +4358,27 @@ function StreamPage() {
             : {}),
         });
         if (!active) {
+          if (rawStreamListener) {
+            Ipc.removeListener("stream-binary", rawStreamListener);
+          }
           if (streamProgressListener) {
             Ipc.removeListener("stream-progress", streamProgressListener);
           }
           return;
         }
 
-        const prefersNativeBinary = serverInfo?.binaryTransport === "electron-ipc";
-        nativeBinaryTransportRef.current = false;
         controlTransportReadyRef.current = true;
+
+        if (serverInfo?.video) {
+          applyVideoConfig({
+            ...serverInfo.video,
+            transport: serverInfo.videoTransport,
+          });
+        }
 
         const url = `ws://${serverInfo.host}:${serverInfo.port}${serverInfo.path}`;
         wsUrlRef.current = url;
         setStatus(t("Connecting..."));
-
-        rawStreamListener = Ipc.onRaw?.("stream-binary", (_event, message) => {
-          if (!active || !prefersNativeBinary) {
-            return;
-          }
-
-          const packet = resolveRawBinaryMessageToPacket(message);
-          if (!packet || packet.byteLength < 2) {
-            return;
-          }
-
-          nativeBinaryTransportRef.current = true;
-          handleBinaryPacket(packet);
-        });
 
         const socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
@@ -4325,6 +4476,7 @@ function StreamPage() {
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   showConnectedToastThenEnableAudio();
+                  scheduleFirstFrameWatchdog();
                 } else if (eventName === "holepunch" && sessionEvent?.finished) {
                   setConnectState("starting");
                   setStatus(formatProgressStatus(t, "holepunchDataEstablished", 100));
@@ -4348,6 +4500,7 @@ function StreamPage() {
                   setConnectState("connected");
                   setStatus(t("Connected"));
                   showConnectedToastThenEnableAudio();
+                  scheduleFirstFrameWatchdog();
                 } else if (msg?.status === "starting") {
                   setConnectState("starting");
                   setStatus(t("Connecting..."));
@@ -4428,6 +4581,8 @@ function StreamPage() {
         if (streamProgressListener) {
           Ipc.removeListener("stream-progress", streamProgressListener);
         }
+        clearFirstFrameWatchdog();
+        pendingNativePacketsRef.current = [];
         setStatus(
           t("StartSessionFailedWithReason", {
             reason: error?.message || String(error),
@@ -4479,7 +4634,13 @@ function StreamPage() {
       setShowActionbar(false);
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
+      clearFirstFrameWatchdog();
       nativeBinaryTransportRef.current = false;
+      nativeBinaryReadyRef.current = false;
+      pendingNativePacketsRef.current = [];
+      nativeVideoPacketReceivedRef.current = false;
+      videoConfigAppliedRef.current = false;
+      videoConfigSignatureRef.current = "";
       nativeVideoFrameRenderedAckPendingQueueRef.current = [];
       webCodecsCapabilitiesRef.current = null;
       videoTransportRef.current = "ffmpeg-rawvideo";
