@@ -2397,25 +2397,61 @@ const trimPendingEncodedVideoSampleQueue = () => {
 };
 
 const consumeInFlightEncodedVideoSample = (sampleId?: number) => {
-  if (nativeEncodedVideoSamplesInFlight.length < 1) {
+  const inFlightBefore = nativeEncodedVideoSamplesInFlight.length;
+  if (inFlightBefore < 1) {
+    verboseLog("video", "encoded sample ack ignored with empty in-flight queue", {
+      ackSampleId: sampleId ?? null,
+    });
     return false;
   }
 
   const numericSampleId = Number(sampleId);
   if (!Number.isFinite(numericSampleId) || numericSampleId < 1) {
-    nativeEncodedVideoSamplesInFlight.shift();
+    const consumedSample = nativeEncodedVideoSamplesInFlight.shift() || null;
+    verboseLog("video", "encoded sample ack without id consumed oldest in-flight sample", {
+      ackSampleId: sampleId ?? null,
+      consumedSampleId: consumedSample?.id ?? null,
+      inFlightBefore,
+      inFlightAfter: nativeEncodedVideoSamplesInFlight.length,
+    });
     return true;
   }
 
   const normalizedSampleId = Math.trunc(numericSampleId);
+  const oldestSampleId = nativeEncodedVideoSamplesInFlight[0]?.id ?? 0;
   const inFlightIndex = nativeEncodedVideoSamplesInFlight.findIndex(
     (entry) => entry.id === normalizedSampleId
   );
-  if (inFlightIndex < 0) {
-    return false;
+  if (inFlightIndex >= 0) {
+    nativeEncodedVideoSamplesInFlight.splice(0, inFlightIndex + 1);
+    if (inFlightIndex > 0) {
+      verboseLog("video", "encoded sample ack consumed stale in-flight samples", {
+        ackSampleId: normalizedSampleId,
+        staleCount: inFlightIndex,
+        inFlightBefore,
+        inFlightAfter: nativeEncodedVideoSamplesInFlight.length,
+      });
+    }
+    return true;
   }
 
-  nativeEncodedVideoSamplesInFlight.splice(inFlightIndex, 1);
+  if (normalizedSampleId < oldestSampleId) {
+    verboseLog("video", "late encoded sample ack ignored", {
+      ackSampleId: normalizedSampleId,
+      oldestSampleId,
+      inFlightBefore,
+    });
+    return true;
+  }
+
+  const consumedSample = nativeEncodedVideoSamplesInFlight.shift() || null;
+  log("encoded sample ack mismatch, consumed oldest in-flight sample:", {
+    ackSampleId: normalizedSampleId,
+    consumedSampleId: consumedSample?.id ?? null,
+    oldestSampleId,
+    inFlightBefore,
+    inFlightAfter: nativeEncodedVideoSamplesInFlight.length,
+  });
   return true;
 };
 
