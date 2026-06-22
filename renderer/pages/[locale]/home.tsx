@@ -273,7 +273,7 @@ function Home() {
         {isLogined && consoles.length > 0 ? (
           <div className="flex flex-col gap-4">
 
-            <div className="gap-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="gap-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
               {consoles.map((item, index) => (
                 <ConsoleHostCard
                   key={`${item.consoleId || item.host || "console"}-${index}`}
