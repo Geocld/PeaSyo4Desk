@@ -67,128 +67,73 @@ import type {
   VideoFrameFormat,
 } from "../../lib/stream-video/types";
 
-const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
-const WS_BINARY_VIDEO = 1;
-const WS_BINARY_AUDIO = 2;
-const WS_BINARY_VIDEO_ENCODED = 3;
-const WS_BINARY_HAPTIC = 4;
-const HAPTIC_PACKET_HEADER_BYTES = 4;
-const ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES = 5;
-const DISPLAY_REFRESH_INTERVAL_DEFAULT_US = Math.round(1000000 / 60);
-const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
-const MAX_PENDING_NATIVE_PACKETS = 64;
-const FIRST_FRAME_WATCHDOG_MS = 8000;
-const AUDIO_CONTEXT_LATENCY_SEC = 0.02;
-const AUDIO_SCHEDULE_LEAD_SEC = 0.01;
-const AUDIO_START_BUFFER_SEC = 0.06;
-const AUDIO_MAX_BUFFER_SEC = 0.18;
-const SHORT_PS_PRESS_MS = 150;
-const LONG_PS_PRESS_MS = 1000;
-const MIN_CONTROLLER_POLLING_RATE = 30;
-const MAX_CONTROLLER_POLLING_RATE = 1000;
-const MAX_CONTROLLER_SEND_RATE = 120;
-const MAX_CONTROLLER_TOUCH_ID = 127;
-const TOUCHPAD_BUTTON_TAP_MS = 90;
-const TOUCHPAD_SCALE_MIN = 0.5;
-const TOUCHPAD_SCALE_MAX = 2;
-const TOUCHPAD_OPACITY_MIN = 0;
-const TOUCHPAD_OPACITY_MAX = 0.8;
-const TOUCHPAD_OPACITY_DEFAULT = 0.6;
-const GAMEPAD_AXIS_QUANTIZATION = 128;
-const GAMEPAD_TRIGGER_QUANTIZATION = 64;
-const GAMEPAD_TRIGGER_DEADZONE = 0.02;
-const BRIGHTNESS_MIN = 50;
-const BRIGHTNESS_MAX = 150;
-const BRIGHTNESS_DEFAULT = 100;
-const FSR_SHARPNESS_MIN = 0;
-const FSR_SHARPNESS_MAX = 2;
-const FSR_SHARPNESS_STEP = 0.05;
-const WEBCODECS_H264_CODEC_FALLBACK = "avc1.42E01E";
-const WEBCODECS_H264_CODEC_CANDIDATES = [
-  "avc1.640033",
-  "avc1.640032",
-  "avc1.64002A",
-  "avc1.640028",
-  "avc1.4d4033",
-  "avc1.4d402a",
-  "avc1.4d4028",
-  "avc1.4d401f",
-  "avc1.42E01E",
-  "avc1.42001E",
-  "avc3.640028",
-  "avc3.4d4028",
-  "avc3.42E01E",
-];
-const WEBCODECS_HEVC_CODEC_CANDIDATES = [
-  "hvc1.1.6.L186.B0",
-  "hev1.1.6.L186.B0",
-  "hvc1.1.6.L150.B0",
-  "hev1.1.6.L150.B0",
-  "hvc1.1.6.L120.B0",
-  "hev1.1.6.L120.B0",
-  "hvc1.1.6.L93.B0",
-  "hev1.1.6.L93.B0",
-  "hvc1.2.4.L120.B0",
-  "hev1.2.4.L120.B0",
-];
-const MAX_WEBCODECS_DECODE_QUEUE_SIZE = 24;
-const MAX_WEBCODECS_RENDER_QUEUE_DEFAULT = 1;
-type SteamOsWebCodecsProfile = "balanced" | "stable" | "ultra-stable";
-type SteamOsWebCodecsTuning = {
-  decodeQueueLimit: number;
-  renderQueueLimit: number;
-  minBufferFrames: number;
-  clockDelayFrames: number;
-  rebufferLowFrames: number;
-  rebufferResumeFrames: number;
-  renderedFrameRetireKeep: number;
-  rebufferProtectionIncrementFrames: number;
-  rebufferProtectionMaxExtraFrames: number;
-  rebufferProtectionDecayRenderedFrames: number;
-  rebufferProtectionDecayStepFrames: number;
-};
-const STEAMOS_WEBCODECS_PROFILE_DEFAULT: SteamOsWebCodecsProfile = "stable";
-const STEAMOS_WEBCODECS_PROFILE_TUNING: Record<SteamOsWebCodecsProfile, SteamOsWebCodecsTuning> = {
-  balanced: {
-    decodeQueueLimit: 24,
-    renderQueueLimit: 8,
-    minBufferFrames: 4,
-    clockDelayFrames: 5,
-    rebufferLowFrames: 2,
-    rebufferResumeFrames: 5,
-    renderedFrameRetireKeep: 3,
-    rebufferProtectionIncrementFrames: 0,
-    rebufferProtectionMaxExtraFrames: 0,
-    rebufferProtectionDecayRenderedFrames: 0,
-    rebufferProtectionDecayStepFrames: 0,
-  },
-  stable: {
-    decodeQueueLimit: 36,
-    renderQueueLimit: 10,
-    minBufferFrames: 6,
-    clockDelayFrames: 8,
-    rebufferLowFrames: 3,
-    rebufferResumeFrames: 8,
-    renderedFrameRetireKeep: 4,
-    rebufferProtectionIncrementFrames: 1,
-    rebufferProtectionMaxExtraFrames: 3,
-    rebufferProtectionDecayRenderedFrames: 180,
-    rebufferProtectionDecayStepFrames: 1,
-  },
-  "ultra-stable": {
-    decodeQueueLimit: 48,
-    renderQueueLimit: 12,
-    minBufferFrames: 8,
-    clockDelayFrames: 10,
-    rebufferLowFrames: 4,
-    rebufferResumeFrames: 10,
-    renderedFrameRetireKeep: 5,
-    rebufferProtectionIncrementFrames: 1,
-    rebufferProtectionMaxExtraFrames: 5,
-    rebufferProtectionDecayRenderedFrames: 240,
-    rebufferProtectionDecayStepFrames: 1,
-  },
-};
+import {
+  PENDING_STREAM_STORAGE_KEY,
+  WS_BINARY_VIDEO,
+  WS_BINARY_AUDIO,
+  WS_BINARY_HAPTIC,
+  WS_BINARY_VIDEO_ENCODED,
+  HAPTIC_PACKET_HEADER_BYTES,
+  ENCODED_VIDEO_SAMPLE_PACKET_HEADER_BYTES,
+  DISPLAY_REFRESH_INTERVAL_DEFAULT_US,
+  MAX_PENDING_AUDIO_BYTES,
+  MAX_PENDING_NATIVE_PACKETS,
+  FIRST_FRAME_WATCHDOG_MS,
+  AUDIO_CONTEXT_LATENCY_SEC,
+  AUDIO_SCHEDULE_LEAD_SEC,
+  AUDIO_START_BUFFER_SEC,
+  AUDIO_MAX_BUFFER_SEC,
+  SHORT_PS_PRESS_MS,
+  LONG_PS_PRESS_MS,
+  MIN_CONTROLLER_POLLING_RATE,
+  MAX_CONTROLLER_POLLING_RATE,
+  MAX_CONTROLLER_SEND_RATE,
+  MAX_CONTROLLER_TOUCH_ID,
+  TOUCHPAD_BUTTON_TAP_MS,
+  TOUCHPAD_SCALE_MIN,
+  TOUCHPAD_SCALE_MAX,
+  TOUCHPAD_OPACITY_MIN,
+  TOUCHPAD_OPACITY_MAX,
+  TOUCHPAD_OPACITY_DEFAULT,
+  GAMEPAD_AXIS_QUANTIZATION,
+  GAMEPAD_TRIGGER_QUANTIZATION,
+  GAMEPAD_TRIGGER_DEADZONE,
+  BRIGHTNESS_MIN,
+  BRIGHTNESS_MAX,
+  BRIGHTNESS_DEFAULT,
+  FSR_SHARPNESS_MIN,
+  FSR_SHARPNESS_MAX,
+  FSR_SHARPNESS_STEP,
+  CONTROLLER_DEBUG_LOG_INTERVAL_MS,
+  WEBCODECS_H264_CODEC_FALLBACK,
+  WEBCODECS_H264_CODEC_CANDIDATES,
+  WEBCODECS_HEVC_CODEC_CANDIDATES,
+  MAX_WEBCODECS_DECODE_QUEUE_SIZE,
+  MAX_WEBCODECS_RENDER_QUEUE_DEFAULT,
+  STEAMOS_WEBCODECS_PROFILE_DEFAULT,
+  STEAMOS_WEBCODECS_PROFILE_TUNING,
+  type SteamOsWebCodecsProfile,
+  type StreamCodecFamily,
+  type StreamVideoTransportMode,
+  type ClientVideoCapabilities,
+} from "../../common/webStreamConstants";
+import {
+  GAMEPAD_DEADZONE,
+  CONTROLLER_BUTTONS,
+  CONTROLLER_ANALOG_BUTTONS,
+  KEYBOARD_BUTTON_ACTION_MASKS,
+  KEYBOARD_INPUT_TAGS,
+  LEGACY_TOUCHPAD_KEY,
+  LEGACY_RIGHT_STICK_UP_KEY,
+} from "../../common/streamEnums";
+import type {
+  PendingStreamConfig,
+  ControllerStatePayload,
+  ControllerInputSource,
+  VideoDisplayFormat,
+  ControllerInputKernel,
+  TouchpadVerticalPosition,
+} from "../../common/streamTypes";
 
 const resolveSteamOsWebCodecsProfile = (value: unknown): SteamOsWebCodecsProfile => {
   const normalized = String(value || "")
@@ -208,22 +153,6 @@ const getWebCodecsHardwareAccelerationModes = (): VideoDecoderConfig["hardwareAc
     return ["no-preference", "prefer-hardware", "prefer-software"];
   }
   return ["prefer-hardware", "no-preference", "prefer-software"];
-};
-
-type PendingStreamConfig = {
-  streamHost?: string;
-  isRemote?: boolean;
-  autoRemote?: boolean;
-  consoleInfo?: {
-    apName?: string;
-    host?: string;
-    remoteHost?: string;
-    parsedRemoteHost?: string;
-    rpRegistKey?: string;
-    rpKey?: string;
-    registKey?: string;
-    morning?: string;
-  };
 };
 
 const clamp = (value: number) => {
@@ -361,69 +290,7 @@ const detectClientVideoCapabilities = async (
   };
 };
 
-const GAMEPAD_DEADZONE = 0.12;
-
-const CONTROLLER_BUTTONS = {
-  CROSS: 1 << 0,
-  MOON: 1 << 1,
-  BOX: 1 << 2,
-  PYRAMID: 1 << 3,
-  DPAD_LEFT: 1 << 4,
-  DPAD_RIGHT: 1 << 5,
-  DPAD_UP: 1 << 6,
-  DPAD_DOWN: 1 << 7,
-  L1: 1 << 8,
-  R1: 1 << 9,
-  L3: 1 << 10,
-  R3: 1 << 11,
-  OPTIONS: 1 << 12,
-  SHARE: 1 << 13,
-  TOUCHPAD: 1 << 14,
-  PS: 1 << 15,
-};
-
-const CONTROLLER_ANALOG_BUTTONS = {
-  L2: 1 << 16,
-  R2: 1 << 17,
-};
-
-const KEYBOARD_BUTTON_ACTION_MASKS = {
-  DPadUp: CONTROLLER_BUTTONS.DPAD_UP,
-  DPadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
-  DPadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
-  DPadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  A: CONTROLLER_BUTTONS.CROSS,
-  B: CONTROLLER_BUTTONS.MOON,
-  X: CONTROLLER_BUTTONS.BOX,
-  Y: CONTROLLER_BUTTONS.PYRAMID,
-  View: CONTROLLER_BUTTONS.SHARE,
-  Menu: CONTROLLER_BUTTONS.OPTIONS,
-  Nexus: CONTROLLER_BUTTONS.PS,
-  Touchpad: CONTROLLER_BUTTONS.TOUCHPAD,
-  LeftShoulder: CONTROLLER_BUTTONS.L1,
-  RightShoulder: CONTROLLER_BUTTONS.R1,
-  LeftThumb: CONTROLLER_BUTTONS.L3,
-  RightThumb: CONTROLLER_BUTTONS.R3,
-} as const;
-
-const KEYBOARD_INPUT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 const DEFAULT_KEYBOARD_MAPPING = defaultSettings.input_mousekeyboard_maping;
-const LEGACY_TOUCHPAD_KEY = "t";
-const LEGACY_RIGHT_STICK_UP_KEY = "r";
-
-type ControllerStatePayload = {
-  buttons: number;
-  l2State: number;
-  r2State: number;
-  leftX: number;
-  leftY: number;
-  rightX: number;
-  rightY: number;
-  touchIdNext: number;
-  touches: [TouchPoint, TouchPoint];
-};
-
-const CONTROLLER_DEBUG_LOG_INTERVAL_MS = 1000;
 
 const formatControllerDebugTouch = (touch: TouchPoint) => {
   if (touch.id < 0) return "-1";
@@ -445,32 +312,6 @@ const hasControllerDebugActivity = (state: ControllerStatePayload) => {
     state.rightY !== 0 ||
     state.touches.some((touch) => touch.id >= 0)
   );
-};
-
-type ControllerInputButtonLike = {
-  pressed?: boolean;
-  value?: number;
-} | null | undefined;
-
-type ControllerInputSource = {
-  axes: ArrayLike<number>;
-  buttons: ArrayLike<ControllerInputButtonLike>;
-};
-
-type VideoDisplayFormat = "default" | "stretch" | "zoom";
-type ControllerInputKernel = "web" | "node";
-type TouchpadVerticalPosition = "top" | "center" | "bottom";
-type StreamCodecFamily = "h264" | "hevc";
-type StreamVideoTransportMode = "ffmpeg-rawvideo" | "compressed-webcodecs";
-
-type ClientVideoCapabilities = {
-  webCodecs: boolean;
-  preferCompressedVideo: boolean;
-  h264: boolean;
-  hevc: boolean;
-  isSteamOs?: boolean;
-  h264Codec?: string;
-  hevcCodec?: string;
 };
 
 const resolveControllerInputKernel = (settings: Record<string, any> | null | undefined): ControllerInputKernel => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Input,
@@ -106,6 +106,7 @@ const LOCAL_WAKEUP_FALLBACK_WAIT_MS = 5000;
 const LOCAL_AWAKE_CONFIRM_DELAY_MS = 5000;
 const LOCAL_WAKEUP_POLL_INTERVAL_MS = 2000;
 const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 10000;
+const REMOTE_WAKE_CONNECT_WAIT_MS = 35000;
 
 export default function StartStreamModals(props: StartStreamModalsProps) {
   const { t } = useTranslation("home");
@@ -116,6 +117,8 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
   const [errorText, setErrorText] = useState("");
   const [infoText, setInfoText] = useState("");
   const [remoteHostInput, setRemoteHostInput] = useState("");
+  const [wakeCountdownSeconds, setWakeCountdownSeconds] = useState(0);
+  const wakeCountdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const title = useMemo(() => {
     if (props.consoleItem?.serverNickname) {
@@ -131,10 +134,53 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
     setLoadingType(null);
     setErrorText("");
     setInfoText("");
+    clearWakeCountdownTimer();
     setRemoteHostInput(
       (props.consoleItem?.remoteHost || props.consoleItem?.host || "").trim()
     );
   }, [props.show, props.consoleItem?.consoleId, props.consoleItem?.remoteHost, props.consoleItem?.host]);
+
+  useEffect(() => {
+    return () => {
+      clearWakeCountdownTimer();
+    };
+  }, []);
+
+  const clearWakeCountdownTimer = () => {
+    if (wakeCountdownTimerRef.current) {
+      clearInterval(wakeCountdownTimerRef.current);
+      wakeCountdownTimerRef.current = null;
+    }
+    setWakeCountdownSeconds(0);
+  };
+
+  const waitWithWakeCountdown = (ms: number) => {
+    clearWakeCountdownTimer();
+
+    return new Promise<void>((resolve) => {
+      const startedAt = Date.now();
+      let resolved = false;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        clearWakeCountdownTimer();
+        resolve();
+      };
+
+      const update = () => {
+        const remainingMs = Math.max(0, ms - (Date.now() - startedAt));
+        const remainingSeconds = Math.ceil(remainingMs / 1000);
+        setWakeCountdownSeconds(remainingSeconds);
+        if (remainingSeconds <= 0) {
+          finish();
+        }
+      };
+
+      update();
+      wakeCountdownTimerRef.current = setInterval(update, 250);
+    });
+  };
 
   const resolveHost = async (host: string) => {
     return Ipc.send("app", "resolveHost", { host });
@@ -487,7 +533,8 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         consoleId: props.consoleItem?.consoleId,
       });
 
-      await wait(35000);
+      setInfoText(t("Wakeup packet sent, waiting before connecting..."));
+      await waitWithWakeCountdown(REMOTE_WAKE_CONNECT_WAIT_MS);
       if (props.consoleItem) {
         props.onStartPrepared({
           consoleInfo: {
@@ -505,6 +552,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       setErrorText(getErrorMessage(error, t("Failed to send wakeup packet.")));
       return;
     } finally {
+      clearWakeCountdownTimer();
       setLoadingType(null);
     }
 
@@ -607,7 +655,9 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
                 onPress={handleRemoteWakeAndConnect}
                 isLoading={loadingType === "wake"}
               >
-                {t("Wakeup and connect")}
+                {loadingType === "wake" && wakeCountdownSeconds > 0
+                  ? `${t("Wakeup and connect")} (${wakeCountdownSeconds}s)`
+                  : t("Wakeup and connect")}
               </Button>
             </ModalFooter>
           </>

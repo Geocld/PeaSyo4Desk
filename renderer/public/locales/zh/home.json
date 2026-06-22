@@ -86,6 +86,7 @@
   "Local console is in standby, sending wakeup packet...": "主机处于待机，正在唤醒...",
   "Waiting for local console to wake up...": "正在等待主机唤醒...",
   "Wakeup packets sent, waiting for local console to wake up...": "唤醒包已发送，正在等待主机唤醒...",
+  "Wakeup packet sent, waiting before connecting...": "唤醒包已发送，正在等待连接...",
   "Local console was not discovered, trying direct connect...": "当前网络未发现主机，正在尝试直接连接...",
   "Failed to prepare local stream.": "本地串流失败。",
   "Remote direct connect is ready.": "远程直接连接已准备完成。",

@@ -67,53 +67,57 @@ import type {
   VideoFrameFormat,
 } from "../../lib/stream-video/types";
 
-const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
-const WS_BINARY_VIDEO = 1;
-const WS_BINARY_AUDIO = 2;
-const WS_BINARY_HAPTIC = 4;
-const HAPTIC_PACKET_HEADER_BYTES = 4;
-const MAX_PENDING_AUDIO_BYTES = 4 * 1024 * 1024;
-const AUDIO_CONTEXT_LATENCY_SEC = 0.02;
-const AUDIO_SCHEDULE_LEAD_SEC = 0.01;
-const AUDIO_START_BUFFER_SEC = 0.06;
-const AUDIO_MAX_BUFFER_SEC = 0.18;
-const SHORT_PS_PRESS_MS = 150;
-const LONG_PS_PRESS_MS = 1000;
-const MIN_CONTROLLER_POLLING_RATE = 30;
-const MAX_CONTROLLER_POLLING_RATE = 1000;
-const MAX_CONTROLLER_SEND_RATE = 120;
-const MAX_CONTROLLER_TOUCH_ID = 127;
-const TOUCHPAD_BUTTON_TAP_MS = 90;
-const TOUCHPAD_SCALE_MIN = 0.5;
-const TOUCHPAD_SCALE_MAX = 2;
-const TOUCHPAD_OPACITY_MIN = 0;
-const TOUCHPAD_OPACITY_MAX = 0.8;
-const TOUCHPAD_OPACITY_DEFAULT = 0.6;
-const GAMEPAD_AXIS_QUANTIZATION = 128;
-const GAMEPAD_TRIGGER_QUANTIZATION = 64;
-const GAMEPAD_TRIGGER_DEADZONE = 0.02;
-const BRIGHTNESS_MIN = 50;
-const BRIGHTNESS_MAX = 150;
-const BRIGHTNESS_DEFAULT = 100;
-const FSR_SHARPNESS_MIN = 0;
-const FSR_SHARPNESS_MAX = 2;
-const FSR_SHARPNESS_STEP = 0.05;
-
-type PendingStreamConfig = {
-  streamHost?: string;
-  isRemote?: boolean;
-  autoRemote?: boolean;
-  consoleInfo?: {
-    apName?: string;
-    host?: string;
-    remoteHost?: string;
-    parsedRemoteHost?: string;
-    rpRegistKey?: string;
-    rpKey?: string;
-    registKey?: string;
-    morning?: string;
-  };
-};
+import {
+  PENDING_STREAM_STORAGE_KEY,
+  WS_BINARY_VIDEO,
+  WS_BINARY_AUDIO,
+  WS_BINARY_HAPTIC,
+  HAPTIC_PACKET_HEADER_BYTES,
+  MAX_PENDING_AUDIO_BYTES,
+  AUDIO_CONTEXT_LATENCY_SEC,
+  AUDIO_SCHEDULE_LEAD_SEC,
+  AUDIO_START_BUFFER_SEC,
+  AUDIO_MAX_BUFFER_SEC,
+  SHORT_PS_PRESS_MS,
+  LONG_PS_PRESS_MS,
+  MIN_CONTROLLER_POLLING_RATE,
+  MAX_CONTROLLER_POLLING_RATE,
+  MAX_CONTROLLER_SEND_RATE,
+  MAX_CONTROLLER_TOUCH_ID,
+  TOUCHPAD_BUTTON_TAP_MS,
+  TOUCHPAD_SCALE_MIN,
+  TOUCHPAD_SCALE_MAX,
+  TOUCHPAD_OPACITY_MIN,
+  TOUCHPAD_OPACITY_MAX,
+  TOUCHPAD_OPACITY_DEFAULT,
+  GAMEPAD_AXIS_QUANTIZATION,
+  GAMEPAD_TRIGGER_QUANTIZATION,
+  GAMEPAD_TRIGGER_DEADZONE,
+  BRIGHTNESS_MIN,
+  BRIGHTNESS_MAX,
+  BRIGHTNESS_DEFAULT,
+  FSR_SHARPNESS_MIN,
+  FSR_SHARPNESS_MAX,
+  FSR_SHARPNESS_STEP,
+  CONTROLLER_DEBUG_LOG_INTERVAL_MS,
+} from "../../common/streamConstants";
+import {
+  GAMEPAD_DEADZONE,
+  CONTROLLER_BUTTONS,
+  CONTROLLER_ANALOG_BUTTONS,
+  KEYBOARD_BUTTON_ACTION_MASKS,
+  KEYBOARD_INPUT_TAGS,
+  LEGACY_TOUCHPAD_KEY,
+  LEGACY_RIGHT_STICK_UP_KEY,
+} from "../../common/streamEnums";
+import type {
+  PendingStreamConfig,
+  ControllerStatePayload,
+  ControllerInputSource,
+  VideoDisplayFormat,
+  ControllerInputKernel,
+  TouchpadVerticalPosition,
+} from "../../common/streamTypes";
 
 const clamp = (value: number) => {
   if (value < 0) return 0;
@@ -138,69 +142,7 @@ const isHdrVideoFormat = (format: VideoFrameFormat) => {
   return format === "I010" || format === "P010";
 };
 
-const GAMEPAD_DEADZONE = 0.12;
-
-const CONTROLLER_BUTTONS = {
-  CROSS: 1 << 0,
-  MOON: 1 << 1,
-  BOX: 1 << 2,
-  PYRAMID: 1 << 3,
-  DPAD_LEFT: 1 << 4,
-  DPAD_RIGHT: 1 << 5,
-  DPAD_UP: 1 << 6,
-  DPAD_DOWN: 1 << 7,
-  L1: 1 << 8,
-  R1: 1 << 9,
-  L3: 1 << 10,
-  R3: 1 << 11,
-  OPTIONS: 1 << 12,
-  SHARE: 1 << 13,
-  TOUCHPAD: 1 << 14,
-  PS: 1 << 15,
-};
-
-const CONTROLLER_ANALOG_BUTTONS = {
-  L2: 1 << 16,
-  R2: 1 << 17,
-};
-
-const KEYBOARD_BUTTON_ACTION_MASKS = {
-  DPadUp: CONTROLLER_BUTTONS.DPAD_UP,
-  DPadDown: CONTROLLER_BUTTONS.DPAD_DOWN,
-  DPadLeft: CONTROLLER_BUTTONS.DPAD_LEFT,
-  DPadRight: CONTROLLER_BUTTONS.DPAD_RIGHT,
-  A: CONTROLLER_BUTTONS.CROSS,
-  B: CONTROLLER_BUTTONS.MOON,
-  X: CONTROLLER_BUTTONS.BOX,
-  Y: CONTROLLER_BUTTONS.PYRAMID,
-  View: CONTROLLER_BUTTONS.SHARE,
-  Menu: CONTROLLER_BUTTONS.OPTIONS,
-  Nexus: CONTROLLER_BUTTONS.PS,
-  Touchpad: CONTROLLER_BUTTONS.TOUCHPAD,
-  LeftShoulder: CONTROLLER_BUTTONS.L1,
-  RightShoulder: CONTROLLER_BUTTONS.R1,
-  LeftThumb: CONTROLLER_BUTTONS.L3,
-  RightThumb: CONTROLLER_BUTTONS.R3,
-} as const;
-
-const KEYBOARD_INPUT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 const DEFAULT_KEYBOARD_MAPPING = defaultSettings.input_mousekeyboard_maping;
-const LEGACY_TOUCHPAD_KEY = "t";
-const LEGACY_RIGHT_STICK_UP_KEY = "r";
-
-type ControllerStatePayload = {
-  buttons: number;
-  l2State: number;
-  r2State: number;
-  leftX: number;
-  leftY: number;
-  rightX: number;
-  rightY: number;
-  touchIdNext: number;
-  touches: [TouchPoint, TouchPoint];
-};
-
-const CONTROLLER_DEBUG_LOG_INTERVAL_MS = 1000;
 
 const formatControllerDebugTouch = (touch: TouchPoint) => {
   if (touch.id < 0) return "-1";
@@ -223,20 +165,6 @@ const hasControllerDebugActivity = (state: ControllerStatePayload) => {
     state.touches.some((touch) => touch.id >= 0)
   );
 };
-
-type ControllerInputButtonLike = {
-  pressed?: boolean;
-  value?: number;
-} | null | undefined;
-
-type ControllerInputSource = {
-  axes: ArrayLike<number>;
-  buttons: ArrayLike<ControllerInputButtonLike>;
-};
-
-type VideoDisplayFormat = "default" | "stretch" | "zoom";
-type ControllerInputKernel = "web" | "node";
-type TouchpadVerticalPosition = "top" | "center" | "bottom";
 
 const resolveControllerInputKernel = (settings: Record<string, any> | null | undefined): ControllerInputKernel => {
   const direct = String(settings?.gamepad_kernel || "")

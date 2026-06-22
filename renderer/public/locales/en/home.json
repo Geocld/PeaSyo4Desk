@@ -86,6 +86,7 @@
   "Local console is in standby, sending wakeup packet...": "Console is in standby, waking up...",
   "Waiting for local console to wake up...": "Waiting for console to wake up...",
   "Wakeup packets sent, waiting for local console to wake up...": "Wakeup packets sent, waiting for local console to wake up...",
+  "Wakeup packet sent, waiting before connecting...": "Wakeup packet sent, waiting before connecting...",
   "Local console was not discovered, trying direct connect...": "Console was not discovered on current network, trying direct connect...",
   "Failed to prepare local stream.": "Local stream failed.",
   "Remote direct connect is ready.": "Remote direct connect is ready.",
