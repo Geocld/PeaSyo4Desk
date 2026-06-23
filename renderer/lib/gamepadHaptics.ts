@@ -1,6 +1,9 @@
+import { DEFAULT_HAPTIC_FEEDBACK_INTENSITY } from "./dualsenseHaptics/constants";
+import { dualSenseBluetoothReport36HapticSink } from "./dualsenseHaptics/bluetoothReport36Sink";
 import { dualSenseUsbAudioHapticSink } from "./dualsenseHaptics/usbAudioSink";
+import { requestDualSenseHidAccessIfNeeded } from "./dualsenseHid";
 
-const DEFAULT_HAPTIC_FEEDBACK_INTENSITY = 1;
+const LOG_PREFIX = "[gamepad-haptics]";
 
 type PeasyoHapticAudioEvent = {
   dataBase64?: string;
@@ -18,15 +21,41 @@ const isHapticsEnabled = (settings?: GamepadHapticsSettings) => {
 };
 
 export const canUseDualSenseGamepadHaptics = (settings?: GamepadHapticsSettings) => {
-  return isHapticsEnabled(settings) && dualSenseUsbAudioHapticSink.isAvailable();
+  return (
+    isHapticsEnabled(settings) &&
+    (dualSenseBluetoothReport36HapticSink.isAvailable() ||
+      dualSenseUsbAudioHapticSink.isAvailable())
+  );
 };
 
-export const prepareDualSenseGamepadHaptics = (settings?: GamepadHapticsSettings) => {
+export const prepareDualSenseGamepadHaptics = async (settings?: GamepadHapticsSettings) => {
   if (!isHapticsEnabled(settings)) {
-    return Promise.resolve(false);
+    return false;
   }
 
-  return dualSenseUsbAudioHapticSink.initialize();
+  const hadBluetoothCandidates = dualSenseBluetoothReport36HapticSink.hasCandidateDevices();
+  if (!hadBluetoothCandidates) {
+    await requestDualSenseHidAccessIfNeeded(true);
+  }
+
+  const bluetoothReady = await dualSenseBluetoothReport36HapticSink.initialize();
+  if (bluetoothReady) {
+    console.info(`${LOG_PREFIX} DualSense haptics prepared`, {
+      backend: "bluetooth-report36",
+      hadBluetoothCandidates,
+      hasBluetoothCandidates: dualSenseBluetoothReport36HapticSink.hasCandidateDevices(),
+    });
+    return true;
+  }
+
+  const usbReady = await dualSenseUsbAudioHapticSink.initialize();
+  console.info(`${LOG_PREFIX} DualSense haptics prepared`, {
+    backend: usbReady ? "usb-audio" : "none",
+    hadBluetoothCandidates,
+    hasBluetoothCandidates: dualSenseBluetoothReport36HapticSink.hasCandidateDevices(),
+    usbReady,
+  });
+  return bluetoothReady || usbReady;
 };
 
 const clampByte = (value: unknown) => {
@@ -129,12 +158,18 @@ export const triggerGamepadHapticsFromPeasyo = (
     return false;
   }
 
-  return dualSenseUsbAudioHapticSink.pushPcmS16Le(
-    pcmBytes,
-    settings?.gain ?? DEFAULT_HAPTIC_FEEDBACK_INTENSITY
-  );
+  const gain = settings?.gain ?? DEFAULT_HAPTIC_FEEDBACK_INTENSITY;
+  if (
+    dualSenseBluetoothReport36HapticSink.isAvailable() ||
+    dualSenseBluetoothReport36HapticSink.hasCandidateDevices()
+  ) {
+    return dualSenseBluetoothReport36HapticSink.pushPcmS16Le(pcmBytes, gain);
+  }
+
+  return dualSenseUsbAudioHapticSink.pushPcmS16Le(pcmBytes, gain);
 };
 
 export const stopDualSenseGamepadHaptics = () => {
+  dualSenseBluetoothReport36HapticSink.clear();
   dualSenseUsbAudioHapticSink.clear();
 };

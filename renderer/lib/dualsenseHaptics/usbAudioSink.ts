@@ -1,9 +1,12 @@
+import {
+  DUALSENSE_WEB_HAPTIC_OUTPUT_BOOST,
+  normalizeHapticGain,
+} from "./constants";
+
 const DUALSENSE_HAPTIC_SOURCE_RATE = 3000;
 const DUALSENSE_HAPTIC_TARGET_RATE = 48000;
 const DUALSENSE_HAPTIC_UPSAMPLE_FACTOR = 16;
 const DUALSENSE_HAPTIC_OUTPUT_CHANNELS = 4;
-const DEFAULT_HAPTIC_FEEDBACK_INTENSITY = 1;
-const DUALSENSE_USB_HAPTIC_OUTPUT_BOOST = 2.5;
 const MAX_USB_HAPTIC_QUEUE_SECONDS = 0.06;
 const WORKLET_NAME = "dualsense-usb-haptics";
 const LOG_PREFIX = "[dualsense-usb-haptics]";
@@ -21,19 +24,6 @@ const looksLikeDualSenseAudioOutput = (device: MediaDeviceInfo) => {
   return label.includes("dualsense") || label.includes("wireless controller");
 };
 
-const clamp = (value: number, min: number, max: number) => {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
-  if (value < min) {
-    return min;
-  }
-  if (value > max) {
-    return max;
-  }
-  return value;
-};
-
 const decodeSignedPcm16Le = (low: number, high: number) => {
   const value = (high << 8) | low;
   return value > 0x7fff ? value - 0x10000 : value;
@@ -47,14 +37,6 @@ const clampSignedPcm16 = (value: number) => {
     return -32768;
   }
   return Math.trunc(value);
-};
-
-const normalizeGain = (gain: unknown) => {
-  const numeric = Number(gain);
-  if (!Number.isFinite(numeric)) {
-    return DEFAULT_HAPTIC_FEEDBACK_INTENSITY;
-  }
-  return clamp(numeric, 0, 2);
 };
 
 const buildWorkletSource = () => `
@@ -170,7 +152,7 @@ const s16leStereoToAndroidQuadOutput = (
   const passThroughLeft = new Int16Array(inputFrames);
   const hapticLeft = new Int16Array(inputFrames);
   const hapticRight = new Int16Array(inputFrames);
-  const effectiveGain = gain * DUALSENSE_USB_HAPTIC_OUTPUT_BOOST;
+  const effectiveGain = gain * DUALSENSE_WEB_HAPTIC_OUTPUT_BOOST;
 
   for (let index = 0; index < inputFrames; index += 1) {
     const offset = index * 4;
@@ -275,7 +257,7 @@ class DualSenseUsbAudioHapticSink {
       });
     }
 
-    const normalizedGain = normalizeGain(gain);
+    const normalizedGain = normalizeHapticGain(gain);
     const samples = s16leStereoToAndroidQuadOutput(
       pcmBytes,
       normalizedGain,
@@ -459,8 +441,8 @@ class DualSenseUsbAudioHapticSink {
         inputFrames: Math.floor(inputBytes / 4),
         outputFrames: Math.floor(outputSamples / DUALSENSE_HAPTIC_OUTPUT_CHANNELS),
         gain,
-        outputBoost: DUALSENSE_USB_HAPTIC_OUTPUT_BOOST,
-        effectiveGain: gain * DUALSENSE_USB_HAPTIC_OUTPUT_BOOST,
+        outputBoost: DUALSENSE_WEB_HAPTIC_OUTPUT_BOOST,
+        effectiveGain: gain * DUALSENSE_WEB_HAPTIC_OUTPUT_BOOST,
         sampleRate,
         layout: "[0,L,L,R]",
       });

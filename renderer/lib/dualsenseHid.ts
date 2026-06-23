@@ -38,6 +38,8 @@ const DUALSENSE_DPAD_DIRECTION_NEUTRAL = 0x08;
 
 const DUALSENSE_OUTPUT_REPORT_USB = 0x02;
 const DUALSENSE_OUTPUT_REPORT_BT = 0x31;
+const DUALSENSE_BT_AUDIO_REPORT = 0x36;
+const DUALSENSE_BT_AUDIO_REPORT_BYTES = 397;
 const DUALSENSE_OUTPUT_STATE_BYTES = 47;
 const DUALSENSE_OUTPUT_REPORT_BT_BYTES = 77;
 const DUALSENSE_TRIGGER_PARAM_BYTES = 10;
@@ -112,6 +114,13 @@ type HID = {
   }) => Promise<HIDDevice[]>;
   addEventListener: (type: "connect" | "disconnect", listener: () => void) => void;
   removeEventListener: (type: "connect" | "disconnect", listener: () => void) => void;
+};
+
+export type DualSenseBluetoothHapticDevice = {
+  productName: string;
+  opened: boolean;
+  open: () => Promise<boolean>;
+  sendReport: (reportId: number, data: Uint8Array) => Promise<void>;
 };
 
 type TouchPoint = {
@@ -1151,8 +1160,8 @@ class DualSenseHidBridge {
     return isGenericWirelessControllerGamepad(gamepad) && this.deviceContexts.size > 0;
   }
 
-  requestAccessIfNeeded() {
-    if (!this.needsAccess()) {
+  requestAccessIfNeeded(force = false) {
+    if (!force && !this.needsAccess()) {
       return Promise.resolve(false);
     }
 
@@ -1370,6 +1379,26 @@ class DualSenseHidBridge {
     }
 
     return queued;
+  }
+
+  getBluetoothHapticDevices(): DualSenseBluetoothHapticDevice[] {
+    const contexts = this.getActiveDeviceContexts();
+    return contexts
+      .filter((context) => {
+        const bluetoothAudioReportBytes =
+          context.outputReportBytes.get(DUALSENSE_BT_AUDIO_REPORT) || 0;
+        return (
+          context.connectionType === "bluetooth" ||
+          context.lastInputReportId === DUALSENSE_INPUT_REPORT_BT ||
+          bluetoothAudioReportBytes >= DUALSENSE_BT_AUDIO_REPORT_BYTES
+        );
+      })
+      .map((context) => ({
+        productName: context.device.productName || "DualSense Wireless Controller",
+        opened: context.device.opened,
+        open: () => this.ensureDeviceOpen(context),
+        sendReport: (reportId: number, data: Uint8Array) => context.device.sendReport(reportId, data),
+      }));
   }
 
   applyLedColor(event: unknown) {
@@ -2253,8 +2282,12 @@ export const playDualSenseHidHapticsForActiveDevices = (
   return bridge.playHapticsForActiveDevices(frame, gain);
 };
 
-export const requestDualSenseHidAccessIfNeeded = () => {
-  return bridge.requestAccessIfNeeded();
+export const getDualSenseBluetoothHapticDevices = () => {
+  return bridge.getBluetoothHapticDevices();
+};
+
+export const requestDualSenseHidAccessIfNeeded = (force = false) => {
+  return bridge.requestAccessIfNeeded(force);
 };
 
 export const applyDualSenseTriggerEffectsFromPeasyo = (event: unknown) => {

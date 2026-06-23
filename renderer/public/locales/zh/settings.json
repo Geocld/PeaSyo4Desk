@@ -109,7 +109,7 @@
   "Rumble": "振动",
   "RumbleDesc": "如果手柄支持振动，可以设置游戏中是否振动",
   "Haptic feedback": "触觉反馈",
-  "HapticFeedbackDesc": "启用后在 Web 内核下优先使用 DualSense 触觉（需要手柄支持），当前连接不支持时自动降级为振动模拟",
+  "HapticFeedbackDesc": "该模式仅支持Web手柄内核，由于系统驱动限制，建议有线连接dualsense控制器获得完整的触觉反馈体验",
   "Haptic feedback intensity": "触觉反馈强度",
   "HapticFeedbackIntensityDesc": "设置 DualSense 触觉强度（仅在开启触觉反馈时生效）",
   "HapticStandard": "标准",
