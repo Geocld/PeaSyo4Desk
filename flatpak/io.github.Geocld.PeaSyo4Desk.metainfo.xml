@@ -23,6 +23,13 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.1.0" date="2026-06-23">
+     <description>
+        <ul>
+          <li>Add haptic feedback</li>
+        </ul>
+     </description>
+    </release>
     <release version="2.0.1" date="2026-06-16">
      <description>
         <ul>
