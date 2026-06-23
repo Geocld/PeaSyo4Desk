@@ -1,4 +1,31 @@
-import rawPeasyo from "peasyo-lib";
+import fs from "fs";
+import path from "path";
+
+declare const __non_webpack_require__: NodeRequire | undefined;
+
+const runtimeRequire =
+  typeof __non_webpack_require__ === "function" ? __non_webpack_require__ : require;
+
+const resolvePeasyoLibPath = () => {
+  const candidates = [
+    path.resolve(__dirname, "..", "peasyo-lib"),
+    path.resolve(process.cwd(), "peasyo-lib"),
+    path.resolve(__dirname, "..", "..", "peasyo-lib"),
+  ];
+
+  const match = candidates.find((candidate) => {
+    return fs.existsSync(path.join(candidate, "package.json"));
+  });
+
+  if (!match) {
+    throw new Error(`Local peasyo-lib was not found. Tried: ${candidates.join(", ")}`);
+  }
+
+  return match;
+};
+
+const peasyoLibPath = resolvePeasyoLibPath();
+const rawPeasyo = runtimeRequire(peasyoLibPath);
 
 const binding = rawPeasyo as any;
 

@@ -1,7 +1,8 @@
 const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 const { platform, arch } = process;
-const packageName = require("./package.json").name;
+const { name: packageName, version } = require("./package.json");
 
 function isMusl() {
   if (!process.report || typeof process.report.getReport !== "function") {
@@ -43,6 +44,6 @@ function resolveTarget() {
 }
 
 const target = resolveTarget();
-const addonName = `./${packageName}.${target}.node`;
+const addonPath = path.join(__dirname, "native", version, `${packageName}.${target}.node`);
 
-module.exports = require(addonName);
+module.exports = require(addonPath);

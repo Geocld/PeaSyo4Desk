@@ -11,8 +11,10 @@ files:
     filter:
       - package.json
       - app
+      - peasyo-lib
 asarUnpack:
   - node_modules/peasyo-sdl-lib/**/*
+  - peasyo-lib/**/*.node
 extraResources:
   - from: resources/icon.ico
     to: icon.ico
