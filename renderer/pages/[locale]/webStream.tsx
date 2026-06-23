@@ -40,7 +40,8 @@ import {
 } from "../../lib/dualsenseHid";
 import { handleGamepadLedColorFromPeasyo } from "../../lib/gamepadLedColor";
 import {
-  canUseDualSenseGamepadHaptics,
+  prepareDualSenseGamepadHaptics,
+  stopDualSenseGamepadHaptics,
   triggerGamepadHapticsFromPeasyo,
 } from "../../lib/gamepadHaptics";
 import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
@@ -934,7 +935,9 @@ function StreamPage() {
   const rumbleEnabledRef = useRef(settings?.rumble !== false);
   const rumbleIntensityRef = useRef(settings?.rumble_intensity);
   const hapticEnabledRef = useRef(settings?.haptic === true);
-  const hapticIntensityRef = useRef(settings?.haptic_feedback_intensity);
+  const hapticIntensityRef = useRef(
+    settings?.haptic_feedback_intensity ?? defaultSettings.haptic_feedback_intensity
+  );
   const hapticSuppressedFrameSeqRef = useRef<Set<number>>(new Set());
 
   const steamOsRuntime = isSteamOsRuntime();
@@ -1259,7 +1262,8 @@ function StreamPage() {
     rumbleEnabledRef.current = settings?.rumble !== false;
     rumbleIntensityRef.current = settings?.rumble_intensity;
     hapticEnabledRef.current = settings?.haptic === true;
-    hapticIntensityRef.current = settings?.haptic_feedback_intensity;
+    hapticIntensityRef.current =
+      settings?.haptic_feedback_intensity ?? defaultSettings.haptic_feedback_intensity;
 
     controllerPollingIntervalMsRef.current = resolveControllerPollingIntervalMs(
       settings?.polling_rate
@@ -1273,6 +1277,10 @@ function StreamPage() {
         return;
       }
       void requestDualSenseHidAccessIfNeeded();
+      void prepareDualSenseGamepadHaptics({
+        enabled: hapticEnabledRef.current,
+        gain: hapticIntensityRef.current,
+      });
     };
 
     const activityEvent = () => {
@@ -4231,6 +4239,7 @@ function StreamPage() {
           lastSentControllerStateRef.current = createIdleControllerState();
           lastControllerSendAtRef.current = 0;
           hapticSuppressedFrameSeqRef.current.clear();
+          stopDualSenseGamepadHaptics();
           setStatus(t("Connecting..."));
         };
 
@@ -4258,18 +4267,16 @@ function StreamPage() {
                   const rumbleSource = String(
                     (sessionEvent as { source?: unknown })?.source || ""
                   );
-                  if (
-                    rumbleSource === "haptic_audio" &&
+                  const shouldSuppressWebRumbleForHaptics =
                     controllerInputKernelRef.current === "web" &&
-                    canUseDualSenseGamepadHaptics({ enabled: hapticEnabledRef.current })
+                    hapticEnabledRef.current;
+                  if (
+                    shouldSuppressWebRumbleForHaptics ||
+                    (rumbleSource === "haptic_audio" &&
+                      Number.isFinite(hapticFrameSeq) &&
+                      hapticSuppressedFrameSeqRef.current.delete(Math.trunc(hapticFrameSeq)))
                   ) {
-                    // DS5 haptics path is active, so ignore the motor fallback
-                    // derived from the same PCM frame.
-                  } else if (
-                    Number.isFinite(hapticFrameSeq) &&
-                    hapticSuppressedFrameSeqRef.current.delete(Math.trunc(hapticFrameSeq))
-                  ) {
-                    // Haptic frame already sent through DS5 HID path.
+                    // Web haptics mode must not fall back to simulated dual-rumble.
                   } else if (controllerInputKernelRef.current === "node") {
                     void triggerNativeGamepadRumbleFromPeasyo(sessionEvent, {
                       enabled: rumbleEnabledRef.current,
@@ -4476,6 +4483,7 @@ function StreamPage() {
       setShowTouchpadOverlay(false);
       clearConnectedFeedbackTimers();
       clearFirstFrameWatchdog();
+      stopDualSenseGamepadHaptics();
       nativeBinaryTransportRef.current = false;
       nativeBinaryReadyRef.current = false;
       pendingNativePacketsRef.current = [];

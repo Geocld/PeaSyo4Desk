@@ -1,7 +1,6 @@
-import {
-  playDualSenseHidHapticsForActiveDevices,
-  supportsDualSenseHidHapticsForActiveDevices,
-} from "./dualsenseHid";
+import { dualSenseUsbAudioHapticSink } from "./dualsenseHaptics/usbAudioSink";
+
+const DEFAULT_HAPTIC_FEEDBACK_INTENSITY = 1;
 
 type PeasyoHapticAudioEvent = {
   dataBase64?: string;
@@ -19,7 +18,15 @@ const isHapticsEnabled = (settings?: GamepadHapticsSettings) => {
 };
 
 export const canUseDualSenseGamepadHaptics = (settings?: GamepadHapticsSettings) => {
-  return isHapticsEnabled(settings) && supportsDualSenseHidHapticsForActiveDevices();
+  return isHapticsEnabled(settings) && dualSenseUsbAudioHapticSink.isAvailable();
+};
+
+export const prepareDualSenseGamepadHaptics = (settings?: GamepadHapticsSettings) => {
+  if (!isHapticsEnabled(settings)) {
+    return Promise.resolve(false);
+  }
+
+  return dualSenseUsbAudioHapticSink.initialize();
 };
 
 const clampByte = (value: unknown) => {
@@ -112,7 +119,7 @@ export const triggerGamepadHapticsFromPeasyo = (
   event: unknown,
   settings?: GamepadHapticsSettings
 ) => {
-  if (!canUseDualSenseGamepadHaptics(settings)) {
+  if (!isHapticsEnabled(settings)) {
     return false;
   }
 
@@ -122,5 +129,12 @@ export const triggerGamepadHapticsFromPeasyo = (
     return false;
   }
 
-  return playDualSenseHidHapticsForActiveDevices(pcmBytes, settings?.gain ?? 0.5);
+  return dualSenseUsbAudioHapticSink.pushPcmS16Le(
+    pcmBytes,
+    settings?.gain ?? DEFAULT_HAPTIC_FEEDBACK_INTENSITY
+  );
+};
+
+export const stopDualSenseGamepadHaptics = () => {
+  dualSenseUsbAudioHapticSink.clear();
 };
