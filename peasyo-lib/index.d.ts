@@ -225,6 +225,35 @@ export class Discovery {
   setLogCallback(fn: ((event: LogEvent) => void) | null): void;
 }
 
+export interface PrepareLocalStreamOptions {
+  host?: string;
+  hostId?: string;
+  ps5?: boolean;
+  userCredential?: string | number;
+  wakeIfStandby?: boolean;
+  discoveryTimeoutMs?: number;
+  wakeRetryIntervalMs?: number;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  readyConfirmDelayMs?: number;
+}
+
+export interface PrepareLocalStreamResult {
+  status: "ready" | "standby" | "unknown" | "not_discovered" | "wake_timeout";
+  streamReady: boolean;
+  host?: string;
+  hostId?: string;
+  hostType?: string;
+  target?: number;
+  stateName?: string;
+  wakeAttempts: number;
+  discovered: boolean;
+}
+
+export function prepareLocalStream(
+  options: PrepareLocalStreamOptions
+): Promise<PrepareLocalStreamResult>;
+
 export interface RemoteDevice {
   consoleType: number;
   deviceName: string;

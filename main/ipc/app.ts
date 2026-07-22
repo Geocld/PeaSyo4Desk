@@ -21,13 +21,14 @@ import {
   PSN_ACCOUNT_ID_INVALID_MESSAGE,
 } from "../psnAccountId";
 
-const WAKEUP_PORT = 9302;
+const WAKEUP_PORT_PS4 = 987;
+const WAKEUP_PORT_PS5 = 9302;
 const DDP_CLIENT_TYPE = "vr";
 const DDP_AUTH_TYPE = "R";
 const DDP_MODEL = "w";
 const DDP_APP_TYPE = "r";
-const DDP_VERSION = "00030010";
-const DEFAULT_WAKEUP_CREDENTIAL = "4077903901";
+const DDP_VERSION_PS4 = "00020020";
+const DDP_VERSION_PS5 = "00030010";
 const PEASYO_DISCOVERY_TIMEOUT_MS = 3000;
 const PEASYO_REGIST_TIMEOUT_MS = 90000;
 const PEASYO_PS4_TARGET = 1000;
@@ -40,8 +41,14 @@ const TRANSFER_FILE_PREFIX = "peasyo_export_";
 const VERBOSE_LOG_EXPORT_PREFIX = "peasyo_stream_logs_";
 const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
 const PSN_TOKEN_REFRESH_GRACE_MS = 60_000;
+const LOCAL_WAKEUP_RETRY_INTERVAL_MS = 5000;
+const LOCAL_WAKEUP_POLL_INTERVAL_MS = 2000;
+const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 15000;
+const LOCAL_READY_CONFIRM_DELAY_MS = 5000;
 
 let peasyoInitialized = false;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isPersistableConsoleCache = (value: unknown) => {
   return (
@@ -393,6 +400,39 @@ type DiscoverConsolesArgs = {
   timeoutMs?: number;
 };
 
+type WakeupPacketArgs = {
+  host: string;
+  hostId?: string;
+  userCredential?: string | number;
+  timeoutMs?: number;
+  ps5?: boolean;
+};
+
+type PrepareLocalStreamArgs = {
+  host: string;
+  hostId?: string;
+  ps5?: boolean;
+  userCredential?: string | number;
+  wakeIfStandby?: boolean;
+  discoveryTimeoutMs?: number;
+  wakeRetryIntervalMs?: number;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  readyConfirmDelayMs?: number;
+};
+
+type PrepareLocalStreamResult = {
+  status: "ready" | "standby" | "unknown" | "not_discovered" | "wake_timeout";
+  streamReady: boolean;
+  host?: string;
+  hostId?: string;
+  hostType?: string;
+  target?: number;
+  stateName?: string;
+  wakeAttempts: number;
+  discovered: boolean;
+};
+
 type RegisterConsoleArgs = {
   host: string;
   pin: string | number;
@@ -675,6 +715,167 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
     }
   });
 
+const normalizeLocalConsoleState = (value: unknown) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "READY" || normalized === "AWAKE") {
+    return "READY" as const;
+  }
+  if (normalized === "STANDBY") {
+    return "STANDBY" as const;
+  }
+  return "UNKNOWN" as const;
+};
+
+const findMatchedDiscoveredHost = (
+  discoveredHosts: DiscoveryHost[],
+  args: PrepareLocalStreamArgs
+) => {
+  const normalizedHost = String(args.host || "").trim();
+  const normalizedHostId = String(args.hostId || "").trim();
+
+  if (normalizedHost) {
+    const hostMatch = discoveredHosts.find((item) => {
+      return String(item?.hostAddr || "").trim() === normalizedHost;
+    });
+    if (hostMatch) {
+      return hostMatch;
+    }
+  }
+
+  if (normalizedHostId) {
+    return (
+      discoveredHosts.find((item) => {
+        return String(item?.hostId || "").trim() === normalizedHostId;
+      }) || null
+    );
+  }
+
+  return null;
+};
+
+const buildPreparedLocalStreamResult = (
+  status: PrepareLocalStreamResult["status"],
+  streamReady: boolean,
+  host: DiscoveryHost | null,
+  wakeAttempts: number,
+  discovered: boolean
+): PrepareLocalStreamResult => {
+  return {
+    status,
+    streamReady,
+    host: String(host?.hostAddr || "").trim() || undefined,
+    hostId: String(host?.hostId || "").trim() || undefined,
+    hostType: String(host?.hostType || "").trim() || undefined,
+    target: typeof host?.target === "number" ? host.target : undefined,
+    stateName: String(host?.stateName || "").trim() || undefined,
+    wakeAttempts,
+    discovered,
+  };
+};
+
+const prepareLocalStreamWithFallback = async (
+  args: PrepareLocalStreamArgs
+): Promise<PrepareLocalStreamResult> => {
+  const normalizedHost = String(args.host || "").trim();
+  if (!normalizedHost) {
+    throw new Error("Host is required.");
+  }
+
+  const ps5 = args.ps5 !== false;
+  const wakeIfStandby = args.wakeIfStandby !== false;
+  const discoveryTimeoutMs = Number(args.discoveryTimeoutMs || PEASYO_DISCOVERY_TIMEOUT_MS);
+  const wakeRetryIntervalMs = Number(args.wakeRetryIntervalMs || LOCAL_WAKEUP_RETRY_INTERVAL_MS);
+  const pollIntervalMs = Number(args.pollIntervalMs || LOCAL_WAKEUP_POLL_INTERVAL_MS);
+  const pollTimeoutMs = Number(args.pollTimeoutMs || LOCAL_WAKEUP_POLL_TIMEOUT_MS);
+  const readyConfirmDelayMs = Number(args.readyConfirmDelayMs || LOCAL_READY_CONFIRM_DELAY_MS);
+
+  const discoveredHosts = await discoverConsolesWithPeasyo({
+    ps5,
+    timeoutMs: discoveryTimeoutMs,
+  });
+  const matchedHost = findMatchedDiscoveredHost(discoveredHosts, args);
+  const initialState = normalizeLocalConsoleState(matchedHost?.stateName);
+
+  if (matchedHost && initialState === "READY") {
+    return buildPreparedLocalStreamResult("ready", true, matchedHost, 0, true);
+  }
+
+  if (matchedHost && initialState === "UNKNOWN") {
+    return buildPreparedLocalStreamResult("unknown", false, matchedHost, 0, true);
+  }
+
+  if (!wakeIfStandby) {
+    if (matchedHost) {
+      const status =
+        initialState === "STANDBY" ? "standby" : initialState === "READY" ? "ready" : "unknown";
+      return buildPreparedLocalStreamResult(status, false, matchedHost, 0, true);
+    }
+    return {
+      status: "not_discovered",
+      streamReady: false,
+      wakeAttempts: 0,
+      discovered: false,
+    };
+  }
+
+  const wakeArgs: WakeupPacketArgs = {
+    host: matchedHost?.hostAddr || normalizedHost,
+    hostId: args.hostId,
+    userCredential: args.userCredential,
+    timeoutMs: args.discoveryTimeoutMs,
+    ps5,
+  };
+  let wakeAttempts = 0;
+
+  // Keep the JS fallback on the same cadence as Android/native orchestration:
+  // wake immediately, try a second wake after 5s, and poll discovery every 2s.
+  await sendWakeupWithFallback(wakeArgs);
+  wakeAttempts += 1;
+
+  const pollStartedAt = Date.now();
+  let followupWakeSent = false;
+  while (Date.now() - pollStartedAt < pollTimeoutMs) {
+    await wait(pollIntervalMs);
+
+    if (!followupWakeSent && Date.now() - pollStartedAt >= wakeRetryIntervalMs) {
+      await sendWakeupWithFallback(wakeArgs);
+      wakeAttempts += 1;
+      followupWakeSent = true;
+    }
+
+    const polledHosts = await discoverConsolesWithPeasyo({
+      ps5,
+      timeoutMs: discoveryTimeoutMs,
+    });
+    const polledHost = findMatchedDiscoveredHost(polledHosts, args);
+    if (!polledHost) {
+      continue;
+    }
+
+    if (normalizeLocalConsoleState(polledHost.stateName) !== "READY") {
+      continue;
+    }
+
+    // Once the console first reports ready, wait a short settle window before streaming.
+    if (readyConfirmDelayMs > 0) {
+      await wait(readyConfirmDelayMs);
+    }
+
+    return buildPreparedLocalStreamResult("ready", true, polledHost, wakeAttempts, true);
+  }
+
+  if (matchedHost) {
+    return buildPreparedLocalStreamResult("wake_timeout", false, matchedHost, wakeAttempts, true);
+  }
+
+  return {
+    status: "not_discovered",
+    streamReady: false,
+    wakeAttempts,
+    discovered: false,
+  };
+};
+
 const registerConsoleWithPeasyo = (args: RegisterConsoleArgs) =>
   new Promise<RegisteredHost & { userCredential?: string }>((resolve, reject) => {
     ensurePeasyoInitialized();
@@ -805,7 +1006,7 @@ const registerConsoleWithPeasyo = (args: RegisterConsoleArgs) =>
     }
   });
 
-const buildWakeupMessage = (userCredential: string | number) => {
+const buildWakeupMessage = (userCredential: string | number, ps5 = true) => {
   return (
     `WAKEUP * HTTP/1.1\n` +
     `client-type:${DDP_CLIENT_TYPE}\n` +
@@ -813,7 +1014,7 @@ const buildWakeupMessage = (userCredential: string | number) => {
     `model:${DDP_MODEL}\n` +
     `app-type:${DDP_APP_TYPE}\n` +
     `user-credential:${String(userCredential)}\n` +
-    `device-discovery-protocol-version:${DDP_VERSION}\n`
+    `device-discovery-protocol-version:${ps5 ? DDP_VERSION_PS5 : DDP_VERSION_PS4}\n`
   );
 };
 
@@ -861,7 +1062,8 @@ const resolveHostInfo = async (rawHost: string) => {
 const sendWakeupDatagram = async (
   rawHost: string,
   userCredential: string | number,
-  timeoutMs = 3000
+  timeoutMs = 3000,
+  ps5 = true
 ) => {
   const resolvedHostInfo = await resolveHostInfo(rawHost);
   const targetHost = resolvedHostInfo.preferredAddress;
@@ -872,7 +1074,8 @@ const sendWakeupDatagram = async (
 
   const socketType = ipFamily === 6 ? "udp6" : "udp4";
   const socket = dgram.createSocket(socketType);
-  const payload = Buffer.from(buildWakeupMessage(userCredential), "utf-8");
+  const port = ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4;
+  const payload = Buffer.from(buildWakeupMessage(userCredential, ps5), "utf-8");
 
   return new Promise((resolve, reject) => {
     let finished = false;
@@ -894,7 +1097,8 @@ const sendWakeupDatagram = async (
           targetHost,
           ipFamily,
           socketType,
-          port: WAKEUP_PORT,
+          port,
+          ps5,
         });
       }
     };
@@ -907,7 +1111,7 @@ const sendWakeupDatagram = async (
       finish(error);
     });
 
-    socket.send(payload, WAKEUP_PORT, targetHost, (error) => {
+    socket.send(payload, port, targetHost, (error) => {
       if (error) {
         finish(error);
       } else {
@@ -915,6 +1119,129 @@ const sendWakeupDatagram = async (
       }
     });
   });
+};
+
+const sendWakeupWithRust = async (
+  rawHost: string,
+  userCredential: string | number,
+  ps5 = true
+) => {
+  ensurePeasyoInitialized();
+
+  const resolvedHostInfo = await resolveHostInfo(rawHost);
+  const targetHost = resolvedHostInfo.preferredAddress;
+  const ipFamily = net.isIP(targetHost);
+  if (!ipFamily) {
+    throw new Error(`Resolved host is not a valid IP address: ${targetHost}`);
+  }
+
+  const numericCredential = Number(userCredential);
+  if (!Number.isFinite(numericCredential)) {
+    throw new Error("Wakeup user credential is invalid.");
+  }
+
+  let discovery: any = null;
+  try {
+    const family = ipFamily === 6 ? "ipv6" : "ipv4";
+    const rustTargetHost = ipFamily === 6 ? `[${targetHost}]` : targetHost;
+    discovery = new (peasyo as any).Discovery({ family });
+    discovery.wakeup(rustTargetHost, numericCredential, ps5);
+    return {
+      targetHost,
+      ipFamily,
+      family,
+      port: ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4,
+      ps5,
+    };
+  } finally {
+    stopPeasyoHandle(discovery);
+  }
+};
+
+const formatWakeupError = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error || "Unknown wakeup error.");
+};
+
+const normalizeWakeupCredential = (value: string | number | undefined | null) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error("Wakeup user credential is missing.");
+  }
+
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("Wakeup user credential is invalid.");
+  }
+
+  return normalized;
+};
+
+const sendWakeupWithFallback = async (data: WakeupPacketArgs) => {
+  const credential = normalizeWakeupCredential(data.userCredential);
+  const ps5 = data.ps5 !== false;
+  const timeoutMs = Number(data.timeoutMs || 3000);
+
+  const [nodeResult, rustResult] = await Promise.allSettled([
+    sendWakeupDatagram(data.host, credential, timeoutMs, ps5),
+    sendWakeupWithRust(data.host, credential, ps5),
+  ]);
+
+  const nodeSucceeded = nodeResult.status === "fulfilled";
+  const rustSucceeded = rustResult.status === "fulfilled";
+
+  if (!nodeSucceeded && !rustSucceeded) {
+    throw new Error(
+      `Wakeup packet send failed. node=${formatWakeupError(nodeResult.reason)} rust=${formatWakeupError(rustResult.reason)}`
+    );
+  }
+
+  if (!nodeSucceeded || !rustSucceeded) {
+    console.warn("[app] Wakeup packet fallback path used:", {
+      host: data.host,
+      ps5,
+      nodeSucceeded,
+      rustSucceeded,
+      nodeError: nodeSucceeded ? undefined : formatWakeupError(nodeResult.reason),
+      rustError: rustSucceeded ? undefined : formatWakeupError(rustResult.reason),
+    });
+  }
+
+  return {
+    host: data.host,
+    credentialSource: "provided",
+    ps5,
+    node: nodeSucceeded
+      ? { ok: true, result: nodeResult.value }
+      : { ok: false, error: formatWakeupError(nodeResult.reason) },
+    rust: rustSucceeded
+      ? { ok: true, result: rustResult.value }
+      : { ok: false, error: formatWakeupError(rustResult.reason) },
+  };
+};
+
+const prepareLocalStream = async (
+  args: PrepareLocalStreamArgs
+): Promise<PrepareLocalStreamResult> => {
+  const nativePrepareLocalStream = (peasyo as any).prepareLocalStream;
+  if (typeof nativePrepareLocalStream === "function") {
+    try {
+      return await nativePrepareLocalStream(args);
+    } catch (error) {
+      console.warn("[app] native prepareLocalStream failed, falling back to main orchestration:", {
+        host: args.host,
+        hostId: args.hostId,
+        ps5: args.ps5,
+        error: formatWakeupError(error),
+      });
+    }
+  } else {
+    console.warn("[app] native prepareLocalStream is unavailable, using main orchestration fallback");
+  }
+
+  return prepareLocalStreamWithFallback(args);
 };
 
 export default class IpcApp extends IpcBase {
@@ -1251,6 +1578,10 @@ export default class IpcApp extends IpcBase {
     return discoverConsolesWithPeasyo(data);
   }
 
+  prepareLocalStream(data: PrepareLocalStreamArgs) {
+    return prepareLocalStream(data);
+  }
+
   registerConsole(data: RegisterConsoleArgs) {
     return registerConsoleWithPeasyo(data);
   }
@@ -1307,13 +1638,8 @@ export default class IpcApp extends IpcBase {
     return resolveHostInfo(data.host);
   }
 
-  sendWakeupPacket(data: { host: string; userCredential?: string | number; timeoutMs?: number }) {
-    const credential =
-      data.userCredential === undefined || data.userCredential === null || data.userCredential === ""
-        ? DEFAULT_WAKEUP_CREDENTIAL
-        : data.userCredential;
-
-    return sendWakeupDatagram(data.host, credential, Number(data.timeoutMs || 3000));
+  sendWakeupPacket(data: WakeupPacketArgs) {
+    return sendWakeupWithFallback(data);
   }
 
   msalLogin() {

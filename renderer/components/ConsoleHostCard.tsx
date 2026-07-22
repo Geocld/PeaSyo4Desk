@@ -92,6 +92,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
         item.userCredential ?? getWakeupCredentialFromRegistKey(item.rpRegistKey);
       await Ipc.send("app", "sendWakeupPacket", {
         host,
+        ps5: isPs5,
         userCredential: credential || undefined,
       });
       addToast({
