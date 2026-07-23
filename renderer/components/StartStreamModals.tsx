@@ -202,11 +202,16 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       props.consoleItem?.hostType?.toUpperCase().includes("PS5")
     );
 
-    const result = await Ipc.send("app", "discoverConsoles", {
-      ps5: isPs5,
-    });
+    try {
+      const result = await Ipc.send("app", "discoverConsoles", {
+        ps5: isPs5,
+      });
 
-    return Array.isArray(result) ? result.map(mapDiscoveredConsole) : [];
+      return Array.isArray(result) ? result.map(mapDiscoveredConsole) : [];
+    } catch (error) {
+      console.log("[home] Local console discovery failed, falling back to cached host:", error);
+      return [];
+    }
   };
 
   const startPreparedLocalStream = (
