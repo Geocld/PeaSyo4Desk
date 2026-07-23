@@ -32,6 +32,8 @@ mac:
   category: public.app-category.games
   icon: resources/icon.icns
   mergeASARs: false
+  extendInfo:
+    NSLocalNetworkUsageDescription: PeaSyo4Desk needs access to your local network to discover consoles and connect to them.
   x64ArchFiles: "{Contents/Resources/ffmpeg-installer/**/*,Contents/Resources/app.asar.unpacked/node_modules/peasyo-sdl-lib/**/*}"
   target: 
   - target: dmg

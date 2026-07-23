@@ -69,6 +69,14 @@ const getErrorMessage = (error: any, fallback: string) => {
   return fallback;
 };
 
+const isWakeupCredentialError = (message: string) => {
+  const normalized = String(message || "").trim().toLowerCase();
+  return (
+    normalized.includes("wakeup user credential is missing") ||
+    normalized.includes("wakeup user credential is invalid")
+  );
+};
+
 const inferConsoleIsPs5 = (consoleItem: ConsoleItem | null | undefined) => {
   return Boolean(
     consoleItem?.isPs5 ||
@@ -257,22 +265,41 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           nextConsoleInfo,
           Number(preparedResult.wakeAttempts || 0) > 0
         );
-      } else if (preparedResult.status === "not_discovered") {
-        setErrorText(t("Local console was not discovered on current network."));
-        setInfoText("");
-        return;
       } else if (preparedResult.status === "wake_timeout") {
-        setErrorText(t("Local console did not wake up in time."));
-        setInfoText("");
-        return;
+        // Even if wake polling times out, still enter
+        // stream and let the connection path continue while the console finishes waking.
+        startPreparedLocalStream(
+          String(preparedResult.host || localHost).trim() || localHost,
+          nextConsoleInfo,
+          true
+        );
+      } else if (preparedResult.status === "not_discovered") {
+        // Even if discovery cannot find the console, still try to connect with the cached host.
+        startPreparedLocalStream(
+          String(preparedResult.host || localHost).trim() || localHost,
+          nextConsoleInfo,
+          Number(preparedResult.wakeAttempts || 0) > 0
+        );
       } else {
         setErrorText(t("Unable to confirm local console status."));
         setInfoText("");
         return;
       }
     } catch (error) {
-      setErrorText(getErrorMessage(error, t("Failed to prepare local stream.")));
-      return;
+      const errorMessage = getErrorMessage(error, t("Failed to prepare local stream."));
+      if (isWakeupCredentialError(errorMessage)) {
+        setErrorText(errorMessage);
+        return;
+      }
+
+      // Keep local wake best-effort like Android: transport/discovery failures
+      // should not strand the user on Home when we still have a cached host.
+      console.warn("[home] prepareLocalStream failed, continuing to local stream:", {
+        host: localHost,
+        hostId: props.consoleItem?.hostId,
+        error: errorMessage,
+      });
+      startPreparedLocalStream(localHost, props.consoleItem || undefined, true);
     } finally {
       setLoadingType(null);
     }

@@ -819,7 +819,7 @@ const prepareLocalStreamWithFallback = async (
   }
 
   const wakeArgs: WakeupPacketArgs = {
-    host: matchedHost?.hostAddr || normalizedHost,
+    host: normalizedHost,
     hostId: args.hostId,
     userCredential: args.userCredential,
     timeoutMs: args.discoveryTimeoutMs,
