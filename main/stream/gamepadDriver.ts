@@ -78,6 +78,18 @@ type NodeGamepadDriverRumbleRequest = {
   durationMs?: unknown;
 };
 
+const formatSdlErrorMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : String(error || "Unknown SDL error.");
+};
+
+const logIgnoredSdlError = (
+  onLog: NodeGamepadDriverOptions["onLog"] | undefined,
+  scope: string,
+  error: unknown
+) => {
+  onLog?.(`node-sdl ${scope} ignored: ${formatSdlErrorMessage(error)}`);
+};
+
 const createIdleState = (): MutableControllerState => ({
   buttons: 0,
   l2State: 0,
@@ -1208,7 +1220,21 @@ export const createNodeGamepadDriver = (options: NodeGamepadDriverOptions) => {
     const high = clampUnit(data?.high ?? 0);
     const durationMs = clampDurationMs(data?.durationMs);
 
-    entry.controller.rumble(low, high, durationMs);
+    try {
+      const rumbleResult = entry.controller.rumble(low, high, durationMs);
+      if (rumbleResult && typeof rumbleResult.catch === "function") {
+        rumbleResult.catch((error: unknown) => {
+          logIgnoredSdlError(onLog, "controller rumble", error);
+        });
+      }
+    } catch (error) {
+      logIgnoredSdlError(onLog, "controller rumble", error);
+      return {
+        ok: false,
+        reason: "native-controller-rumble-ignored",
+        deviceId: entry.deviceId,
+      };
+    }
     onLog?.(
       `node-sdl controller rumble: ${entry.deviceId} low=${low.toFixed(2)} high=${high.toFixed(
         2

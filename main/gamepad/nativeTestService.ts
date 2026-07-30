@@ -25,6 +25,10 @@ const MAX_LOG_ENTRIES = 40;
 const DEFAULT_RUMBLE_DURATION_MS = 1000;
 const MAX_RUMBLE_DURATION_MS = 60_000;
 
+const formatSdlErrorMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : String(error || "Unknown SDL error.");
+};
+
 const NATIVE_GAMEPAD_TEST_AXIS_NAMES = [
   "leftStickX",
   "leftStickY",
@@ -836,7 +840,24 @@ class NativeGamepadTestServiceImpl {
     const high = clampUnit(data?.high ?? 1);
     const durationMs = clampDurationMs(data?.durationMs);
 
-    entry.controller.rumble(low, high, durationMs);
+    try {
+      const rumbleResult = entry.controller.rumble(low, high, durationMs);
+      if (rumbleResult && typeof rumbleResult.catch === "function") {
+        rumbleResult.catch((error: unknown) => {
+          this.pushLog(`native gamepad tester: SDL rumble ignored: ${formatSdlErrorMessage(error)}`);
+        });
+      }
+    } catch (error) {
+      this.pushLog(`native gamepad tester: SDL rumble ignored: ${formatSdlErrorMessage(error)}`);
+      return {
+        ok: false,
+        reason: "native-controller-rumble-ignored",
+        deviceId: entry.deviceId,
+        low,
+        high,
+        durationMs,
+      };
+    }
     this.pushLog(
       `native gamepad tester: rumble ${entry.deviceId} low=${low.toFixed(2)} high=${high.toFixed(
         2
@@ -873,7 +894,28 @@ class NativeGamepadTestServiceImpl {
     const right = clampUnit(data?.right ?? 1);
     const durationMs = clampDurationMs(data?.durationMs);
 
-    entry.controller.rumbleTriggers(left, right, durationMs);
+    try {
+      const rumbleResult = entry.controller.rumbleTriggers(left, right, durationMs);
+      if (rumbleResult && typeof rumbleResult.catch === "function") {
+        rumbleResult.catch((error: unknown) => {
+          this.pushLog(
+            `native gamepad tester: SDL trigger rumble ignored: ${formatSdlErrorMessage(error)}`
+          );
+        });
+      }
+    } catch (error) {
+      this.pushLog(
+        `native gamepad tester: SDL trigger rumble ignored: ${formatSdlErrorMessage(error)}`
+      );
+      return {
+        ok: false,
+        reason: "native-controller-trigger-rumble-ignored",
+        deviceId: entry.deviceId,
+        left,
+        right,
+        durationMs,
+      };
+    }
     this.pushLog(
       `native gamepad tester: trigger rumble ${entry.deviceId} left=${left.toFixed(
         2

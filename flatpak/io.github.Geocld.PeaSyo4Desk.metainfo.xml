@@ -23,6 +23,14 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.1.2" date="2026-07-30">
+     <description>
+        <ul>
+          <li>Optimize wakeup logic</li>
+          <li>Fixed known issues</li>
+        </ul>
+     </description>
+    </release>
     <release version="2.1.1" date="2026-07-22">
      <description>
         <ul>
