@@ -223,7 +223,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         discoveryTimeoutMs: 3000,
         wakeRetryIntervalMs: 5000,
         pollIntervalMs: 2000,
-        pollTimeoutMs: 15000,
+        pollTimeoutMs: 25000,
         readyConfirmDelayMs: 5000,
       })) as PreparedLocalStreamResult;
 

@@ -43,8 +43,10 @@ const OPENSSL_SALTED_PREFIX = Buffer.from("Salted__");
 const PSN_TOKEN_REFRESH_GRACE_MS = 60_000;
 const LOCAL_WAKEUP_RETRY_INTERVAL_MS = 5000;
 const LOCAL_WAKEUP_POLL_INTERVAL_MS = 2000;
-const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 15000;
+const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 25000;
 const LOCAL_READY_CONFIRM_DELAY_MS = 5000;
+const DISCOVERY_SEARCH_RETRY_INTERVAL_MS = 500;
+const DISCOVERY_SEARCH_MAX_ATTEMPTS = 6;
 
 let peasyoInitialized = false;
 
@@ -658,8 +660,19 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
 
     let discovery: any = null;
     let timeout: NodeJS.Timeout | undefined;
+    let searchRetryTimer: NodeJS.Timeout | undefined;
     let finished = false;
     const consoles = new Map<string, DiscoveryHost>();
+    const ps5 = !!args.ps5;
+    const timeoutMs = Number(args.timeoutMs || PEASYO_DISCOVERY_TIMEOUT_MS);
+    const maxSearchAttempts = Math.max(
+      1,
+      Math.min(
+        DISCOVERY_SEARCH_MAX_ATTEMPTS,
+        Math.ceil(timeoutMs / DISCOVERY_SEARCH_RETRY_INTERVAL_MS)
+      )
+    );
+    let searchAttempts = 0;
 
     const complete = (error?: Error | null) => {
       if (finished) {
@@ -670,6 +683,9 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
       if (timeout) {
         clearTimeout(timeout);
       }
+      if (searchRetryTimer) {
+        clearInterval(searchRetryTimer);
+      }
 
       stopPeasyoHandle(discovery);
 
@@ -679,6 +695,25 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
       }
 
       resolve(Array.from(consoles.values()));
+    };
+
+    const sendSearch = () => {
+      if (finished || !discovery) {
+        return;
+      }
+
+      try {
+        discovery.sendSearch({ ps5 });
+        searchAttempts += 1;
+      } catch (error: any) {
+        complete(error instanceof Error ? error : new Error(String(error || "Discovery failed.")));
+        return;
+      }
+
+      if (searchAttempts >= maxSearchAttempts && searchRetryTimer) {
+        clearInterval(searchRetryTimer);
+        searchRetryTimer = undefined;
+      }
     };
 
     try {
@@ -703,11 +738,16 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
       );
 
       discovery.start({ oneshot: false });
-      discovery.sendSearch({ ps5: !!args.ps5 });
+      // Some Windows adapters drop the first UDP broadcast. Keep one discovery
+      // socket alive and resend SRCH within the same discovery window.
+      sendSearch();
+      if (maxSearchAttempts > 1) {
+        searchRetryTimer = setInterval(sendSearch, DISCOVERY_SEARCH_RETRY_INTERVAL_MS);
+      }
 
       timeout = setTimeout(() => {
         complete(null);
-      }, Number(args.timeoutMs || PEASYO_DISCOVERY_TIMEOUT_MS));
+      }, timeoutMs);
     } catch (error: any) {
       complete(
         error instanceof Error ? error : new Error(String(error || "Discovery failed."))
@@ -1225,22 +1265,8 @@ const sendWakeupWithFallback = async (data: WakeupPacketArgs) => {
 const prepareLocalStream = async (
   args: PrepareLocalStreamArgs
 ): Promise<PrepareLocalStreamResult> => {
-  const nativePrepareLocalStream = (peasyo as any).prepareLocalStream;
-  if (typeof nativePrepareLocalStream === "function") {
-    try {
-      return await nativePrepareLocalStream(args);
-    } catch (error) {
-      console.warn("[app] native prepareLocalStream failed, falling back to main orchestration:", {
-        host: args.host,
-        hostId: args.hostId,
-        ps5: args.ps5,
-        error: formatWakeupError(error),
-      });
-    }
-  } else {
-    console.warn("[app] native prepareLocalStream is unavailable, using main orchestration fallback");
-  }
-
+  // Keep local stream preparation in the main process so discovery can use the
+  // Windows-hardened repeated SRCH flow while wakeup still uses Node + Rust senders.
   return prepareLocalStreamWithFallback(args);
 };
 
