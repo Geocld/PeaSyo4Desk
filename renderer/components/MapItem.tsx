@@ -1,4 +1,3 @@
-import Image from "next/image";
 import PsGamepadIcon from "./gamepad/PsGamepadIcon";
 
 const MapItem = ({ name, value, onPress }) => {
@@ -13,7 +12,7 @@ const MapItem = ({ name, value, onPress }) => {
         <PsGamepadIcon action={name} />
       </div>
       <div className='center'>
-        <Image
+        <img
           src="/images/gamepad/arrow-right.svg"
           alt="arrow-right"
           width={40}

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import Image from "next/image";
 import { useTranslation } from "next-i18next";
 import { useTheme } from "next-themes";
 import { Button, Card, CardBody, CardFooter, Divider, addToast } from "@heroui/react";
@@ -147,7 +146,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
         <p className="text-center text-xs text-gray-500">({consoleId})</p>
 
         <div className="flex justify-center items-center py-3">
-          <Image
+          <img
             src={consoleImage}
             alt={isPs5 ? (isPs5Pro ? "ps5 pro" : "ps5") : "console"}
             draggable="false"

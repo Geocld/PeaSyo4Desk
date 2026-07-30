@@ -8,7 +8,6 @@ import {
   Button,
 } from "@heroui/react";
 import { useTranslation } from "next-i18next";
-import Image from "next/image";
 
 const FeedbackModal = ({ show, onClose }) => {
   const { t } = useTranslation('common');
@@ -33,7 +32,7 @@ const FeedbackModal = ({ show, onClose }) => {
             <p>群号：964721224</p>
             <div className="flex">
               <div className="w-1/3">
-                <Image
+                <img
                   src="/images/feedback/wx_sponsor.png"
                   alt="wechat"
                   width={300}
