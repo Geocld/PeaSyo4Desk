@@ -20,6 +20,7 @@ type ActionBarProps = {
   type?: string;
   connectState?: string;
   audioMuted?: boolean;
+  microphoneEnabled?: boolean;
   brightnessLabel?: string;
   fsrLabel?: string;
   disconnectAndStandby?: boolean;
@@ -30,6 +31,7 @@ type ActionBarProps = {
   onPressPs?: () => void;
   onLongPressPs?: () => void;
   onAudio?: () => void;
+  onMicrophone?: () => void;
   onAdjustBrightness?: () => void;
   onAdjustFsr?: () => void;
   onDisconnect?: () => void;
@@ -133,6 +135,17 @@ function ActionBar(props: ActionBarProps) {
                         onPress={() => runAndClose(props.onAudio)}
                       >
                         {props.audioMuted ? t("Open Audio") : t("Close Audio")}
+                      </Button>
+                    ) : null}
+
+                    {isConnected && props.onMicrophone ? (
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        className="justify-center"
+                        onPress={() => runAndClose(props.onMicrophone)}
+                      >
+                        {props.microphoneEnabled ? t("Close Microphone") : t("Open Microphone")}
                       </Button>
                     ) : null}
 

@@ -1,5 +1,5 @@
 import IpcBase from "./base";
-import { app as ElectronApp, dialog, session } from "electron";
+import { app as ElectronApp, dialog, session, systemPreferences } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
@@ -1900,6 +1900,24 @@ export default class IpcApp extends IpcBase {
       settings,
       targetWebContents: this._application._mainWindow?.webContents || null,
     });
+  }
+
+  async requestMicrophoneAccess() {
+    if (process.platform !== "darwin") {
+      return true;
+    }
+    try {
+      const status = systemPreferences.getMediaAccessStatus("microphone");
+      if (status === "granted") {
+        return true;
+      }
+      if (status === "denied" || status === "restricted") {
+        return false;
+      }
+      return systemPreferences.askForMediaAccess("microphone");
+    } catch {
+      return false;
+    }
   }
 
   stopStreamSession() {

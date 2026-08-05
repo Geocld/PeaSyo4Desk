@@ -32,6 +32,8 @@
   "Long press PS Button": "长按 PS 键",
   "Open Audio": "开启声音",
   "Close Audio": "关闭声音",
+  "Open Microphone": "开启麦克风",
+  "Close Microphone": "关闭麦克风",
   "Toggle fullscreen": "切换全屏",
   "Standby on disconnect": "断开时进入待机",
   "Touchpad position": "触摸板位置",

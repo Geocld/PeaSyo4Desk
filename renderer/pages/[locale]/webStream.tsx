@@ -52,6 +52,10 @@ import {
 import { handleGamepadTriggerEffectsFromPeasyo } from "../../lib/gamepadTriggerEffects";
 import Ipc from "../../lib/ipc";
 import {
+  createMicrophoneCapture,
+  type MicrophoneCaptureController,
+} from "../../lib/microphoneCapture";
+import {
   FSR_FRAGMENT_SHADER_SOURCE,
   FSR_VERTEX_SHADER_SOURCE,
   HDR_FRAGMENT_SHADER_SOURCE,
@@ -797,6 +801,7 @@ function StreamPage() {
   const [connectState, setConnectState] = useState("initializing");
   const [audioAvailable, setAudioAvailable] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [showActionbar, setShowActionbar] = useState(false);
@@ -874,6 +879,8 @@ function StreamPage() {
   const audioAvailableRef = useRef(false);
   const audioMutedRef = useRef(false);
   const audioPlaybackEnabledRef = useRef(false);
+  const microphoneCaptureRef = useRef<MicrophoneCaptureController | null>(null);
+  const microphoneEnabledRef = useRef(false);
   const audioChannelsRef = useRef(2);
   const audioRateRef = useRef(48000);
   const audioFrameSamplesRef = useRef(960);
@@ -3374,6 +3381,57 @@ function StreamPage() {
     setAudioMutedState(!audioMutedRef.current);
   };
 
+  const stopMicrophoneCapture = (notifyNative = true) => {
+    const capture = microphoneCaptureRef.current;
+    microphoneCaptureRef.current = null;
+    microphoneEnabledRef.current = false;
+    capture?.stop();
+    setMicrophoneEnabled(false);
+    if (notifyNative) {
+      Ipc.sendStreamMicrophoneEnabled(false);
+    }
+  };
+
+  const toggleMicrophone = async () => {
+    if (microphoneEnabledRef.current) {
+      stopMicrophoneCapture(true);
+      return;
+    }
+
+    const hasAccess = await Ipc.send("app", "requestMicrophoneAccess").catch(() => false);
+    if (!hasAccess) {
+      microphoneEnabledRef.current = false;
+      setMicrophoneEnabled(false);
+      Ipc.sendStreamMicrophoneEnabled(false);
+      return;
+    }
+
+    const capture = createMicrophoneCapture({
+      onFrame: (frame) => {
+        if (!microphoneEnabledRef.current) {
+          return;
+        }
+        Ipc.sendStreamMicrophonePcm(
+          new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength)
+        );
+      },
+    });
+
+    try {
+      await capture.start();
+      microphoneCaptureRef.current = capture;
+      microphoneEnabledRef.current = true;
+      setMicrophoneEnabled(true);
+      Ipc.sendStreamMicrophoneEnabled(true);
+    } catch (error) {
+      capture.stop();
+      microphoneEnabledRef.current = false;
+      setMicrophoneEnabled(false);
+      Ipc.sendStreamMicrophoneEnabled(false);
+      console.warn("[stream-microphone] failed to start capture", error);
+    }
+  };
+
   const normalizeAxis = (value: number) => {
     if (!Number.isFinite(value)) {
       return 0;
@@ -4353,6 +4411,7 @@ function StreamPage() {
                   setConnectState("starting");
                   setStatus(t("Connecting..."));
                 } else if (msg?.status === "quit" || msg?.status === "stopped") {
+                  stopMicrophoneCapture(false);
                   openSessionAlert(
                     `status: ${String(msg.status)}`,
                     `session: ${String(msg.status)}`
@@ -4464,6 +4523,7 @@ function StreamPage() {
         rafRef.current = null;
       }
       renderLoopScheduledRef.current = false;
+      stopMicrophoneCapture(true);
 
       if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
         socketRef.current.close();
@@ -4647,6 +4707,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    stopMicrophoneCapture(true);
     setShowPerformance(false);
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
@@ -4727,6 +4788,7 @@ function StreamPage() {
 
     disconnectingRef.current = true;
     audioPlaybackEnabledRef.current = false;
+    stopMicrophoneCapture(true);
     clearScheduledAudioSources();
     clearPressedKeyboardKeys();
     touchpadStateRef.current = createIdleTouchState();
@@ -4831,7 +4893,9 @@ function StreamPage() {
             type="remoteplay"
             connectState={connectState}
             audioMuted={audioMuted}
+            microphoneEnabled={microphoneEnabled}
             onAudio={audioAvailable ? toggleAudioMuted : undefined}
+            onMicrophone={toggleMicrophone}
             onPressPs={handlePressPs}
             onLongPressPs={handleLongPressPs}
             onDisconnect={handleDisconnectWithCurrentMode}

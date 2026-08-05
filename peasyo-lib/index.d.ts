@@ -73,6 +73,7 @@ export interface SessionEvent {
   progress?: number;
   state?: number;
   reset?: boolean;
+  intensity?: number;
   [key: string]: unknown;
 }
 
@@ -134,6 +135,9 @@ export class Session {
   gotoBed(): void;
   toggleMicrophone(muted: boolean): void;
   connectMicrophone(): void;
+  prepareMicrophone(): void;
+  pushMicrophonePacket(packet: BinaryInput): void;
+  encodeAndPushMicrophonePcm(pcm: BinaryInput): void;
   setEventCallback(fn: ((event: SessionEvent) => void) | null): void;
   setLogCallback(fn: ((event: LogEvent) => void) | null): void;
   setVideoSampleCallback(fn: ((sample: VideoSample) => void) | null): void;

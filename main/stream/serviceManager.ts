@@ -68,6 +68,12 @@ export const StreamSessionManager = {
   setLoginPin(pin: any) {
     (getActiveService() as any).setLoginPin(pin);
   },
+  setMicrophoneEnabled(enabled: boolean) {
+    (getActiveService() as any).setMicrophoneEnabled(enabled);
+  },
+  pushMicrophonePcm(data: any) {
+    (getActiveService() as any).pushMicrophonePcm(data);
+  },
   triggerNativeGamepadRumble(data: {
     low?: unknown;
     high?: unknown;

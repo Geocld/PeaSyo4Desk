@@ -81,6 +81,14 @@ export const Preload = {
         ipcRenderer.send("stream-login-pin", pin)
     },
 
+    sendStreamMicrophoneEnabled(enabled){
+        ipcRenderer.send("stream-microphone-enabled", enabled)
+    },
+
+    sendStreamMicrophonePcm(pcm){
+        ipcRenderer.send("stream-microphone-pcm", pcm)
+    },
+
     removeListener(channel:string, listener){
         ipcRenderer.removeListener(channel, listener)
     },

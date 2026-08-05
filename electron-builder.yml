@@ -34,6 +34,7 @@ mac:
   mergeASARs: false
   extendInfo:
     NSLocalNetworkUsageDescription: PeaSyo4Desk needs access to your local network to discover consoles and connect to them.
+    NSMicrophoneUsageDescription: PeaSyo4Desk needs microphone access to send your voice to the console during Remote Play.
   x64ArchFiles: "{Contents/Resources/ffmpeg-installer/**/*,Contents/Resources/app.asar.unpacked/node_modules/peasyo-sdl-lib/**/*}"
   target: 
   - target: dmg

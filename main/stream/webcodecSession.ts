@@ -276,6 +276,14 @@ let streamSessionSequence = 0;
 let activeStreamSessionDebugId = 0;
 
 let streamVideoConfig: VideoConfig | null = null;
+let microphoneConnected = false;
+let microphoneMuted = true;
+let microphoneRequested = false;
+let microphoneCanUnmute = false;
+let microphoneUnsupportedLogged = false;
+let microphoneClosing = false;
+let microphonePcmFramesReceived = 0;
+let microphoneDropLogCount = 0;
 let ffmpegInput: PassThrough | null = null;
 let ffmpegCommand: any = null;
 let ffmpegOutput: any = null;
@@ -438,7 +446,7 @@ const OGG_CRC_TABLE = (() => {
 })();
 
 const log = (...args) => {
-  console.log("[stream-service]", ...args);
+  // console.log("[stream-service]", ...args);
   verboseLogger?.write("stream-service", String(args[0] || ""), args.length > 1 ? { args: args.slice(1) } : undefined);
 };
 
@@ -2118,6 +2126,154 @@ const setLoginPin = (pin: any, source = "ipc") => {
   }
 };
 
+const resetMicrophoneState = () => {
+  microphoneConnected = false;
+  microphoneMuted = true;
+  microphoneRequested = false;
+  microphoneCanUnmute = false;
+  microphoneUnsupportedLogged = false;
+  microphoneClosing = false;
+  microphonePcmFramesReceived = 0;
+  microphoneDropLogCount = 0;
+};
+
+const beginMicrophoneShutdown = () => {
+  microphoneClosing = true;
+  microphoneConnected = false;
+  microphoneMuted = true;
+  microphoneRequested = false;
+  microphoneCanUnmute = false;
+};
+
+const microphonePcmStats = (pcm: Buffer) => {
+  let peak = 0;
+  let sum = 0;
+  let samples = 0;
+  for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+    const value = Math.min(Math.abs(pcm.readInt16LE(offset)), 32767);
+    if (value > peak) {
+      peak = value;
+    }
+    sum += value;
+    samples += 1;
+  }
+  return {
+    samples,
+    peak,
+    avgAbs: samples > 0 ? Math.round(sum / samples) : 0,
+  };
+};
+
+const logMicrophoneDrop = (reason: string, extra: Record<string, unknown> = {}) => {
+  if (microphoneDropLogCount >= 3) {
+    return;
+  }
+  microphoneDropLogCount += 1;
+  verboseLog("microphone", "pcm dropped", { reason, ...extra });
+};
+
+const normalizeMicrophonePcm = (data: any): Buffer | null => {
+  if (!data) {
+    return null;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return null;
+};
+
+const hasMicrophoneApi = () => {
+  const supported =
+    streamSession &&
+    typeof streamSession.prepareMicrophone === "function" &&
+    typeof streamSession.connectMicrophone === "function" &&
+    typeof streamSession.toggleMicrophone === "function" &&
+    typeof streamSession.encodeAndPushMicrophonePcm === "function";
+  if (!supported && !microphoneUnsupportedLogged) {
+    microphoneUnsupportedLogged = true;
+    verboseLog("microphone", "ignored because peasyo-lib microphone API is unavailable");
+  }
+  return !!supported;
+};
+
+const setMicrophoneEnabled = (enabled: boolean) => {
+  microphoneRequested = enabled;
+  if (microphoneClosing) {
+    verboseLog("microphone", "toggle ignored because session is closing", { enabled });
+    return;
+  }
+  if (!streamSession) {
+    resetMicrophoneState();
+    return;
+  }
+  if (!hasMicrophoneApi()) {
+    return;
+  }
+  if (enabled && !microphoneCanUnmute) {
+    verboseLog("microphone", "enable deferred until audio header is ready");
+    return;
+  }
+  const shouldToggle = enabled ? microphoneMuted : !microphoneMuted;
+  if (!shouldToggle) {
+    return;
+  }
+  try {
+    streamSession.prepareMicrophone();
+    if (!microphoneConnected) {
+      streamSession.connectMicrophone();
+      microphoneConnected = true;
+    }
+    streamSession.toggleMicrophone(microphoneMuted);
+    microphoneMuted = !microphoneMuted;
+    verboseLog("microphone", "toggle sent", { enabled, muted: microphoneMuted });
+  } catch (error: any) {
+    verboseLog("microphone", "toggle failed", { error: error?.message || String(error) });
+  }
+};
+
+const pushMicrophonePcm = (data: any) => {
+  if (microphoneClosing) {
+    logMicrophoneDrop("session_closing");
+    return;
+  }
+  if (!streamSession) {
+    logMicrophoneDrop("no_session");
+    return;
+  }
+  if (microphoneMuted) {
+    logMicrophoneDrop("muted");
+    return;
+  }
+  if (!hasMicrophoneApi()) {
+    logMicrophoneDrop("unsupported_api");
+    return;
+  }
+  const pcm = normalizeMicrophonePcm(data);
+  if (!pcm || pcm.length < 1) {
+    logMicrophoneDrop("invalid_ipc_payload", { type: typeof data });
+    return;
+  }
+  microphonePcmFramesReceived += 1;
+  if (microphonePcmFramesReceived === 1 || microphonePcmFramesReceived % 300 === 0) {
+    verboseLog("microphone", "pcm received", {
+      frame: microphonePcmFramesReceived,
+      bytes: pcm.length,
+      ...microphonePcmStats(pcm),
+    });
+  }
+  try {
+    streamSession.encodeAndPushMicrophonePcm(pcm);
+  } catch (error: any) {
+    verboseLog("microphone", "pcm push failed", { error: error?.message || String(error) });
+  }
+};
+
 const onWsMessage = (socket: any, raw: Buffer) => {
   let message: any = null;
   try {
@@ -3072,6 +3228,13 @@ const onAudioHeader = (header: any) => {
 
   createAudioDecodePipeline();
   broadcastAudioConfig();
+  if (!microphoneCanUnmute) {
+    microphoneCanUnmute = true;
+    verboseLog("microphone", "audio header ready, microphone can unmute", audioHeaderInfo);
+    if (microphoneRequested) {
+      setMicrophoneEnabled(true);
+    }
+  }
 };
 
 const dispatchAudioFrame = (opusPacket: Buffer) => {
@@ -3307,6 +3470,7 @@ const cleanupSessionOnly = () => {
   hasSubmittedControllerState = false;
   pendingDirectControllerState = null;
   directControllerStateFlushScheduled = false;
+  beginMicrophoneShutdown();
 
   if (streamSession) {
     try {
@@ -3330,6 +3494,7 @@ const cleanupSessionOnly = () => {
 
   streamSession = null;
   streamSessionStarted = false;
+  resetMicrophoneState();
   streamWebContents = null;
   streamVideoConfig = null;
   activeClientIsSteamOs = false;
@@ -3806,6 +3971,8 @@ export const StreamSessionService = {
   setControllerStateDirect,
   sendKeyboardCommand,
   setLoginPin,
+  setMicrophoneEnabled,
+  pushMicrophonePcm,
   triggerNativeGamepadRumble,
   notifyVideoFrameRendered,
   stopSession,

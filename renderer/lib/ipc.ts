@@ -100,6 +100,32 @@ export default {
     return false;
   },
 
+  sendStreamMicrophoneEnabled(enabled) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamMicrophoneEnabled === "function") {
+      window.PeaSyo.sendStreamMicrophoneEnabled(enabled);
+      return true;
+    }
+
+    return false;
+  },
+
+  sendStreamMicrophonePcm(pcm) {
+    if (window.PeaSyo === undefined) {
+      window.PeaSyo = this.websocketFallbackApi();
+    }
+
+    if (typeof window.PeaSyo.sendStreamMicrophonePcm === "function") {
+      window.PeaSyo.sendStreamMicrophonePcm(pcm);
+      return true;
+    }
+
+    return false;
+  },
+
   removeListener(channel: string, listener) {
     if (window.PeaSyo === undefined) {
       // Electron API Not available. Lets mock!
@@ -145,6 +171,12 @@ export default {
         return false;
       },
       sendStreamLoginPin() {
+        return false;
+      },
+      sendStreamMicrophoneEnabled() {
+        return false;
+      },
+      sendStreamMicrophonePcm() {
         return false;
       },
       removeListener(channel, listener) {
