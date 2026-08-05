@@ -5,6 +5,7 @@ import dgram from "node:dgram";
 import dns from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import peasyo from "../peasyoLib";
 import { defaultSettings } from "../../renderer/context/userContext.defaults";
@@ -48,6 +49,9 @@ const LOCAL_WAKEUP_POLL_TIMEOUT_MS = 25000;
 const LOCAL_READY_CONFIRM_DELAY_MS = 5000;
 const DISCOVERY_SEARCH_RETRY_INTERVAL_MS = 500;
 const DISCOVERY_SEARCH_MAX_ATTEMPTS = 6;
+const DISCOVERY_BIND_PORT_MIN = 9303;
+const DISCOVERY_BIND_PORT_MAX = 9319;
+const DISCOVERY_BROADCAST_FALLBACK = "255.255.255.255";
 
 let peasyoInitialized = false;
 
@@ -659,7 +663,333 @@ const normalizeRegisterFailure = (
   return createRegisterFailure(fallbackCode, fallbackMessage, logs);
 };
 
-const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
+const ipv4ToUint32 = (address: string) => {
+  const parts = String(address || "")
+    .trim()
+    .split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  let value = 0;
+  for (const part of parts) {
+    const octet = Number(part);
+    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
+      return null;
+    }
+    value = (value << 8) | octet;
+  }
+
+  return value >>> 0;
+};
+
+const uint32ToIpv4 = (value: number) => {
+  const normalized = value >>> 0;
+  return [
+    (normalized >>> 24) & 0xff,
+    (normalized >>> 16) & 0xff,
+    (normalized >>> 8) & 0xff,
+    normalized & 0xff,
+  ].join(".");
+};
+
+const computeIpv4BroadcastAddress = (address: string, netmask: string) => {
+  const addressValue = ipv4ToUint32(address);
+  const netmaskValue = ipv4ToUint32(netmask);
+  if (addressValue === null || netmaskValue === null) {
+    return null;
+  }
+
+  return uint32ToIpv4((addressValue | (~netmaskValue >>> 0)) >>> 0);
+};
+
+const getNodeDiscoveryBroadcastTargets = () => {
+  const targets = new Set<string>([DISCOVERY_BROADCAST_FALLBACK]);
+  const interfaces = os.networkInterfaces();
+
+  Object.values(interfaces).forEach((entries) => {
+    entries?.forEach((entry) => {
+      if (!entry || entry.internal || entry.family !== "IPv4") {
+        return;
+      }
+
+      const address = String(entry.address || "").trim();
+      if (!address || address === "0.0.0.0") {
+        return;
+      }
+
+      const broadcast =
+        String(entry.broadcast || "").trim() ||
+        computeIpv4BroadcastAddress(address, String(entry.netmask || "").trim()) ||
+        "";
+
+      if (broadcast) {
+        targets.add(broadcast);
+      }
+    });
+  });
+
+  return Array.from(targets);
+};
+
+const buildDiscoverySearchPacket = (ps5: boolean) => {
+  return (
+    `SRCH * HTTP/1.1\n` +
+    `device-discovery-protocol-version:${ps5 ? DDP_VERSION_PS5 : DDP_VERSION_PS4}\n`
+  );
+};
+
+const parseDiscoveryResponseHeaderLines = (payload: string) => {
+  const lines = payload.split(/\r?\n/);
+  const statusLine = String(lines.shift() || "").trim();
+  const statusMatch = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})\b/i);
+  if (!statusMatch) {
+    return null;
+  }
+
+  const headers = new Map<string, string>();
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) {
+      break;
+    }
+
+    const separatorIndex = trimmed.indexOf(":");
+    if (separatorIndex < 1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim().toLowerCase();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    if (key) {
+      headers.set(key, value);
+    }
+  }
+
+  return {
+    statusCode: Number(statusMatch[1]),
+    headers,
+  };
+};
+
+const buildDiscoveryHostFromResponse = (
+  payload: Buffer,
+  rinfo: dgram.RemoteInfo,
+  ps5: boolean
+): DiscoveryHost | null => {
+  const responseText = payload.toString("utf8").replace(/\0+$/g, "");
+  const parsed = parseDiscoveryResponseHeaderLines(responseText);
+  if (!parsed) {
+    return null;
+  }
+
+  const hostAddr = String(rinfo.address || "").trim();
+  if (!hostAddr) {
+    return null;
+  }
+
+  const protocolVersion =
+    parsed.headers.get("device-discovery-protocol-version") ||
+    (ps5 ? DDP_VERSION_PS5 : DDP_VERSION_PS4);
+  const hostType = parsed.headers.get("host-type") || (ps5 ? "PS5" : "PS4");
+  const state =
+    parsed.statusCode === 200
+      ? 1
+      : parsed.statusCode === 620
+        ? 2
+        : 0;
+
+  return {
+    state,
+    stateName: state === 1 ? "ready" : state === 2 ? "standby" : "unknown",
+    hostRequestPort: (() => {
+      const parsedPort = Number.parseInt(parsed.headers.get("host-request-port") || "", 10);
+      return Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : undefined;
+    })(),
+    isPs5: protocolVersion === DDP_VERSION_PS5 || ps5,
+    target: ps5 ? PEASYO_PS5_TARGET : PEASYO_PS4_TARGET,
+    hostAddr,
+    systemVersion: parsed.headers.get("system-version") || undefined,
+    protocolVersion,
+    hostName: parsed.headers.get("host-name") || undefined,
+    hostType: hostType || undefined,
+    hostId: parsed.headers.get("host-id") || undefined,
+    runningAppTitleId: parsed.headers.get("running-app-titleid") || undefined,
+    runningAppName: parsed.headers.get("running-app-name") || undefined,
+  };
+};
+
+const bindNodeDiscoverySocket = async () => {
+  const bindPorts = [
+    ...Array.from(
+      { length: DISCOVERY_BIND_PORT_MAX - DISCOVERY_BIND_PORT_MIN + 1 },
+      (_value, index) => DISCOVERY_BIND_PORT_MIN + index
+    ),
+    0,
+  ];
+
+  for (const port of bindPorts) {
+    const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          socket.removeListener("listening", onListening);
+          socket.removeListener("error", onError);
+        };
+
+        const onListening = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = (error: Error) => {
+          cleanup();
+          try {
+            socket.close();
+          } catch {
+            // ignore close errors
+          }
+          reject(error);
+        };
+
+        socket.once("listening", onListening);
+        socket.once("error", onError);
+        socket.bind(port, "0.0.0.0");
+      });
+
+      socket.setBroadcast(true);
+      return socket;
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error("Discovery failed to bind a UDP socket.");
+};
+
+const sendNodeDiscoverySearch = async (
+  socket: dgram.Socket,
+  ps5: boolean,
+  targets: string[]
+) => {
+  const payload = Buffer.from(buildDiscoverySearchPacket(ps5), "utf8");
+  const port = ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4;
+
+  await Promise.allSettled(
+    targets.map(
+      (target) =>
+        new Promise<void>((resolve) => {
+          try {
+            socket.send(payload, port, target, () => {
+              resolve();
+            });
+          } catch {
+            resolve();
+          }
+        })
+    )
+  );
+};
+
+const discoverConsolesWithNode = async (args: DiscoverConsolesArgs = {}) => {
+  const ps5 = !!args.ps5;
+  const timeoutMs = Number(args.timeoutMs || PEASYO_DISCOVERY_TIMEOUT_MS);
+  const maxSearchAttempts = Math.max(
+    1,
+    Math.min(
+      DISCOVERY_SEARCH_MAX_ATTEMPTS,
+      Math.ceil(timeoutMs / DISCOVERY_SEARCH_RETRY_INTERVAL_MS)
+    )
+  );
+  const consoles = new Map<string, DiscoveryHost>();
+  const targets = getNodeDiscoveryBroadcastTargets();
+  const socket = await bindNodeDiscoverySocket();
+
+  return await new Promise<DiscoveryHost[]>((resolve, reject) => {
+    let finished = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let searchRetryTimer: NodeJS.Timeout | undefined;
+    let searchAttempts = 0;
+
+    const complete = (error?: Error | null) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (searchRetryTimer) {
+        clearInterval(searchRetryTimer);
+      }
+
+      socket.removeAllListeners();
+      try {
+        socket.close();
+      } catch {
+        // ignore close errors
+      }
+
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(Array.from(consoles.values()));
+    };
+
+    const sendSearch = async () => {
+      if (finished) {
+        return;
+      }
+
+      try {
+        await sendNodeDiscoverySearch(socket, ps5, targets);
+        searchAttempts += 1;
+      } catch (error: any) {
+        complete(error instanceof Error ? error : new Error(String(error || "Discovery failed.")));
+        return;
+      }
+
+      if (searchAttempts >= maxSearchAttempts && searchRetryTimer) {
+        clearInterval(searchRetryTimer);
+        searchRetryTimer = undefined;
+      }
+    };
+
+    socket.on("message", (message, rinfo) => {
+      if (finished) {
+        return;
+      }
+
+      const host = buildDiscoveryHostFromResponse(message, rinfo, ps5);
+      const key = String(host?.hostId || host?.hostAddr || "").trim();
+      if (!host || !key) {
+        return;
+      }
+
+      consoles.set(key, host);
+    });
+
+    socket.once("error", (error) => {
+      complete(error instanceof Error ? error : new Error(String(error || "Discovery failed.")));
+    });
+
+    void sendSearch();
+    if (maxSearchAttempts > 1) {
+      searchRetryTimer = setInterval(() => {
+        void sendSearch();
+      }, DISCOVERY_SEARCH_RETRY_INTERVAL_MS);
+    }
+
+    timeout = setTimeout(() => {
+      complete(null);
+    }, timeoutMs);
+  });
+};
+
+const discoverConsolesWithNativePeasyo = (args: DiscoverConsolesArgs = {}) =>
   new Promise<DiscoveryHost[]>((resolve, reject) => {
     ensurePeasyoInitialized();
 
@@ -759,6 +1089,20 @@ const discoverConsolesWithPeasyo = (args: DiscoverConsolesArgs = {}) =>
       );
     }
   });
+
+const discoverConsolesWithPeasyo = async (args: DiscoverConsolesArgs = {}) => {
+  // Prefer the Node UDP path first so Windows can discover hosts without relying on the addon.
+  try {
+    const nodeDiscoveryHosts = await discoverConsolesWithNode(args);
+    if (nodeDiscoveryHosts.length > 0) {
+      return nodeDiscoveryHosts;
+    }
+  } catch (error) {
+    console.warn("[app] Node discovery failed, falling back to native discovery:", error);
+  }
+
+  return discoverConsolesWithNativePeasyo(args);
+};
 
 const normalizeLocalConsoleState = (value: unknown) => {
   const normalized = String(value || "").trim().toUpperCase();
