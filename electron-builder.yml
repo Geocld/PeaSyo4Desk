@@ -6,22 +6,23 @@ directories:
   output: dist
   buildResources: resources
 
-asarUnpack:
-  - node_modules/**/*.node
-  - node_modules/peasyo-sdl-lib/**/*
-  - peasyo-lib/**/*.node
-beforeBuild: scripts/prepare-electron-build.js
 files:
   - from: .
     filter:
       - package.json
       - app
       - peasyo-lib
-  - from: build/runtime-node_modules
-    to: node_modules
+asarUnpack:
+  - node_modules/peasyo-sdl-lib/**/*
+  - peasyo-lib/**/*.node
 extraResources:
   - from: resources/icon.ico
     to: icon.ico
+  - from: node_modules/@ffmpeg-installer
+    to: ffmpeg-installer
+    filter:
+      - "*/ffmpeg"
+      - "*/ffmpeg.exe"
 publish:
 - github
 
@@ -31,11 +32,6 @@ mac:
   category: public.app-category.games
   icon: resources/icon.icns
   mergeASARs: false
-  extraResources:
-    - from: resources/ffmpeg-installer
-      to: ffmpeg-installer
-      filter:
-        - "*/ffmpeg"
   extendInfo:
     NSLocalNetworkUsageDescription: PeaSyo4Desk needs access to your local network to discover consoles and connect to them.
     NSMicrophoneUsageDescription: PeaSyo4Desk needs microphone access to send your voice to the console during Remote Play.
