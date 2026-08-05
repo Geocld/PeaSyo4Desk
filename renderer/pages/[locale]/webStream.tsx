@@ -139,6 +139,7 @@ import type {
   ControllerInputKernel,
   TouchpadVerticalPosition,
 } from "../../common/streamTypes";
+import { markStreamDisconnectCooldown } from "../../common/remotePlay";
 
 const resolveSteamOsWebCodecsProfile = (value: unknown): SteamOsWebCodecsProfile => {
   const normalized = String(value || "")
@@ -3356,6 +3357,7 @@ function StreamPage() {
           addToast({
             title: t("Connected"),
             color: "success",
+            timeout: 2000
           });
 
           audioPlaybackEnabledRef.current = true;
@@ -4722,6 +4724,7 @@ function StreamPage() {
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting..."));
+    markStreamDisconnectCooldown();
 
     try {
       if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {
@@ -4802,6 +4805,7 @@ function StreamPage() {
     clearConnectedFeedbackTimers();
     setConnectState("disconnecting");
     setStatus(t("Disconnecting and putting console into standby..."));
+    markStreamDisconnectCooldown();
 
     try {
       if (socketRef.current && socketRef.current.readyState < WebSocket.CLOSING) {

@@ -1,4 +1,6 @@
 export const PENDING_STREAM_STORAGE_KEY = "pending-stream-config";
+export const STREAM_DISCONNECT_COOLDOWN_STORAGE_KEY = "stream-disconnect-cooldown";
+export const STREAM_DISCONNECT_COOLDOWN_MS = 8000;
 
 export type PsnLoginInfo = {
   accessToken?: string;
@@ -36,6 +38,12 @@ export type ConsoleCacheItem = {
   stateName?: string;
 };
 
+type StreamDisconnectCooldown = {
+  consoleInfo?: ConsoleCacheItem;
+  streamHost?: string;
+  expiresAt: number;
+};
+
 const inferPs5FlagFromText = (value: unknown) => {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized) {
@@ -55,6 +63,29 @@ const inferPs5FlagFromText = (value: unknown) => {
 
 const buildStorageConsoleId = (item: ConsoleCacheItem) => {
   return String(item.consoleId || item.hostId || item.serverMac || item.host || "").trim();
+};
+
+const normalizeMatchValue = (value: unknown) => String(value || "").trim().toLowerCase();
+
+const getConsoleIdentityValues = (item: ConsoleCacheItem | undefined) => {
+  if (!item) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    [
+      item.consoleId,
+      item.hostId,
+      item.serverMac,
+      item.deviceUid,
+      item.remoteDeviceUid,
+      item.host,
+      item.remoteHost,
+      item.parsedRemoteHost,
+    ]
+      .map(normalizeMatchValue)
+      .filter(Boolean)
+  );
 };
 
 const normalizeStoredRegistKey = (item: ConsoleCacheItem) => {
@@ -245,6 +276,87 @@ export const parseCachedConsoles = (raw: unknown): ConsoleCacheItem[] => {
     console.error("Invalid local consoles cache:", error);
     return [];
   }
+};
+
+const readStreamDisconnectCooldown = (now = Date.now()): StreamDisconnectCooldown | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(STREAM_DISCONNECT_COOLDOWN_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as StreamDisconnectCooldown;
+    const expiresAt = Number(parsed?.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      window.sessionStorage.removeItem(STREAM_DISCONNECT_COOLDOWN_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      consoleInfo: parsed.consoleInfo,
+      streamHost: String(parsed.streamHost || "").trim(),
+      expiresAt,
+    };
+  } catch {
+    window.sessionStorage.removeItem(STREAM_DISCONNECT_COOLDOWN_STORAGE_KEY);
+    return null;
+  }
+};
+
+export const markStreamDisconnectCooldown = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  let consoleInfo: ConsoleCacheItem | undefined;
+  let streamHost = "";
+
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_STREAM_STORAGE_KEY);
+    const pendingConfig = raw ? JSON.parse(raw) : null;
+    consoleInfo = pendingConfig?.consoleInfo;
+    streamHost = String(pendingConfig?.streamHost || "").trim();
+  } catch {
+    consoleInfo = undefined;
+    streamHost = "";
+  }
+
+  window.sessionStorage.setItem(
+    STREAM_DISCONNECT_COOLDOWN_STORAGE_KEY,
+    JSON.stringify({
+      consoleInfo,
+      streamHost,
+      expiresAt: Date.now() + STREAM_DISCONNECT_COOLDOWN_MS,
+    })
+  );
+};
+
+export const getStreamDisconnectCooldownRemainingSeconds = (
+  item: ConsoleCacheItem,
+  now = Date.now()
+) => {
+  const cooldown = readStreamDisconnectCooldown(now);
+  if (!cooldown) {
+    return 0;
+  }
+
+  const itemValues = getConsoleIdentityValues(item);
+  const cooldownValues = getConsoleIdentityValues(cooldown.consoleInfo);
+  const cooldownStreamHost = normalizeMatchValue(cooldown.streamHost);
+  if (cooldownStreamHost) {
+    cooldownValues.add(cooldownStreamHost);
+  }
+
+  const isMatchingConsole = Array.from(cooldownValues).some((value) => itemValues.has(value));
+  if (!isMatchingConsole) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((cooldown.expiresAt - now) / 1000));
 };
 
 export const upsertConsoleCache = (

@@ -10,6 +10,7 @@ type ConsoleHostCardProps = {
   index: number;
   onStartStream: (item: ConsoleCacheItem) => void;
   onEditHost?: (item: ConsoleCacheItem, index: number) => void;
+  cooldownRemainingSeconds?: number;
 };
 
 const formatRegisteredTime = (value: number | undefined) => {
@@ -69,7 +70,13 @@ const PowerIcon = () => {
   );
 };
 
-function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHostCardProps) {
+function ConsoleHostCard({
+  item,
+  index,
+  onStartStream,
+  onEditHost,
+  cooldownRemainingSeconds = 0,
+}: ConsoleHostCardProps) {
   const { t } = useTranslation("home");
   const { theme, resolvedTheme } = useTheme();
 
@@ -79,6 +86,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
   const registeredTimeText = formatRegisteredTime(item.registedTime);
   const { isPs5, isPs5Pro } = resolveConsoleVariant(item);
   const [waking, setWaking] = useState(false);
+  const isCoolingDown = cooldownRemainingSeconds > 0;
   const isLightTheme =
     theme === "xbox-light" || theme === "light" || resolvedTheme === "light";
 
@@ -116,7 +124,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
   console.log('item.host', item.host)
 
   return (
-    <Card className="relative">
+    <Card className="relative overflow-hidden">
       {
         item.host ? (
           <Button
@@ -125,6 +133,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
             color="warning"
             className="absolute right-12 top-2 z-10 min-w-0 px-2"
             onPress={handleWakeHost}
+            isDisabled={isCoolingDown}
             aria-label={t("Wake host")}
           >
             <PowerIcon/>
@@ -137,6 +146,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
           variant="light"
           className="absolute right-2 top-2 z-10 min-w-0 px-2 text-default-500"
           onPress={() => onEditHost(item, index)}
+          isDisabled={isCoolingDown}
           aria-label={t("Edit host")}
         >
           <EditIcon/>
@@ -175,10 +185,20 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
           size="sm"
           className="w-full"
           onPress={() => onStartStream(item)}
+          isDisabled={isCoolingDown}
         >
           {t("Start stream")}
         </Button>
       </CardFooter>
+      {isCoolingDown ? (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="rounded-full bg-content1/90 px-5 py-3 text-center shadow-lg">
+            <p className="text-2xl font-semibold text-primary">
+              {cooldownRemainingSeconds}s
+            </p>
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }

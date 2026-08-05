@@ -26,6 +26,7 @@ import { getStaticPaths, makeStaticProperties } from "../../lib/get-static";
 import Ipc from "../../lib/ipc";
 import {
   ConsoleCacheItem,
+  getStreamDisconnectCooldownRemainingSeconds,
   hasLoginCredential,
   normalizeConsoleCacheItem,
   PENDING_STREAM_STORAGE_KEY,
@@ -59,6 +60,7 @@ function Home() {
   const [editingConsoleIndex, setEditingConsoleIndex] = useState<number | null>(null);
   const [editHostNameInput, setEditHostNameInput] = useState("");
   const [editHostIpInput, setEditHostIpInput] = useState("");
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
 
   useEffect(() => {
     let active = true;
@@ -127,6 +129,16 @@ function Home() {
     };
   }, [isLogined]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCooldownNow(Date.now());
+    }, 250);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const handleLoginSuccess = (loginInfo: any) => {
     if (!hasLoginCredential(loginInfo)) {
       throw new Error("Failed to get valid PSN login info.");
@@ -142,6 +154,10 @@ function Home() {
   };
 
   const handleStartStreamClick = (item: ConsoleCacheItem) => {
+    if (getStreamDisconnectCooldownRemainingSeconds(item, Date.now()) > 0) {
+      return;
+    }
+
     setSelectedConsole(item);
     setShowStartStreamModal(true);
   };
@@ -279,6 +295,7 @@ function Home() {
                   key={`${item.consoleId || item.host || "console"}-${index}`}
                   item={item}
                   index={index}
+                  cooldownRemainingSeconds={getStreamDisconnectCooldownRemainingSeconds(item, cooldownNow)}
                   onStartStream={handleStartStreamClick}
                   onEditHost={handleEditHostClick}
                 />
