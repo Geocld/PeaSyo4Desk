@@ -15,6 +15,7 @@ files:
 asarUnpack:
   - node_modules/peasyo-sdl-lib/**/*
   - peasyo-lib/**/*.node
+beforeBuild: scripts/prepare-mac-ffmpeg-resources.js
 extraResources:
   - from: resources/icon.ico
     to: icon.ico
@@ -32,6 +33,11 @@ mac:
   category: public.app-category.games
   icon: resources/icon.icns
   mergeASARs: false
+  extraResources:
+    - from: resources/ffmpeg-installer
+      to: ffmpeg-installer
+      filter:
+        - "*/ffmpeg"
   extendInfo:
     NSLocalNetworkUsageDescription: PeaSyo4Desk needs access to your local network to discover consoles and connect to them.
     NSMicrophoneUsageDescription: PeaSyo4Desk needs microphone access to send your voice to the console during Remote Play.
