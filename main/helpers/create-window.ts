@@ -17,10 +17,16 @@ const resolveWindowIconPath = (): string | undefined => {
         ? [
             path.join(process.resourcesPath, 'icon.ico'),
             path.join(process.resourcesPath, 'resources', 'icon.ico'),
+            path.join(path.dirname(process.execPath), 'resources', 'icon.ico'),
+            path.join(ElectronApp.getAppPath(), '..', 'icon.ico'),
+            path.join(ElectronApp.getAppPath(), '..', 'resources', 'icon.ico'),
         ]
-        : [path.resolve(__dirname, '..', '..', 'resources', 'icon.ico')]
+        : [
+            path.resolve(ElectronApp.getAppPath(), 'resources', 'icon.ico'),
+            path.resolve(__dirname, '..', '..', 'resources', 'icon.ico'),
+        ]
 
-    return candidatePaths.find(candidatePath => fs.existsSync(candidatePath))
+    return Array.from(new Set(candidatePaths)).find(candidatePath => fs.existsSync(candidatePath))
 }
 
 export default (windowName: string, options: BrowserWindowConstructorOptions): BrowserWindow => {

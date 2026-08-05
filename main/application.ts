@@ -137,6 +137,10 @@ export default class Application {
 
     this._ipc.startUp();
 
+    if (this._isWindows) {
+      ElectronApp.setAppUserModelId("com.Geocld.PeaSyo4Desk");
+    }
+
     // Prevent display from sleeping
     const id = powerSaveBlocker.start('prevent-display-sleep')
     console.log('Prevent sleep state:' + powerSaveBlocker.isStarted(id))
