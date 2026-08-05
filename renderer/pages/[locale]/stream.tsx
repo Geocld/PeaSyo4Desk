@@ -2528,6 +2528,7 @@ function StreamPage() {
           addToast({
             title: t("Connected"),
             color: "success",
+            timeout: 2000
           });
 
           audioPlaybackEnabledRef.current = true;

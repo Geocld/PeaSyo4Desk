@@ -20,6 +20,7 @@ import {
   PSN_ACCOUNT_ID_INVALID_CODE,
   PSN_ACCOUNT_ID_INVALID_MESSAGE,
 } from "../psnAccountId";
+import { sendPsnCloudWakeup } from "../psnCloudWakeup";
 
 const WAKEUP_PORT_PS4 = 987;
 const WAKEUP_PORT_PS5 = 9302;
@@ -408,6 +409,8 @@ type WakeupPacketArgs = {
   userCredential?: string | number;
   timeoutMs?: number;
   ps5?: boolean;
+  loginInfo?: PsnLoginInfo;
+  consoleInfo?: Record<string, any>;
 };
 
 type PrepareLocalStreamArgs = {
@@ -415,6 +418,8 @@ type PrepareLocalStreamArgs = {
   hostId?: string;
   ps5?: boolean;
   userCredential?: string | number;
+  loginInfo?: PsnLoginInfo;
+  consoleInfo?: Record<string, any>;
   wakeIfStandby?: boolean;
   discoveryTimeoutMs?: number;
   wakeRetryIntervalMs?: number;
@@ -864,11 +869,14 @@ const prepareLocalStreamWithFallback = async (
     userCredential: args.userCredential,
     timeoutMs: args.discoveryTimeoutMs,
     ps5,
+    loginInfo: args.loginInfo,
+    consoleInfo: args.consoleInfo,
   };
   let wakeAttempts = 0;
 
   // Keep the JS fallback on the same cadence as Android/native orchestration:
   // wake immediately, try a second wake after 5s, and poll discovery every 2s.
+  triggerPsnCloudWakeupInBackground(wakeArgs);
   await sendWakeupWithFallback(wakeArgs);
   wakeAttempts += 1;
 
@@ -1262,6 +1270,20 @@ const sendWakeupWithFallback = async (data: WakeupPacketArgs) => {
   };
 };
 
+const triggerPsnCloudWakeupInBackground = (data: WakeupPacketArgs) => {
+  if (!String(data.loginInfo?.accessToken || "").trim()) {
+    return;
+  }
+
+  void sendPsnCloudWakeup({
+    ps5: data.ps5 !== false,
+    loginInfo: data.loginInfo,
+    consoleInfo: data.consoleInfo,
+  }).catch(() => {
+    // PSN cloud wakeup is best-effort only. Keep all failures invisible to users.
+  });
+};
+
 const prepareLocalStream = async (
   args: PrepareLocalStreamArgs
 ): Promise<PrepareLocalStreamResult> => {
@@ -1604,8 +1626,19 @@ export default class IpcApp extends IpcBase {
     return discoverConsolesWithPeasyo(data);
   }
 
-  prepareLocalStream(data: PrepareLocalStreamArgs) {
-    return prepareLocalStream(data);
+  async prepareLocalStream(data: PrepareLocalStreamArgs) {
+    const refreshed = await this.refreshPsnLoginInfoBeforeStream({
+      ...data,
+      autoRemote: false,
+      suppressRefreshWarning: true,
+      loginInfo: isPersistableLoginInfo(data?.loginInfo) ? data.loginInfo : undefined,
+    });
+    return prepareLocalStream({
+      ...data,
+      loginInfo: isPersistableLoginInfo(refreshed.loginInfo)
+        ? refreshed.loginInfo
+        : data?.loginInfo,
+    });
   }
 
   registerConsole(data: RegisterConsoleArgs) {
@@ -1849,7 +1882,9 @@ export default class IpcApp extends IpcBase {
       if (requireRemotePlayToken) {
         throw error;
       }
-      console.warn("[app] best effort PSN token refresh before stream failed:", error);
+      if (!data?.suppressRefreshWarning) {
+        console.warn("[app] best effort PSN token refresh before stream failed:", error);
+      }
       return {
         ...data,
         loginInfo,

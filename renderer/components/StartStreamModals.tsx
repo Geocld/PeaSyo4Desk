@@ -219,6 +219,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         userCredential:
           props.consoleItem?.userCredential ||
           getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey),
+        consoleInfo: props.consoleItem || undefined,
         wakeIfStandby: true,
         discoveryTimeoutMs: 3000,
         wakeRetryIntervalMs: 5000,

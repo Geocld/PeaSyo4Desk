@@ -25,6 +25,8 @@ export type ConsoleCacheItem = {
   host?: string;
   remoteHost?: string;
   parsedRemoteHost?: string;
+  remoteDeviceUid?: string;
+  deviceUid?: string;
   userCredential?: string | number;
   registedTime?: number;
   hostType?: string;
@@ -85,6 +87,8 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
   const host = String(item.host || "").trim();
   const remoteHost = String(item.remoteHost || "").trim();
   const parsedRemoteHost = String(item.parsedRemoteHost || "").trim();
+  const remoteDeviceUid = String(item.remoteDeviceUid || "").trim();
+  const deviceUid = String(item.deviceUid || "").trim();
   const userCredential =
     typeof item.userCredential === "number" || typeof item.userCredential === "string"
       ? item.userCredential
@@ -113,6 +117,8 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
     host,
     remoteHost,
     parsedRemoteHost: parsedRemoteHost || undefined,
+    remoteDeviceUid: remoteDeviceUid || undefined,
+    deviceUid: deviceUid || undefined,
     ...(userCredential !== undefined ? { userCredential } : {}),
     hostType: hostType || undefined,
     hostId: hostId || undefined,

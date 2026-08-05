@@ -97,6 +97,7 @@ function ConsoleHostCard({ item, index, onStartStream, onEditHost }: ConsoleHost
       addToast({
         title: t("WakePacketSent"),
         color: "success",
+        timeout: 2000
       });
     } finally {
       setWaking(false);
