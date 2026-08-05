@@ -4,6 +4,15 @@ const path = require("node:path");
 const rootDir = path.resolve(__dirname, "..");
 const sourceRoot = path.join(rootDir, "node_modules");
 const targetRoot = path.join(rootDir, "build", "runtime-node_modules");
+const runtimePackageRoots = [
+  "axios",
+  "debug",
+  "electron-serve",
+  "electron-store",
+  "fluent-ffmpeg",
+  "ws",
+  "peasyo-sdl-lib",
+];
 
 const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
 
@@ -63,10 +72,9 @@ module.exports = async () => {
   fs.rmSync(targetRoot, { recursive: true, force: true });
   fs.mkdirSync(targetRoot, { recursive: true });
 
-  const packageJson = readJson(path.join(rootDir, "package.json"));
   const visitedDirs = new Set();
 
-  for (const dependencyName of Object.keys(packageJson.dependencies || {})) {
+  for (const dependencyName of runtimePackageRoots) {
     collectPackageTree(dependencyName, rootDir, visitedDirs);
   }
 
