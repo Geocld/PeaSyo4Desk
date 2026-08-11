@@ -74,6 +74,7 @@
   "Choose local network or remote network streaming.": "Choose local network or remote network streaming.",
   "Local stream": "Local stream",
   "Remote stream": "Remote stream",
+  "RemoteStreamHostHint": "Remote play requires entering the console IP or router public IP. Supported formats:\nexample.com\n192.168.1.1\n2001:db8:85a3::8a2e:370:7334\nOr you can use auto connect after signing in to PSN.",
   "Remote host": "Remote host",
   "Please input remote host": "Please input remote host",
   "Direct connect": "Direct connect",

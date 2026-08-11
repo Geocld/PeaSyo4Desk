@@ -69,5 +69,10 @@
   "holepunchDataOfferReceived": "已接收数据连接信息",
   "holepunchDataEstablished": "远程连接已建立",
   "psnTokenExpired": "PSN 登录已过期，请重新登录",
-  "Touchpad opacity": "触摸板透明度"
+  "Touchpad opacity": "触摸板透明度",
+  "Performance opacity": "性能面板透明度",
+  "RTT": "延迟",
+  "PL": "丢包",
+  "BT": "码率",
+  "DT": "解码"
 }

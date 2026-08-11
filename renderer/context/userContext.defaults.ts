@@ -58,6 +58,7 @@ export const defaultSettings = {
   native_gamepad_maping: null,
   mouse_sensitive: 0.5,
   performance_style: true,
+  stream_performance_opacity: 0.8,
   background_keepalive: false,
   log_verbose: false,
   keyboard: false,

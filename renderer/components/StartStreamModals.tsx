@@ -104,6 +104,7 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
     }
     return t("Start stream");
   }, [props.consoleItem?.serverNickname, t]);
+  const remoteStreamHint = t("RemoteStreamHostHint");
 
   useEffect(() => {
     if (!props.show) return;
@@ -512,6 +513,9 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
           <>
             <ModalHeader>{t("Remote stream")}</ModalHeader>
             <ModalBody className="gap-3">
+              <p className="text-sm text-default-500 whitespace-pre-line">
+                {remoteStreamHint}
+              </p>
               {errorText ? (
                 <p className="text-danger text-sm break-all">{errorText}</p>
               ) : null}

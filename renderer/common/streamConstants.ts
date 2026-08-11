@@ -38,6 +38,9 @@ export const TOUCHPAD_SCALE_MAX = 2;
 export const TOUCHPAD_OPACITY_MIN = 0;
 export const TOUCHPAD_OPACITY_MAX = 0.8;
 export const TOUCHPAD_OPACITY_DEFAULT = 0.6;
+export const PERFORMANCE_OPACITY_MIN = 0.1;
+export const PERFORMANCE_OPACITY_MAX = 0.8;
+export const PERFORMANCE_OPACITY_DEFAULT = 0.8;
 
 // Gamepad axis/trigger quantization
 export const GAMEPAD_AXIS_QUANTIZATION = 128;

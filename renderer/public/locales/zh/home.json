@@ -74,6 +74,7 @@
   "Choose local network or remote network streaming.": "请选择本地网络串流或远程串流。",
   "Local stream": "本地串流",
   "Remote stream": "远程串流",
+  "RemoteStreamHostHint": "进行远程游玩需要输入主机IP或路由器公网IP，支持格式如：\nexample.com\n192.168.1.1\n2001:db8:85a3::8a2e:370:7334，或者你可以在登录PSN的情况下使用自动连接",
   "Remote host": "远程地址",
   "Please input remote host": "请输入远程地址",
   "Direct connect": "直接连接",

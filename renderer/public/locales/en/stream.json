@@ -69,5 +69,10 @@
   "holepunchDataOfferReceived": "Data connection offer received",
   "holepunchDataEstablished": "Remote connection established",
   "psnTokenExpired": "PSN login expired. Please sign in again",
-  "Touchpad opacity": "Touchpad opacity"
+  "Touchpad opacity": "Touchpad opacity",
+  "Performance opacity": "Performance opacity",
+  "RTT": "RTT",
+  "PL": "PL",
+  "BT": "BT",
+  "DT": "DT"
 }

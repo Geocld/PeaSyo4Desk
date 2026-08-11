@@ -96,6 +96,9 @@ import {
   TOUCHPAD_OPACITY_MIN,
   TOUCHPAD_OPACITY_MAX,
   TOUCHPAD_OPACITY_DEFAULT,
+  PERFORMANCE_OPACITY_MIN,
+  PERFORMANCE_OPACITY_MAX,
+  PERFORMANCE_OPACITY_DEFAULT,
   GAMEPAD_AXIS_QUANTIZATION,
   GAMEPAD_TRIGGER_QUANTIZATION,
   GAMEPAD_TRIGGER_DEADZONE,
@@ -512,6 +515,15 @@ const normalizeTouchpadOpacity = (value: unknown) => {
   return Math.max(TOUCHPAD_OPACITY_MIN, Math.min(TOUCHPAD_OPACITY_MAX, numeric));
 };
 
+const normalizePerformanceOpacity = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return PERFORMANCE_OPACITY_DEFAULT;
+  }
+
+  return Math.max(PERFORMANCE_OPACITY_MIN, Math.min(PERFORMANCE_OPACITY_MAX, numeric));
+};
+
 const normalizeBrightnessSetting = (value: unknown) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -802,6 +814,7 @@ function StreamPage() {
         : "top-1/2 -translate-y-1/2";
   const touchpadScale = normalizeTouchpadScale(settings?.stream_touchpad_scale);
   const touchpadOpacity = normalizeTouchpadOpacity(settings?.stream_touchpad_opacity);
+  const performanceOpacity = normalizePerformanceOpacity(settings?.stream_performance_opacity);
 
   const markUserActivity = useCallback(() => {
     lastUserInputAtRef.current = Date.now();
@@ -906,6 +919,22 @@ function StreamPage() {
     setSettings({
       ...settings,
       stream_touchpad_opacity: nextOpacity,
+    });
+  };
+
+  const handlePerformanceOpacityChange = (value: number | number[]) => {
+    const raw = Array.isArray(value) ? Number(value[0]) : Number(value);
+    if (!Number.isFinite(raw)) {
+      return;
+    }
+
+    const nextOpacity = Number(
+      Math.max(PERFORMANCE_OPACITY_MIN, Math.min(PERFORMANCE_OPACITY_MAX, raw)).toFixed(2)
+    );
+
+    setSettings({
+      ...settings,
+      stream_performance_opacity: nextOpacity,
     });
   };
 
@@ -3908,12 +3937,14 @@ function StreamPage() {
             onTouchpadScaleChange={handleTouchpadScaleChange}
             touchpadOpacity={touchpadOpacity}
             onTouchpadOpacityChange={handleTouchpadOpacityChange}
+            performanceOpacity={performanceOpacity}
+            onPerformanceOpacityChange={handlePerformanceOpacityChange}
             onDrawerOpenChange={handleActionBarDrawerOpenChange}
           />
         )
       }
 
-      {showPerformance && <Perform connectState={connectState} />}
+      {showPerformance && <Perform connectState={connectState} opacity={performanceOpacity} />}
 
       <div
         ref={mouseTouchpadFallback.containerRef}

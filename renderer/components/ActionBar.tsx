@@ -10,6 +10,11 @@ import {
   Slider,
   Switch,
 } from "@heroui/react";
+import {
+  PERFORMANCE_OPACITY_DEFAULT,
+  PERFORMANCE_OPACITY_MAX,
+  PERFORMANCE_OPACITY_MIN,
+} from "../common/streamConstants";
 import Ipc from "../lib/ipc";
 
 const CONNECTED = "connected";
@@ -27,6 +32,7 @@ type ActionBarProps = {
   touchpadPosition?: TouchpadPosition;
   touchpadScale?: number;
   touchpadOpacity?: number;
+  performanceOpacity?: number;
   onTogglePerformance?: () => void;
   onPressPs?: () => void;
   onLongPressPs?: () => void;
@@ -39,6 +45,7 @@ type ActionBarProps = {
   onTouchpadPositionChange?: (position: TouchpadPosition) => void;
   onTouchpadScaleChange?: (value: number | number[]) => void;
   onTouchpadOpacityChange?: (value: number | number[]) => void;
+  onPerformanceOpacityChange?: (value: number | number[]) => void;
   onDrawerOpenChange?: (open: boolean) => void;
 };
 
@@ -74,6 +81,12 @@ function ActionBar(props: ActionBarProps) {
   const normalizedTouchpadOpacity = Number.isFinite(Number(props.touchpadOpacity))
     ? Math.max(0, Math.min(0.8, Number(props.touchpadOpacity)))
     : 0.6;
+  const normalizedPerformanceOpacity = Number.isFinite(Number(props.performanceOpacity))
+    ? Math.max(
+        PERFORMANCE_OPACITY_MIN,
+        Math.min(PERFORMANCE_OPACITY_MAX, Number(props.performanceOpacity))
+      )
+    : PERFORMANCE_OPACITY_DEFAULT;
   const touchpadPosition = props.touchpadPosition || "center";
 
   return (
@@ -228,6 +241,25 @@ function ActionBar(props: ActionBarProps) {
                           <span>0.00</span>
                           <span>{normalizedTouchpadOpacity.toFixed(2)}</span>
                           <span>0.80</span>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {isConnected && props.onPerformanceOpacityChange ? (
+                      <div className="rounded-lg border border-default-200 p-3">
+                        <Slider
+                          label={t("Performance opacity")}
+                          size="sm"
+                          step={0.05}
+                          minValue={PERFORMANCE_OPACITY_MIN}
+                          maxValue={PERFORMANCE_OPACITY_MAX}
+                          value={normalizedPerformanceOpacity}
+                          onChange={props.onPerformanceOpacityChange}
+                        />
+                        <div className="mt-1 flex items-center justify-between text-xs text-default-400">
+                          <span>{PERFORMANCE_OPACITY_MIN.toFixed(2)}</span>
+                          <span>{normalizedPerformanceOpacity.toFixed(2)}</span>
+                          <span>{PERFORMANCE_OPACITY_MAX.toFixed(2)}</span>
                         </div>
                       </div>
                     ) : null}

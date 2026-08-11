@@ -2,10 +2,16 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "next-i18next";
 import { useSettings } from "../context/userContext";
 import { PENDING_STREAM_STORAGE_KEY } from "../common/remotePlay";
+import {
+  PERFORMANCE_OPACITY_DEFAULT,
+  PERFORMANCE_OPACITY_MAX,
+  PERFORMANCE_OPACITY_MIN,
+} from "../common/streamConstants";
 import Ipc from "../lib/ipc";
 
 type PerformProps = {
   connectState?: string;
+  opacity?: number;
 };
 
 type StreamPerformance = {
@@ -17,8 +23,8 @@ type StreamPerformance = {
   decodeAvailable?: boolean;
 };
 
-function Perform({ connectState }: PerformProps) {
-  const { t } = useTranslation('cloud');
+function Perform({ connectState, opacity }: PerformProps) {
+  const { t } = useTranslation('stream');
   const { settings } = useSettings();
   const [performance, setPerformance] = useState<StreamPerformance>({});
   const [isLight, setIslight] = useState(false);
@@ -93,13 +99,20 @@ function Perform({ connectState }: PerformProps) {
   const codec = configuredCodec.indexOf("H265") > -1 ? 'HEVC' : 'AVC';
   const isFsrEnabled = !!settings?.fsr;
   const showDecode = performance.decodeAvailable !== false;
+  const normalizedOpacity = Number.isFinite(Number(opacity))
+    ? Math.max(PERFORMANCE_OPACITY_MIN, Math.min(PERFORMANCE_OPACITY_MAX, Number(opacity)))
+    : PERFORMANCE_OPACITY_DEFAULT;
+  const panelStyle = { opacity: normalizedOpacity };
 
   return (
     <>
       {
         settings.performance_style ? (
           <div id="performances-x" className="flex flex-row justify-center w-full">
-            <span className={isLight ? "performance-x-wrap-light" : "performance-x-wrap"}>
+            <span
+              className={isLight ? "performance-x-wrap-light" : "performance-x-wrap"}
+              style={panelStyle}
+            >
               <span className="text-xs">
                 {resolutionText}{isFsrEnabled ? "(FSR)" : ""} | &nbsp;
               </span>
@@ -121,7 +134,7 @@ function Perform({ connectState }: PerformProps) {
             </span>
           </div>
         ) : (
-          <div id="performances">
+          <div id="performances" style={panelStyle}>
             <div className="px-1 text-sm">
               {resolutionText}{isFsrEnabled ? "(FSR)" : ""}
             </div>
