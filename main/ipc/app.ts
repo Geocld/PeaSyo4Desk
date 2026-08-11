@@ -907,7 +907,6 @@ const discoverConsolesWithNode = async (args: DiscoverConsolesArgs = {}) => {
 
   return await new Promise<DiscoveryHost[]>((resolve, reject) => {
     let finished = false;
-    let timeout: NodeJS.Timeout | undefined;
     let searchRetryTimer: NodeJS.Timeout | undefined;
     let searchAttempts = 0;
 
@@ -976,16 +975,16 @@ const discoverConsolesWithNode = async (args: DiscoverConsolesArgs = {}) => {
       complete(error instanceof Error ? error : new Error(String(error || "Discovery failed.")));
     });
 
+    const timeout = setTimeout(() => {
+      complete(null);
+    }, timeoutMs);
+
     void sendSearch();
     if (maxSearchAttempts > 1) {
       searchRetryTimer = setInterval(() => {
         void sendSearch();
       }, DISCOVERY_SEARCH_RETRY_INTERVAL_MS);
     }
-
-    timeout = setTimeout(() => {
-      complete(null);
-    }, timeoutMs);
   });
 };
 
@@ -1207,8 +1206,9 @@ const prepareLocalStreamWithFallback = async (
     };
   }
 
+  const wakeTargetHost = String(matchedHost?.hostAddr || "").trim() || normalizedHost;
   const wakeArgs: WakeupPacketArgs = {
-    host: normalizedHost,
+    host: wakeTargetHost,
     hostId: args.hostId,
     userCredential: args.userCredential,
     timeoutMs: args.discoveryTimeoutMs,
@@ -1410,6 +1410,62 @@ const buildWakeupMessage = (userCredential: string | number, ps5 = true) => {
   );
 };
 
+const bindWakeupSocket = async (socketType: "udp4" | "udp6") => {
+  const bindAddress = socketType === "udp6" ? "::" : "0.0.0.0";
+  const bindPorts = [
+    ...Array.from(
+      { length: DISCOVERY_BIND_PORT_MAX - DISCOVERY_BIND_PORT_MIN + 1 },
+      (_value, index) => DISCOVERY_BIND_PORT_MIN + index
+    ),
+    0,
+  ];
+
+  for (const port of bindPorts) {
+    const socket = dgram.createSocket({ type: socketType, reuseAddr: true });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          socket.removeListener("listening", onListening);
+          socket.removeListener("error", onError);
+        };
+
+        const onListening = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = (error: Error) => {
+          cleanup();
+          try {
+            socket.close();
+          } catch {
+            // ignore close error
+          }
+          reject(error);
+        };
+
+        socket.once("listening", onListening);
+        socket.once("error", onError);
+        socket.bind(port, bindAddress);
+      });
+
+      if (socketType === "udp4") {
+        socket.setBroadcast(true);
+      }
+
+      return socket;
+    } catch {
+      try {
+        socket.close();
+      } catch {
+        // ignore close error
+      }
+    }
+  }
+
+  throw new Error("Wakeup failed to bind a UDP socket.");
+};
+
 const resolveHostInfo = async (rawHost: string) => {
   const host = (rawHost || "").trim();
   if (!host) {
@@ -1454,63 +1510,119 @@ const resolveHostInfo = async (rawHost: string) => {
 const sendWakeupDatagram = async (
   rawHost: string,
   userCredential: string | number,
-  timeoutMs = 3000,
   ps5 = true
 ) => {
   const resolvedHostInfo = await resolveHostInfo(rawHost);
-  const targetHost = resolvedHostInfo.preferredAddress;
-  const ipFamily = net.isIP(targetHost);
-  if (!ipFamily) {
-    throw new Error(`Resolved host is not a valid IP address: ${targetHost}`);
+  const port = ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4;
+  const payload = Buffer.concat([
+    Buffer.from(buildWakeupMessage(userCredential, ps5), "utf8"),
+    Buffer.from([0]),
+  ]);
+  const targetGroups = new Map<number, string[]>();
+
+  for (const addressInfo of resolvedHostInfo.addresses) {
+    const family = Number(addressInfo.family);
+    const targetHost = String(addressInfo.address || "").trim();
+    if (!targetHost || (family !== 4 && family !== 6)) {
+      continue;
+    }
+
+    if (!targetGroups.has(family)) {
+      targetGroups.set(family, []);
+    }
+    targetGroups.get(family)!.push(targetHost);
   }
 
-  const socketType = ipFamily === 6 ? "udp6" : "udp4";
-  const socket = dgram.createSocket(socketType);
-  const port = ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4;
-  const payload = Buffer.from(buildWakeupMessage(userCredential, ps5), "utf-8");
+  if (targetGroups.size < 1) {
+    throw new Error(`Resolved host is not a valid IP address: ${resolvedHostInfo.preferredAddress}`);
+  }
 
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    const finish = (error?: Error | null) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      socket.removeAllListeners();
+  const sendTargets = async (socketType: "udp4" | "udp6", targets: string[]) => {
+    const socket = await bindWakeupSocket(socketType);
+    const sentTargets: string[] = [];
+    const failedTargets: { target: string; error: string }[] = [];
+
+    try {
+      await Promise.allSettled(
+        targets.map(
+          (targetHost) =>
+            new Promise<void>((resolve, reject) => {
+              socket.send(payload, port, targetHost, (error) => {
+                if (error) {
+                  failedTargets.push({
+                    target: targetHost,
+                    error: error.message,
+                  });
+                  reject(error);
+                  return;
+                }
+
+                sentTargets.push(targetHost);
+                resolve();
+              });
+            })
+        )
+      );
+
+      if (sentTargets.length < 1) {
+        throw new Error(`Wakeup packet send failed for ${socketType}.`);
+      }
+
+      return {
+        socketType,
+        targets,
+        sentTargets,
+        failedTargets,
+        port,
+        ps5,
+      };
+    } finally {
       try {
         socket.close();
       } catch {
         // ignore close error
       }
+    }
+  };
 
-      if (error) {
-        reject(error);
-      } else {
-        resolve({
-          targetHost,
-          ipFamily,
-          socketType,
-          port,
-          ps5,
-        });
-      }
-    };
+  const familyResults = await Promise.allSettled(
+    Array.from(targetGroups.entries()).map(([family, targets]) =>
+      sendTargets(family === 6 ? "udp6" : "udp4", targets)
+    )
+  );
 
-    const timeout = setTimeout(() => {
-      finish(new Error("Wakeup packet send timeout."));
-    }, timeoutMs);
+  const fulfilledResults = familyResults.filter(
+    (item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof sendTargets>>> =>
+      item.status === "fulfilled"
+  );
+  const rejectedResults = familyResults.filter(
+    (item): item is PromiseRejectedResult => item.status === "rejected"
+  );
 
-    socket.once("error", (error) => {
-      finish(error);
+  if (fulfilledResults.length < 1) {
+    throw new Error(
+      `Wakeup packet send failed. ${rejectedResults.map((item) => formatWakeupError(item.reason)).join(" | ")}`
+    );
+  }
+
+  if (rejectedResults.length > 0) {
+    console.warn("[app] Wakeup packet node fallback path used:", {
+      host: resolvedHostInfo.inputHost,
+      ps5,
+      errors: rejectedResults.map((item) => formatWakeupError(item.reason)),
     });
+  }
 
-    socket.send(payload, port, targetHost, (error) => {
-      if (error) {
-        finish(error);
-      } else {
-        finish(null);
-      }
-    });
-  });
+  return {
+    targetHost: resolvedHostInfo.preferredAddress,
+    ipFamily: net.isIP(resolvedHostInfo.preferredAddress),
+    socketType:
+      net.isIP(resolvedHostInfo.preferredAddress) === 6 ? "udp6" : "udp4",
+    port,
+    ps5,
+    targets: Array.from(targetGroups.values()).flat(),
+    families: fulfilledResults.map((item) => item.value),
+  };
 };
 
 const sendWakeupWithRust = async (
@@ -1574,10 +1686,9 @@ const normalizeWakeupCredential = (value: string | number | undefined | null) =>
 const sendWakeupWithFallback = async (data: WakeupPacketArgs) => {
   const credential = normalizeWakeupCredential(data.userCredential);
   const ps5 = data.ps5 !== false;
-  const timeoutMs = Number(data.timeoutMs || 3000);
 
   const [nodeResult, rustResult] = await Promise.allSettled([
-    sendWakeupDatagram(data.host, credential, timeoutMs, ps5),
+    sendWakeupDatagram(data.host, credential, ps5),
     sendWakeupWithRust(data.host, credential, ps5),
   ]);
 
