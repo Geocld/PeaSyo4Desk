@@ -55,6 +55,7 @@ import {
   createMicrophoneCapture,
   type MicrophoneCaptureController,
 } from "../../lib/microphoneCapture";
+import { useStreamMouseTouchpadFallback } from "../../lib/streamMouseTouchpadFallback";
 import {
   FSR_FRAGMENT_SHADER_SOURCE,
   FSR_VERTEX_SHADER_SOURCE,
@@ -847,6 +848,14 @@ function StreamPage() {
       pollAndSendControllerStateRef.current();
     }, TOUCHPAD_BUTTON_TAP_MS);
   }, [markUserActivity]);
+
+  const mouseTouchpadFallback = useStreamMouseTouchpadFallback({
+    active: shouldShowVideo && !sessionAlert,
+    isPs5: isPs5Console,
+    getTouchIdNext: () => touchpadStateRef.current.touchIdNext,
+    onTap: triggerTouchpadButtonTap,
+    onTouchStateChange: updateTouchpadState,
+  });
 
   const handleDisconnectWithCurrentMode = () => {
     if (disconnectAndStandbyOnExit) {
@@ -3907,8 +3916,17 @@ function StreamPage() {
       {showPerformance && <Perform connectState={connectState} />}
 
       <div
+        ref={mouseTouchpadFallback.containerRef}
         className="absolute inset-0 flex items-center justify-center bg-black"
-        style={brightnessRatio === 1 ? undefined : { filter: `brightness(${brightnessRatio})` }}
+        style={{
+          touchAction: "none",
+          ...(brightnessRatio === 1 ? {} : { filter: `brightness(${brightnessRatio})` }),
+        }}
+        onContextMenu={mouseTouchpadFallback.onContextMenu}
+        onPointerCancel={mouseTouchpadFallback.onPointerCancel}
+        onPointerDown={mouseTouchpadFallback.onPointerDown}
+        onPointerMove={mouseTouchpadFallback.onPointerMove}
+        onPointerUp={mouseTouchpadFallback.onPointerUp}
       >
         <canvas
           ref={canvasRef}
