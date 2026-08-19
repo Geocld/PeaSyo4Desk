@@ -2,7 +2,7 @@
   "private": true,
   "name": "peasyo4desk",
   "description": "PlayStation high performance remote play client for desktop",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "author": "Geocld <lijiahao5372@gmail.com>",
   "main": "app/background.js",
   "scripts": {
