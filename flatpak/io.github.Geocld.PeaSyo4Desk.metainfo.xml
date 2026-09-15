@@ -23,6 +23,13 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.1.6" date="2026-09-15">
+     <description>
+        <ul>
+          <li>Fixed keyboard mapping incorrect issue.</li>
+        </ul>
+     </description>
+    </release>
     <release version="2.1.5" date="2026-08-19">
      <description>
         <ul>
