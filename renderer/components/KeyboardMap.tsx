@@ -2,9 +2,11 @@ import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody } from "@heroui/react";
 import { useTranslation } from "next-i18next";
 import { useSettings } from "../context/userContext";
-import { defaultSettings } from "../context/userContext.defaults";
-
-const DEFAULT_KEYBOARD_MAPPING = defaultSettings.input_mousekeyboard_maping;
+import {
+  DEFAULT_KEYBOARD_MAPPING,
+  invertKeyboardMapping,
+  normalizeKeyboardMapping,
+} from "../common/keyboardMapping";
 
 const MAPPABLE_BUTTONS = [
   { value: "DPadUp", label: "DPad Up" },
@@ -34,57 +36,6 @@ const MAPPABLE_BUTTONS = [
   { value: "RightThumbYAxisPlus", label: "Right Stick Up" },
   { value: "RightThumbYAxisMinus", label: "Right Stick Down" },
 ];
-
-const LEGACY_TOUCHPAD_KEY = "t";
-const LEGACY_RIGHT_STICK_UP_KEY = "r";
-
-const applyKeyboardMappingDefaults = (mapping: Record<string, string>) => {
-  const nextMapping = { ...DEFAULT_KEYBOARD_MAPPING, ...mapping };
-  const rawTouchpadBinding = mapping[LEGACY_TOUCHPAD_KEY];
-  const hasTouchpadBinding = Object.values(mapping).includes("Touchpad");
-  const hasRightStickUpBindingOnOtherKey = Object.entries(mapping).some(
-    ([key, action]) =>
-      key !== LEGACY_TOUCHPAD_KEY && action === "RightThumbYAxisPlus"
-  );
-
-  if (!hasTouchpadBinding) {
-    if (
-      rawTouchpadBinding === "RightThumbYAxisPlus" &&
-      !hasRightStickUpBindingOnOtherKey
-    ) {
-      nextMapping[LEGACY_RIGHT_STICK_UP_KEY] = "RightThumbYAxisPlus";
-      delete nextMapping[LEGACY_TOUCHPAD_KEY];
-    } else if (rawTouchpadBinding && rawTouchpadBinding !== "Touchpad") {
-      return nextMapping;
-    }
-
-    nextMapping[LEGACY_TOUCHPAD_KEY] = "Touchpad";
-  }
-
-  return nextMapping;
-};
-
-const normalizeKeyboardMapping = (value: unknown) => {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_KEYBOARD_MAPPING };
-  }
-
-  const nextMapping: Record<string, string> = {};
-  for (const [key, action] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof key === "string" && typeof action === "string") {
-      nextMapping[key] = action;
-    }
-  }
-  return applyKeyboardMappingDefaults(nextMapping);
-};
-
-const invertKeyboardMapping = (mapping: Record<string, string>) => {
-  const result: Record<string, string> = {};
-  for (const [key, action] of Object.entries(mapping)) {
-    result[action] = key;
-  }
-  return result;
-};
 
 function KeyboardMap() {
   const { settings, setSettings } = useSettings();

@@ -27,6 +27,10 @@ import {
   normalizeGamepadButtonMapping,
   type GamepadMappingAction,
 } from "../../common/gamepadMapping";
+import {
+  DEFAULT_KEYBOARD_MAPPING,
+  normalizeKeyboardMapping,
+} from "../../common/keyboardMapping";
 import { useSettings } from "../../context/userContext";
 import { defaultSettings } from "../../context/userContext.defaults";
 import {
@@ -116,8 +120,6 @@ import {
   CONTROLLER_ANALOG_BUTTONS,
   KEYBOARD_BUTTON_ACTION_MASKS,
   KEYBOARD_INPUT_TAGS,
-  LEGACY_TOUCHPAD_KEY,
-  LEGACY_RIGHT_STICK_UP_KEY,
 } from "../../common/streamEnums";
 import type {
   PendingStreamConfig,
@@ -151,8 +153,6 @@ const isSteamOsRuntime = () => {
 const isHdrVideoFormat = (format: VideoFrameFormat) => {
   return format === "I010" || format === "P010";
 };
-
-const DEFAULT_KEYBOARD_MAPPING = defaultSettings.input_mousekeyboard_maping;
 
 const formatControllerDebugTouch = (touch: TouchPoint) => {
   if (touch.id < 0) return "-1";
@@ -267,46 +267,6 @@ const getErrorMessage = (error: any, fallback: string) => {
   }
 
   return fallback;
-};
-
-const normalizeKeyboardMapping = (value: unknown) => {
-  if (!value || typeof value !== "object") {
-    return DEFAULT_KEYBOARD_MAPPING as Record<string, string>;
-  }
-
-  const nextMapping: Record<string, string> = {};
-  for (const [key, action] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof key === "string" && typeof action === "string") {
-      nextMapping[key] = action;
-    }
-  }
-
-  const mergedMapping = {
-    ...DEFAULT_KEYBOARD_MAPPING,
-    ...nextMapping,
-  } as Record<string, string>;
-  const rawTouchpadBinding = nextMapping[LEGACY_TOUCHPAD_KEY];
-  const hasTouchpadBinding = Object.values(nextMapping).includes("Touchpad");
-  const hasRightStickUpBindingOnOtherKey = Object.entries(nextMapping).some(
-    ([key, action]) =>
-      key !== LEGACY_TOUCHPAD_KEY && action === "RightThumbYAxisPlus"
-  );
-
-  if (!hasTouchpadBinding) {
-    if (
-      rawTouchpadBinding === "RightThumbYAxisPlus" &&
-      !hasRightStickUpBindingOnOtherKey
-    ) {
-      mergedMapping[LEGACY_RIGHT_STICK_UP_KEY] = "RightThumbYAxisPlus";
-      delete mergedMapping[LEGACY_TOUCHPAD_KEY];
-    } else if (rawTouchpadBinding && rawTouchpadBinding !== "Touchpad") {
-      return mergedMapping;
-    }
-
-    mergedMapping[LEGACY_TOUCHPAD_KEY] = "Touchpad";
-  }
-
-  return mergedMapping;
 };
 
 const mergeAnalogInput = (gamepadValue: number, keyboardValue: number) => {
