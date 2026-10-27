@@ -262,6 +262,9 @@ type StreamPerformanceStats = {
 
 const wsClients = new Set<any>();
 const wsClientPressedButtons = new Map<any, Set<string>>();
+// Last session_status sent over the websocket. Kept so a renderer that
+// connects after the event fired still learns about it.
+let lastSessionStatus: any = null;
 
 let initialized = false;
 let resolvedFfmpegPath: string | null = null;
@@ -1872,6 +1875,9 @@ const sendWsText = (client: any, payload: unknown) => {
 };
 
 const broadcastText = (payload: unknown) => {
+  if ((payload as any)?.type === "session_status") {
+    lastSessionStatus = payload;
+  }
   for (const client of wsClients) {
     sendWsText(client, payload);
   }
@@ -2344,6 +2350,9 @@ const startSocketServer = async () => {
     }
 
     sendWsText(socket, { type: "connected", ts: Date.now() });
+    if (lastSessionStatus) {
+      sendWsText(socket, lastSessionStatus);
+    }
     sendVideoConfigToClient(socket);
     sendAudioConfigToClient(socket);
 
@@ -2410,6 +2419,7 @@ const stopSocketServer = async () => {
   }
   wsClients.clear();
   wsClientPressedButtons.clear();
+  lastSessionStatus = null;
 
   streamWebSocketServer = null;
   streamHttpServer = null;
@@ -3920,14 +3930,17 @@ const startSession = async (args: StartStreamSessionArgs) => {
     const preparedSessionOptions = await prepareRemoteSessionIfNeeded(sessionOptions);
     createSession(preparedSessionOptions);
 
-    streamSession.start();
-    streamSessionStarted = true;
-
+    // Drop the previous session's status, then publish "starting" before the
+    // native session runs so a fast failure cannot be ordered before it.
+    lastSessionStatus = null;
     broadcastText({
       type: "session_status",
       status: "starting",
       codec: streamVideoConfig?.codecName,
     });
+
+    streamSession.start();
+    streamSessionStarted = true;
 
     if (streamVideoConfig) {
       broadcastText({
