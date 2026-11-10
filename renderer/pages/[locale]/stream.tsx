@@ -1163,7 +1163,7 @@ function StreamPage() {
     }
 
     if (!ctxRef.current) {
-      ctxRef.current = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      ctxRef.current = canvas.getContext("2d", { alpha: false, desynchronized: false });
     }
     if (!ctxRef.current) {
       return null;
@@ -1417,7 +1417,7 @@ function StreamPage() {
       stencil: false,
       preserveDrawingBuffer: false,
       powerPreference: "high-performance",
-      desynchronized: true,
+      desynchronized: false,
     });
     if (!gl) {
       return null;
@@ -1644,7 +1644,7 @@ function StreamPage() {
       stencil: false,
       preserveDrawingBuffer: false,
       powerPreference: "high-performance",
-      desynchronized: true,
+      desynchronized: false,
     });
     if (!gl) {
       return null;
