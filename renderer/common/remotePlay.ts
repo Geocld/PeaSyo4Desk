@@ -121,9 +121,11 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
   const remoteDeviceUid = String(item.remoteDeviceUid || "").trim();
   const deviceUid = String(item.deviceUid || "").trim();
   const userCredential =
-    typeof item.userCredential === "number" || typeof item.userCredential === "string"
-      ? item.userCredential
-      : undefined;
+    getWakeupCredentialFromRegistKey(item.rpRegistKey) ||
+    getWakeupCredentialFromRegistKey(item.rpRegistKeyRaw) ||
+    (typeof item.userCredential === "number" || typeof item.userCredential === "string"
+      ? String(item.userCredential)
+      : undefined);
   const hostType = String(item.hostType || "").trim();
   const hostId = String(item.hostId || "").trim();
   const inferredIsPs5 =
@@ -162,18 +164,30 @@ export const normalizeConsoleCacheItem = (item: ConsoleCacheItem): ConsoleCacheI
 export const getWakeupCredentialFromRegistKey = (
   rpRegistKey: string | undefined
 ) => {
-  const encoded = String(rpRegistKey || "").trim();
+  const encoded = String(rpRegistKey || "").trim().replace(/\0+$/g, "");
   if (!encoded) {
     return "";
   }
 
   try {
-    const decoded = atob(encoded);
-    const hexText = decoded.replace(/\0+$/g, "").trim();
-    if (!hexText) {
+    const bytes = /^[0-9a-fA-F]+$/.test(encoded) && encoded.length % 2 === 0
+      ? Array.from({ length: encoded.length / 2 }, (_value, index) =>
+          parseInt(encoded.slice(index * 2, index * 2 + 2), 16)
+        )
+      : Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    const nulIndex = bytes.indexOf(0);
+    const keyText = String.fromCharCode(...bytes.slice(0, nulIndex < 0 ? undefined : nulIndex)).trim();
+    if (!/^[0-9a-fA-F]+$/.test(keyText)) {
       return "";
     }
-    return BigInt(`0x${hexText}`).toString(10);
+    const unsignedCredential = BigInt(`0x${keyText}`);
+    if (unsignedCredential > 0xffffffffffffffffn) {
+      return "";
+    }
+    const signedCredential = unsignedCredential >= 0x8000000000000000n
+      ? unsignedCredential - 0x10000000000000000n
+      : unsignedCredential;
+    return signedCredential.toString(10);
   } catch {
     return "";
   }

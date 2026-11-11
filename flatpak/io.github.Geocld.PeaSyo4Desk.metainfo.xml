@@ -23,6 +23,13 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="2.1.7" date="2026-11-11">
+     <description>
+        <ul>
+          <li>Fixed some known issue.</li>
+        </ul>
+     </description>
+    </release>
     <release version="2.1.6" date="2026-09-15">
      <description>
         <ul>

@@ -96,7 +96,7 @@ function ConsoleHostCard({
     setWaking(true);
     try {
       const credential =
-        item.userCredential ?? getWakeupCredentialFromRegistKey(item.rpRegistKey);
+        getWakeupCredentialFromRegistKey(item.rpRegistKey) || item.userCredential;
       await Ipc.send("app", "sendWakeupPacket", {
         host,
         ps5: isPs5,

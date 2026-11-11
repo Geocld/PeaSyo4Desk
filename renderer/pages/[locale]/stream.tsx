@@ -1417,7 +1417,7 @@ function StreamPage() {
       stencil: false,
       preserveDrawingBuffer: false,
       powerPreference: "high-performance",
-      desynchronized: true,
+      desynchronized: false,
     });
     if (!gl) {
       return null;
@@ -1644,7 +1644,7 @@ function StreamPage() {
       stencil: false,
       preserveDrawingBuffer: false,
       powerPreference: "high-performance",
-      desynchronized: true,
+      desynchronized: false,
     });
     if (!gl) {
       return null;

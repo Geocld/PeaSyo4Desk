@@ -521,7 +521,22 @@ const getPeasyoUserCredential = (rpRegistKey: string | undefined) => {
   }
 
   try {
-    return BigInt(`0x${normalizedKey}`).toString(10);
+    const keyBytes = /^[0-9a-fA-F]+$/.test(normalizedKey) && normalizedKey.length % 2 === 0
+      ? Buffer.from(normalizedKey, "hex")
+      : Buffer.from(normalizedKey, "base64");
+    const nulIndex = keyBytes.indexOf(0);
+    const keyText = keyBytes.subarray(0, nulIndex < 0 ? undefined : nulIndex).toString("utf8").trim();
+    if (!/^[0-9a-fA-F]+$/.test(keyText)) {
+      return "";
+    }
+    const unsignedCredential = BigInt(`0x${keyText}`);
+    if (unsignedCredential > 0xffffffffffffffffn) {
+      return "";
+    }
+    const signedCredential = unsignedCredential >= 0x8000000000000000n
+      ? unsignedCredential - 0x10000000000000000n
+      : unsignedCredential;
+    return signedCredential.toString(10);
   } catch {
     return "";
   }
@@ -1514,10 +1529,7 @@ const sendWakeupDatagram = async (
 ) => {
   const resolvedHostInfo = await resolveHostInfo(rawHost);
   const port = ps5 ? WAKEUP_PORT_PS5 : WAKEUP_PORT_PS4;
-  const payload = Buffer.concat([
-    Buffer.from(buildWakeupMessage(userCredential, ps5), "utf8"),
-    Buffer.from([0]),
-  ]);
+  const payload = Buffer.from(buildWakeupMessage(userCredential, ps5), "utf8");
   const targetGroups = new Map<number, string[]>();
 
   for (const addressInfo of resolvedHostInfo.addresses) {
@@ -1639,8 +1651,15 @@ const sendWakeupWithRust = async (
     throw new Error(`Resolved host is not a valid IP address: ${targetHost}`);
   }
 
-  const numericCredential = Number(userCredential);
-  if (!Number.isFinite(numericCredential)) {
+  const exactCredential = BigInt(String(userCredential));
+  if (exactCredential < 0n) {
+    throw new Error("Rust wakeup does not support Android-style signed credentials.");
+  }
+  if (exactCredential > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Rust wakeup does not support credentials above JavaScript's safe integer range.");
+  }
+  const numericCredential = Number(exactCredential);
+  if (!Number.isSafeInteger(numericCredential)) {
     throw new Error("Wakeup user credential is invalid.");
   }
 
@@ -1676,8 +1695,13 @@ const normalizeWakeupCredential = (value: string | number | undefined | null) =>
     throw new Error("Wakeup user credential is missing.");
   }
 
-  if (!/^\d+$/.test(normalized)) {
+  if (!/^-?\d+$/.test(normalized)) {
     throw new Error("Wakeup user credential is invalid.");
+  }
+
+  const credential = BigInt(normalized);
+  if (credential < -0x8000000000000000n || credential > 0xffffffffffffffffn) {
+    throw new Error("Wakeup user credential exceeds the 64-bit DDP field.");
   }
 
   return normalized;

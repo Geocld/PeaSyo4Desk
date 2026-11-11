@@ -170,8 +170,8 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
       host,
       ps5: inferConsoleIsPs5(props.consoleItem),
       userCredential:
-        props.consoleItem?.userCredential ||
-        getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey),
+        getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey) ||
+        props.consoleItem?.userCredential,
     });
   };
 
@@ -218,8 +218,8 @@ export default function StartStreamModals(props: StartStreamModalsProps) {
         hostId: props.consoleItem?.hostId,
         ps5: inferConsoleIsPs5(props.consoleItem),
         userCredential:
-          props.consoleItem?.userCredential ||
-          getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey),
+          getWakeupCredentialFromRegistKey(props.consoleItem?.rpRegistKey) ||
+          props.consoleItem?.userCredential,
         consoleInfo: props.consoleItem || undefined,
         wakeIfStandby: true,
         discoveryTimeoutMs: 3000,
