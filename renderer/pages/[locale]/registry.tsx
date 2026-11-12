@@ -94,6 +94,12 @@ const getRegisterErrorMessage = (
     return t("Host registration was canceled.");
   }
 
+  if (code === "REGIST_NETWORK_ERROR" || /Regist connect failed/i.test(rawMessage)) {
+    return t(
+      "Could not reach the console. Check that the console is switched on and on the same network. On macOS, also allow this app under System Settings > Privacy & Security > Local Network."
+    );
+  }
+
   if (
     code === "REGIST_ACCOUNT_MISMATCH" ||
     code === "REGIST_REMOTE_PLAY_IN_USE" ||

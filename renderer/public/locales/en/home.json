@@ -62,6 +62,7 @@
   "holepunchDataEstablished": "Remote connection established",
   "psnTokenExpired": "PSN login expired. Please sign in again",
   "Registration failed. Please make sure the PSN account signed in on this app matches the account on the console. If they already match, restart the console and try again.": "Registration failed. Please make sure the PSN account signed in on this app matches the account on the console. If they already match, restart the console and try again.",
+  "Could not reach the console. Check that the console is switched on and on the same network. On macOS, also allow this app under System Settings > Privacy & Security > Local Network.": "Could not reach the console. Check that the console is switched on and on the same network. On macOS, also allow this app under System Settings > Privacy & Security > Local Network.",
   "Registration PIN appears to be incorrect. Please confirm the 8-digit PIN shown on the console and try again.": "Registration PIN appears to be incorrect. Please confirm the 8-digit PIN shown on the console and try again.",
   "Host registration timed out. Please keep the console on the registration screen and try again.": "Host registration timed out. Please keep the console on the registration screen and try again.",
   "Host registration was canceled.": "Host registration was canceled.",

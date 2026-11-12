@@ -585,6 +585,14 @@ const buildRegisterFailureFromLogs = (
     );
   }
 
+  if (/Regist connect failed|Regist failed to resolve/i.test(joinedLogs)) {
+    return createRegisterFailure(
+      "REGIST_NETWORK_ERROR",
+      "Host registration failed because the app could not reach the console.",
+      recentLogs
+    );
+  }
+
   if (/Regist failed, probably invalid PIN/i.test(joinedLogs)) {
     return createRegisterFailure(
       "REGIST_INVALID_PIN",
